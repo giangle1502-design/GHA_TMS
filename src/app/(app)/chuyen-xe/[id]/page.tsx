@@ -142,7 +142,8 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   if (!isUuid(id)) notFound();
   const supabase = await createClient();
   const canExpenses = me.permissions.has("expenses.view");
-  const canSeeCarrier = ["dispatch.view", "receivables.view", "reports.view", "expenses.view"].some((k) => me.permissions.has(k as never));
+  const canSeeCarrier =
+    me.permissions.has("carriers.view" as never) && ["dispatch.view", "receivables.view", "reports.view", "expenses.view"].some((k) => me.permissions.has(k as never));
   const canSeePayable = me.permissions.has("receivables.view");
   const [custom, rowRes, extraRes, histRes, asgRes, changeRes, expRes, docRes, itemRes, itemFieldRows, feeRes, profitRes] = await Promise.all([
     shipmentCustomFields(supabase, me.permissions),
@@ -170,10 +171,10 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   ]);
   const [carrierRes, payableRes, feeDocRes, sheetRes, lockRes] = await Promise.all([
     canSeeCarrier
-      ? supabase.from("shipment_carrier_costs").select("line_no, cost_kind, fee_type_id, description, quantity, unit_price, amount, ref_no, note, fee_type:fee_types(name)").eq("shipment_id", id).order("line_no")
+      ? supabase.from("shipment_carrier_costs").select("line_no, cost_kind, fee_type_id, description, quantity, unit_price, amount, ref_no, note, supplier_id, supplier:suppliers(name), fee_type:fee_types(name, is_loading)").eq("shipment_id", id).order("line_no")
       : Promise.resolve({ data: [], error: null }),
     canSeePayable
-      ? supabase.from("payables").select("id, code, amount, paid_amount, status, due_date, invoice_no").eq("shipment_id", id).eq("kind", "carrier").neq("status", "cancelled").maybeSingle()
+      ? supabase.from("payables").select("id, code, amount, paid_amount, status, due_date, invoice_no, kind, supplier_id").eq("shipment_id", id).in("kind", ["carrier", "loading"]).neq("status", "cancelled")
       : Promise.resolve({ data: null, error: null }),
     // Tệp hóa đơn PDF / ảnh của phí chi hộ (lỗi thì chỉ không hiện số tệp)
     supabase.from("documents").select("fee_type_id").eq("entity_type", "shipment_fee").eq("entity_id", id).is("archived_at", null),
@@ -194,7 +195,20 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
       (await supabase.from("expense_categories").select("id, name").eq("is_active", true).or("name.ilike.%3-PL%,name.ilike.%3PL%,name.ilike.%thuê xe ngoài%").order("sort_order").limit(1).maybeSingle()).data)
     : null;
   const outsourceCat = outsourceRow ? { id: String(outsourceRow.id), label: String(outsourceRow.name) } : null;
-  const carrierPayable = (payableRes.data ?? null) as CarrierPayable | null;
+  const allCarrierPayables = (payableRes.data ?? []) as (CarrierPayable & { kind: string; supplier_id: string | null })[];
+  const carrierPayable = allCarrierPayables.find((p) => p.kind === "carrier") ?? null;
+  const loadingPayables = allCarrierPayables.filter((p) => p.kind === "loading");
+  // Bốc xếp 3PL: loại phí nhóm Bốc xếp, đơn giá mặc định (đ/tấn), trọng lượng chuyến (tấn)
+  const [loadingTypesRes, loadingPriceRes, weightRes] = canSeeCarrier
+    ? await Promise.all([
+        supabase.from("fee_types").select("id, name").eq("is_loading", true).eq("is_active", true).order("sort_order"),
+        supabase.from("system_settings").select("value").eq("key", "loading.unit_price_per_ton").maybeSingle(),
+        supabase.from("shipment_items").select("weight_kg").eq("shipment_id", id),
+      ])
+    : [{ data: [] }, { data: null }, { data: [] }];
+  const loadingFeeTypes = ((loadingTypesRes.data ?? []) as { id: string; name: string }[]).map((t) => ({ id: String(t.id), name: String(t.name) }));
+  const loadingUnitPrice = Number((loadingPriceRes.data as { value?: unknown } | null)?.value ?? 40000) || 40000;
+  const tripTons = Math.round(((weightRes.data ?? []) as { weight_kg: number | null }[]).reduce((a, r) => a + Number(r.weight_kg ?? 0), 0)) / 1000;
   // CSDL chưa nâng cấp 0054 (chưa có cột pod_photo_required): đọc lại không có cột này, coi như bắt buộc chụp
   let extra = extraRes;
   if (extra.error && missingColumn(extra.error, "pod_photo_required")) {
@@ -538,6 +552,10 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
             supplierName={x.carrier?.name ?? x.vehicle?.supplier?.name ?? null}
             costs={carrierCosts}
             payable={carrierPayable}
+            loadingPayables={loadingPayables}
+            loadingFeeTypes={loadingFeeTypes}
+            loadingUnitPrice={loadingUnitPrice}
+            tripTons={tripTons}
             canSeePayable={canSeePayable}
             customerPassThrough={fees
               .filter((f) => f.fee_kind === "pass_through")

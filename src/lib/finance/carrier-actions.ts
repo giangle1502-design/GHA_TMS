@@ -10,6 +10,8 @@ const optNum = z.number().nonnegative().max(1_000_000_000_000).nullable().option
 const lineSchema = z.object({
   kind: z.enum(["freight", "pass_through", "other"]),
   feeTypeId: uuid.nullable().optional(),
+  /** Đơn vị 3PL nhận khoản này (VD đơn vị bốc xếp); trống = nhà xe của chuyến */
+  supplierId: uuid.nullable().optional(),
   description: z.string().max(200).optional(),
   quantity: optNum,
   unitPrice: optNum,
@@ -47,6 +49,7 @@ export async function saveCarrierCosts(input: z.input<typeof costsSchema>): Prom
       p_lines: d.lines.map((l) => ({
         kind: l.kind,
         fee_type_id: l.feeTypeId ?? null,
+        supplier_id: l.supplierId ?? null,
         description: l.description?.trim() || null,
         quantity: l.quantity ?? null,
         unit_price: l.unitPrice ?? null,
