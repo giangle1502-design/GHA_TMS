@@ -444,7 +444,7 @@ export async function actForDriver(input: z.input<typeof actSchema>): Promise<Ac
 }
 
 /** Xe đang hoạt động kèm tài xế phụ trách, để gợi ý tài xế khi chọn xe */
-export async function vehicleDefaultDriver(vehicleId: string): Promise<ActionResult<{ driverId: string | null; vehicleTypeId: string | null; outsourced: boolean }>> {
+export async function vehicleDefaultDriver(vehicleId: string): Promise<ActionResult<{ driverId: string | null; vehicleTypeId: string | null; outsourced: boolean; supplierId: string | null }>> {
   return runAction(async () => {
     await requirePermission("dispatch.create", "dispatch.update");
     if (!uuid.safeParse(vehicleId).success) throw new ActionError("Xe không hợp lệ");
@@ -455,6 +455,7 @@ export async function vehicleDefaultDriver(vehicleId: string): Promise<ActionRes
       driverId: data?.assigned_driver_id ?? null,
       vehicleTypeId: data?.vehicle_type_id ?? null,
       outsourced: data?.ownership_type === "outsourced" || Boolean(data?.supplier_id),
+      supplierId: (data?.supplier_id as string | null) ?? null,
     };
   });
 }
