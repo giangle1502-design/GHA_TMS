@@ -1,4 +1,4 @@
-// Danh mục quyền – phải khớp với supabase/migrations/20261016000002_rbac.sql và các migration thêm quyền sau (0040, 0044, 0068)
+// Danh mục quyền – phải khớp với supabase/migrations/20261016000002_rbac.sql và các migration thêm quyền sau (0040, 0044, 0068, GHA 9001)
 // (kiểm thử tests/permissions.test.ts đối chiếu tự động).
 
 export const MODULE_ACTIONS = {
@@ -6,7 +6,7 @@ export const MODULE_ACTIONS = {
   dispatch: ["view", "create", "update", "delete"],
   shipments: ["view", "create", "update", "delete", "export"],
   drivers: ["view", "create", "update", "delete", "export", "view_sensitive"],
-  vehicles: ["view", "create", "update", "delete", "export", "view_sensitive"],
+  vehicles: ["view", "create", "update", "delete", "export", "view_sensitive", "view_basic"],
   customers: ["view", "create", "update", "delete", "export"],
   locations: ["view", "create", "update", "delete", "export"],
   price_lists: ["view", "create", "update", "delete", "export"],
@@ -29,6 +29,8 @@ export const MODULE_ACTIONS = {
   purchase_requests: ["view", "create", "delete", "pay", "export"],
   tasks: ["view", "create", "delete", "export"],
   fuel: ["view", "update", "approve", "export"],
+  products: ["view", "create", "update", "delete", "export"],
+  carriers: ["view"],
 } as const;
 
 type ModuleActions = typeof MODULE_ACTIONS;
@@ -69,6 +71,8 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   purchase_requests: "Đề nghị chi, mua sắm",
   tasks: "Giao việc",
   fuel: "Dầu theo xe",
+  products: "Mã hàng",
+  carriers: "Nhà xe 3-PL",
 };
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -82,6 +86,7 @@ export const ACTION_LABELS: Record<string, string> = {
   configure: "Cấu hình",
   view_sensitive: "Nhạy cảm",
   use: "Sử dụng",
+  view_basic: "Xem cơ bản (không chủ xe)",
 };
 
 export const ACTION_ORDER = Object.keys(ACTION_LABELS);

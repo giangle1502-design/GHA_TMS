@@ -22,9 +22,9 @@ export type StatementCustomer = { id: string; code: string; name: string; tax_co
 
 /** Công ty phát hành bảng kê (góc phải); người dùng sửa được trong mẫu */
 export const COMPANY_DEFAULT = {
-  name: "CÔNG TY TNHH THƯƠNG MẠI DỊCH VỤ VẬN TẢI KHÁNH HÀ",
-  address: "650/5c Vườn Lài, Tổ 28, khu phố 2, Phường An Phú Đông, Thành Phố Hồ Chí Minh, Việt Nam",
-  taxCode: "0313167085",
+  name: "CÔNG TY TNHH GHA LOGISTICS & SERVICE",
+  address: "",
+  taxCode: "3703489735",
 };
 
 /** Mẫu bảng kê lưu trong table_view_preferences với table_key này (không cần nâng cấp CSDL) */
@@ -98,7 +98,7 @@ export const statementConfigSchema = z.object({
   companyAddress: z.string().max(400).default(COMPANY_DEFAULT.address),
   companyTaxCode: z.string().max(40).default(COMPANY_DEFAULT.taxCode),
   leftSign: z.string().max(120).default("ĐẠI DIỆN KHÁCH HÀNG"),
-  rightSign: z.string().max(120).default("ĐẠI DIỆN CÔNG TY KHÁNH HÀ"),
+  rightSign: z.string().max(120).default("ĐẠI DIỆN CÔNG TY GHA"),
   signPlace: z.string().max(80).default("TP. Hồ Chí Minh"),
   note: z.string().max(1000).default(""),
   showWords: z.boolean().default(true),

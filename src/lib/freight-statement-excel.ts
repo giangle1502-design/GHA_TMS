@@ -29,7 +29,7 @@ export async function buildStatementWorkbook(
   catalog: StatementColumn[],
 ) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "KHÁNH HÀ TMS";
+  wb.creator = "GHA-TMS";
   const ws = wb.addWorksheet("Bảng kê cước", {
     pageSetup: { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } },
   });

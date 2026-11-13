@@ -12,7 +12,7 @@ export default function DriverLayout({ children }: { children: React.ReactNode }
     <div className="mx-auto flex min-h-screen max-w-xl flex-col bg-muted/40">
       <header className="sticky top-0 z-20 flex h-14 items-center gap-3 bg-sidebar px-4 text-white">
         <Link href="/tx" className="flex items-center gap-2 font-semibold">
-          <Truck className="size-5" /> KHÁNH HÀ TMS
+          <Truck className="size-5" /> GHA-TMS
         </Link>
         <span className="flex-1 text-right text-sm text-sidebar-muted">Tài xế</span>
       </header>

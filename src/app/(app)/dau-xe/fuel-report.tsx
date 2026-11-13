@@ -675,7 +675,7 @@ function LockDialog({
 async function downloadTemplate(month: string, rows: FuelRow[]) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
-  wb.creator = "KHÁNH HÀ TMS";
+  wb.creator = "GHA-TMS";
   const ws = wb.addWorksheet("Dầu theo xe");
   const head = ws.addRow(FUEL_IMPORT_COLUMNS.map((c) => c.label));
   head.font = { bold: true, color: { argb: "FFFFFFFF" } };

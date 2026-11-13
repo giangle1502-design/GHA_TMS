@@ -641,10 +641,10 @@ function HeaderPanel({ config, update }: { config: StatementConfig; update: (p: 
     <Card className="mb-3 grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3">
       {field("title", "Tiêu đề (tự thêm tháng-năm phía sau)", "BẢNG KÊ CƯỚC PHÍ VẬN CHUYỂN")}
       {field("companyName", "Tên công ty (góc phải)", "CÔNG TY TNHH ...")}
-      {field("companyTaxCode", "Mã số thuế công ty", "0313167085")}
+      {field("companyTaxCode", "Mã số thuế công ty", "3703489735")}
       <div className="sm:col-span-2 lg:col-span-3">{field("companyAddress", "Địa chỉ công ty", "650/5c Vườn Lài, ...")}</div>
       {field("leftSign", "Chữ ký bên trái (khách hàng)", "ĐẠI DIỆN KHÁCH HÀNG")}
-      {field("rightSign", "Chữ ký bên phải (Khánh Hà)", "ĐẠI DIỆN CÔNG TY KHÁNH HÀ")}
+      {field("rightSign", "Chữ ký bên phải (GHA)", "ĐẠI DIỆN CÔNG TY GHA")}
       {field("signPlace", "Nơi ký", "TP. Hồ Chí Minh")}
       <div className="sm:col-span-2">
         <Label className="mb-1 block text-xs">Ghi chú cuối bảng kê (ví dụ số tài khoản nhận tiền, hạn thanh toán)</Label>

@@ -103,7 +103,7 @@ export async function exportDayPlan(date: string, address: string, title: string
     const head = title.trim().slice(0, 300) || DAY_PLAN_TITLE;
     const n = DAY_PLAN_COLUMNS.length;
     const wb = new ExcelJS.Workbook();
-    wb.creator = "KHÁNH HÀ TMS";
+    wb.creator = "GHA-TMS";
     const ws = wb.addWorksheet("Kế hoạch", { pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
     ws.columns = DAY_PLAN_COLUMNS.map((c) => ({ width: c.xl }));
     const font = { name: "Arial", size: 11 };

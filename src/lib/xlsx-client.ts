@@ -16,7 +16,7 @@ export async function downloadXlsx(opts: {
 }) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
-  wb.creator = "KHÁNH HÀ TMS";
+  wb.creator = "GHA-TMS";
   const ws = wb.addWorksheet(
     opts.sheet.replace(/[\\/?*[\]:]/g, " ").slice(0, 31),
   );

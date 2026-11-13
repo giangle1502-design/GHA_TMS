@@ -54,7 +54,7 @@ export async function exportRecords(
       .map((k) => fields.find((f) => f.key === k))
       .filter((f): f is FieldDef => Boolean(f));
     const wb = new ExcelJS.Workbook();
-    wb.creator = "KHÁNH HÀ TMS";
+    wb.creator = "GHA-TMS";
     const ws = wb.addWorksheet(entity.label.slice(0, 31));
     ws.columns = cols.map((f) => ({ header: f.label, key: f.key, width: Math.min(40, Math.max(12, f.label.length + 4)) }));
     for (const r of rows) {

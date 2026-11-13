@@ -76,7 +76,7 @@ export async function exportShipments(sp: Record<string, string | string[] | und
     const rows = all.slice(0, EXPORT_LIMIT);
 
     const wb = new ExcelJS.Workbook();
-    wb.creator = "KHÁNH HÀ TMS";
+    wb.creator = "GHA-TMS";
     const ws = wb.addWorksheet("Chuyến xe");
     const money = "#,##0";
     ws.columns = [
