@@ -55,7 +55,9 @@ export async function signInWithPassword(formData: FormData) {
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email: loginEmail(login), password });
   if (error) {
-    redirect(`/dang-nhap?loi=sai-mat-khau&next=${encodeURIComponent(next)}`);
+    const loi = error.code === "email_not_confirmed" ? "chua-xac-nhan" : error.code === "invalid_credentials" ? "sai-mat-khau" : "ket-noi";
+    const ma = encodeURIComponent(error.code ?? String(error.status ?? ""));
+    redirect(`/dang-nhap?loi=${loi}&ma=${ma}&next=${encodeURIComponent(next)}`);
   }
   redirect(next);
 }

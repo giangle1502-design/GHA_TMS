@@ -16,11 +16,13 @@ const ERRORS: Record<string, string> = {
   "thieu-ma": "Đăng nhập bị hủy hoặc thiếu mã xác thực.",
   "xac-thuc": "Xác thực không thành công. Vui lòng thử lại.",
   "sai-mat-khau": "Tên đăng nhập hoặc mật khẩu không đúng.",
+  "chua-xac-nhan": "Tài khoản chưa xác nhận email. Nhờ quản trị viên xác nhận trên Supabase (Authentication → Users).",
+  "ket-noi": "Không đăng nhập được do lỗi kết nối hoặc cấu hình Supabase (kiểm tra NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY).",
   "thieu-thong-tin": "Nhập tên đăng nhập (hoặc email) và mật khẩu.",
 };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; loi?: string }> }) {
-  const { next, loi } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; loi?: string; ma?: string }> }) {
+  const { next, loi, ma } = await searchParams;
   const configured = isSupabaseConfigured();
   if (configured) {
     const user = await getCurrentUser();
@@ -42,7 +44,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 
         {loi && ERRORS[loi] ? (
           <Alert variant="destructive" className="mb-4">
-            <AlertDescription>{ERRORS[loi]}</AlertDescription>
+            <AlertDescription>
+              {ERRORS[loi]}
+              {ma ? <span className="mt-1 block text-xs opacity-70">Mã lỗi: {ma}</span> : null}
+            </AlertDescription>
           </Alert>
         ) : null}
 
