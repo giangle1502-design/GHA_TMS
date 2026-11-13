@@ -7,10 +7,10 @@ import { cn } from "@/lib/utils";
 export type VehicleSource = "internal" | "3pl";
 
 /**
- * Chọn xe theo nguồn: "Xe nội bộ" chỉ hiện xe công ty, "Xe 3-PL" chỉ hiện xe thuê ngoài
- * (thêm nhanh xe 3PL kèm nhà xe, tài xế ngay trong ô chọn). Xe đang gắn với chuyến tự chọn đúng nguồn.
- * Chuyến đã có nhà xe 3PL (ghi ở chuyến, hoặc NCC của kế hoạch tạo ra chuyến) thì tự mở Xe 3-PL
- * và chỉ hiện xe của nhà xe đó.
+ * Chọn xe theo nguồn: "Xe nội bộ" chỉ hiện xe công ty.
+ * "Xe 3-PL": chọn Nhà thầu 3PL trước, rồi mới chọn xe của nhà thầu đó (thêm nhanh xe mới gắn sẵn nhà thầu).
+ * Xe đang gắn với chuyến tự chọn đúng nguồn và nhà thầu. Chuyến đã có nhà xe 3PL (ghi ở chuyến,
+ * hoặc NCC của kế hoạch tạo ra chuyến) thì tự mở Xe 3-PL với nhà thầu đó.
  */
 export function VehicleSourcePicker({
   id,
@@ -35,7 +35,8 @@ export function VehicleSourcePicker({
 }) {
   const [source, setSource] = useState<VehicleSource>("internal");
   const [carrier, setCarrier] = useState<CarrierHint | null>(null);
-  const [onlyCarrier, setOnlyCarrier] = useState(true);
+  /** Nhà thầu 3PL đang chọn (bước 1 trước khi chọn xe 3-PL) */
+  const [supplier, setSupplier] = useState<{ id: string; label: string }>({ id: "", label: "" });
   const checked = useRef<string>("");
   const notify = useRef(onSourceChange);
   useEffect(() => {
@@ -49,6 +50,7 @@ export function VehicleSourcePicker({
     shipmentCarrierHint(shipmentId).then((r) => {
       if (!alive || !r.ok || !r.data) return;
       setCarrier(r.data);
+      setSupplier((cur) => (cur.id ? cur : { id: r.data!.supplierId, label: r.data!.supplierName }));
       if (!checked.current) {
         setSource("3pl");
         notify.current?.("3pl");
@@ -67,6 +69,10 @@ export function VehicleSourcePicker({
       if (r.ok && r.data) {
         const s: VehicleSource = r.data.outsourced ? "3pl" : "internal";
         setSource(s);
+        if (r.data.supplierId) {
+          const sid = r.data.supplierId;
+          setSupplier((cur) => (cur.id === sid ? cur : { id: sid, label: "" }));
+        }
         notify.current?.(s);
       }
     });
@@ -83,7 +89,17 @@ export function VehicleSourcePicker({
     }
   }
 
-  const filterCarrier = source === "3pl" && carrier && onlyCarrier;
+  function pickSupplier(id: string, label: string) {
+    if (id === supplier.id) return;
+    setSupplier({ id, label });
+    // Đổi nhà thầu thì bỏ xe của nhà thầu cũ
+    if (value) {
+      checked.current = "";
+      onChange("", "");
+    }
+  }
+
+  const is3pl = source === "3pl";
   return (
     <div className="space-y-1.5">
       <div className="inline-flex rounded-md border bg-muted/40 p-0.5 text-xs" role="tablist" aria-label="Nguồn xe">
@@ -109,31 +125,38 @@ export function VehicleSourcePicker({
           </button>
         ))}
       </div>
-      {source === "3pl" && carrier ? (
-        <div className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1.5 text-xs text-violet-900">
-          Nhà xe 3PL: <b>{carrier.supplierName || "?"}</b>
-          {carrier.planCode ? ` (NCC của kế hoạch ${carrier.planCode})` : " (đã ghi ở chuyến)"}
-          <label className="mt-1 flex items-center gap-1.5">
-            <input type="checkbox" checked={onlyCarrier} onChange={(e) => setOnlyCarrier(e.target.checked)} />
-            Chỉ hiện xe của nhà xe này
-          </label>
+      {is3pl ? (
+        <div className="space-y-1">
+          <div className="text-xs font-medium text-muted-foreground">1. Nhà thầu 3PL</div>
+          <ReferenceSelect
+            key={`ncc-${supplier.id}`}
+            id={id ? `${id}-ncc` : undefined}
+            refKey="suppliers"
+            value={supplier.id}
+            initialLabel={supplier.label}
+            onChange={pickSupplier}
+            disabled={disabled}
+            invalid={invalid && !supplier.id}
+          />
+          {carrier?.planCode && carrier.supplierId === supplier.id ? <p className="text-xs text-violet-700">NCC của kế hoạch {carrier.planCode}</p> : null}
+          <div className="pt-1 text-xs font-medium text-muted-foreground">2. Xe của nhà thầu</div>
         </div>
       ) : null}
       <ReferenceSelect
-        key={`${source}-${filterCarrier ? carrier!.supplierId : "all"}`}
+        key={`${source}-${is3pl ? supplier.id : "all"}`}
         id={id}
-        refKey={source === "3pl" ? "vehicles_3pl" : "vehicles_internal"}
+        refKey={is3pl ? "vehicles_3pl" : "vehicles_internal"}
         value={value}
         initialLabel={initialLabel}
         onChange={onChange}
-        disabled={disabled}
+        disabled={disabled || (is3pl && !supplier.id)}
         invalid={invalid}
-        where={filterCarrier ? { supplier_id: carrier!.supplierId } : undefined}
-        quickDefaults={source === "3pl" && carrier ? { supplier_id: carrier.supplierId } : undefined}
+        where={is3pl && supplier.id ? { supplier_id: supplier.id } : undefined}
+        quickDefaults={is3pl && supplier.id ? { supplier_id: supplier.id } : undefined}
       />
       {source === "3pl" ? (
         <p className="text-xs text-muted-foreground">
-          Chỉ hiện xe thuê ngoài. Chưa có xe thì gõ số xe rồi bấm Thêm mới (nhập nhà xe, tài xế luôn). Xe 3PL không tính số chuyến, thứ tự xe, tạm ứng, chi phí tài xế.
+          {supplier.id ? "Chỉ hiện xe của nhà thầu đã chọn. Chưa có xe thì gõ số xe rồi bấm Thêm mới (xe tự gắn nhà thầu này)." : "Chọn nhà thầu 3PL trước, sau đó chọn xe."} Xe 3PL không tính số chuyến, thứ tự xe, tạm ứng, chi phí tài xế.
         </p>
       ) : null}
     </div>
