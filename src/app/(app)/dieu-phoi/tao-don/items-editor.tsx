@@ -56,7 +56,7 @@ export const itemsPayload = (lines: ItemLine[]) =>
   lines.map((l) => ({ item_code: l.item_code, item_name: l.item_name, quantity: l.quantity, unit: l.unit, note: l.note, custom: l.custom }));
 
 const SYSTEM_COLS = [
-  { key: "item_code", label: "Mã hàng", width: "w-32", placeholder: "VD: MH001" },
+  { key: "item_code", label: "Mã hàng", width: "min-w-56", placeholder: "VD: MH001" },
   { key: "item_name", label: "Tên hàng", width: "min-w-48", placeholder: "VD: Thép cuộn" },
   { key: "quantity", label: "Số lượng", width: "w-24", placeholder: "0" },
   { key: "unit", label: "ĐVT", width: "w-20", placeholder: "kiện" },
@@ -92,17 +92,20 @@ export function ItemsEditor({
   const set = (key: number, patch: Partial<ItemLine>) => onChange(value.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const products = useProducts();
   const byCode = useMemo(() => new Map(products.map((p) => [norm(p.code), p])), [products]);
-  const byName = useMemo(() => new Map(products.map((p) => [norm(p.name), p])), [products]);
-  /** Gõ/chọn đúng một mã (hoặc tên) có trong danh mục thì tự điền phần còn lại */
+  /** Mã hàng có trong danh mục thì Tên hàng và ĐVT lấy theo thiết lập của mã hàng */
+  const fromProduct = (code: string): Partial<ItemLine> => {
+    const p = byCode.get(norm(code));
+    return p ? { item_code: p.code, item_name: p.name, unit: p.unit ?? "" } : {};
+  };
+  // Dòng đã lưu trước đây: ĐVT theo thiết lập hiện tại của mã hàng
+  useEffect(() => {
+    if (!byCode.size) return;
+    const unitOf = (l: ItemLine) => byCode.get(norm(l.item_code))?.unit ?? null;
+    if (value.some((l) => unitOf(l) !== null && unitOf(l) !== l.unit)) onChange(value.map((l) => (unitOf(l) !== null ? { ...l, unit: unitOf(l)! } : l)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byCode]);
   function setSys(l: ItemLine, key: SysKey, v: string) {
-    const patch: Partial<ItemLine> = { [key]: v };
-    const p = key === "item_code" ? byCode.get(norm(v)) : key === "item_name" ? byName.get(norm(v)) : undefined;
-    if (p) {
-      if (key === "item_code") patch.item_name = l.item_name.trim() && byCode.get(norm(l.item_code))?.name !== l.item_name ? l.item_name : p.name;
-      if (key === "item_name" && !l.item_code.trim()) patch.item_code = p.code;
-      if (!l.unit.trim() && p.unit) patch.unit = p.unit;
-    }
-    set(l.key, patch);
+    set(l.key, key === "item_code" ? { item_code: v, ...fromProduct(v) } : ({ [key]: v } as Partial<ItemLine>));
   }
   const totalQty = value.reduce((a, l) => a + (parseNumberVN(l.quantity) ?? 0), 0);
   const sumOf = (f: FieldDef) => value.reduce((a, l) => a + (f.type === "formula" ? (computeFormula(f.formula, lineVars(l)) ?? 0) : (parseNumberVN(l.custom[f.key], f.type === "currency") ?? 0)), 0);
@@ -113,7 +116,7 @@ export function ItemsEditor({
       .map((r) => r.split("\t"))
       .filter((c) => c.some((x) => x.trim()));
     const add = lines.map(([item_code = "", item_name = "", quantity = "", unit = "", note = ""]) =>
-      newItem({ item_code: item_code.trim(), item_name: item_name.trim(), quantity: quantity.trim(), unit: unit.trim(), note: note.trim() }),
+      newItem({ item_code: item_code.trim(), item_name: item_name.trim(), quantity: quantity.trim(), unit: unit.trim(), note: note.trim(), ...fromProduct(item_code) }),
     );
     onChange([...value.filter((l) => l.item_code || l.item_name || l.quantity || l.note), ...add].slice(0, 500));
     setPaste(null);
@@ -155,17 +158,33 @@ export function ItemsEditor({
                   <td className="py-1 pr-2 pt-3 text-muted-foreground">{i + 1}</td>
                   {cols.map((c) => (
                     <td key={c.key} className="py-1 pr-2">
-                      {c.sys ? (
+                      {c.key === "item_code" && products.length ? (
+                        <NativeSelect
+                          aria-label={`${c.sys!.label} dòng ${i + 1}`}
+                          id={i === 0 ? `${idPrefix}${c.key}` : undefined}
+                          className="h-8"
+                          value={byCode.get(norm(l.item_code))?.code ?? l.item_code}
+                          onChange={(e) => setSys(l, "item_code", e.target.value)}
+                        >
+                          <option value="">— Chọn mã hàng —</option>
+                          {products.map((p) => (
+                            <option key={p.code} value={p.code}>
+                              {p.code} · {p.name}
+                            </option>
+                          ))}
+                          {l.item_code && !byCode.has(norm(l.item_code)) ? <option value={l.item_code}>{l.item_code} (chưa có trong danh mục)</option> : null}
+                        </NativeSelect>
+                      ) : c.sys ? (
                         <Input
                           aria-label={`${c.sys.label} dòng ${i + 1}`}
                           id={i === 0 ? `${idPrefix}${c.key}` : undefined}
-                          className="h-8"
+                          className={`h-8 ${c.key === "unit" && byCode.has(norm(l.item_code)) ? "bg-muted/50" : ""}`}
                           inputMode={c.key === "quantity" ? "decimal" : undefined}
                           placeholder={i === 0 ? c.sys.placeholder : undefined}
                           value={l[c.key as SysKey]}
                           maxLength={c.key === "item_name" ? 300 : c.key === "note" ? 500 : 100}
-                          list={products.length && (c.key === "item_code" || c.key === "item_name") ? `${idPrefix}ds-${c.key}` : undefined}
-                          autoComplete="off"
+                          readOnly={c.key === "unit" && byCode.has(norm(l.item_code))}
+                          title={c.key === "unit" && byCode.has(norm(l.item_code)) ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)" : undefined}
                           onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
                         />
                       ) : (
@@ -203,24 +222,6 @@ export function ItemsEditor({
       ) : (
         <p className="text-xs text-muted-foreground">Chưa có dòng hàng nào. Bấm “Thêm dòng” để nhập từng mã hàng, hoặc “Dán từ Excel” để dán nhiều dòng cùng lúc.</p>
       )}
-      {products.length ? (
-        <>
-          <datalist id={`${idPrefix}ds-item_code`}>
-            {products.map((p) => (
-              <option key={p.code} value={p.code}>
-                {p.name}
-              </option>
-            ))}
-          </datalist>
-          <datalist id={`${idPrefix}ds-item_name`}>
-            {products.map((p) => (
-              <option key={p.code} value={p.name}>
-                {p.code}
-              </option>
-            ))}
-          </datalist>
-        </>
-      ) : null}
       {canAddField ? <AddFieldButton module="shipment_items" customRows={fieldRows} label="Thêm cột (VD: Số seal, Trọng lượng, Thành tiền)" /> : null}
 
       <Dialog open={paste !== null} onOpenChange={(o) => !o && setPaste(null)}>
