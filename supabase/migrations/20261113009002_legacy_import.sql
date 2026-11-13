@@ -156,6 +156,27 @@ begin
 end $$;
 
 -- ---------- Chuyển dữ liệu ----------
+-- Bật lại các kiểm tra nghiệp vụ đã tắt trong lúc nhập
+create or replace function legacy.enable_guards()
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  alter table public.transport_orders enable trigger trg_transport_orders_guard;
+  alter table public.shipments enable trigger trg_shipments_guard;
+  alter table public.shipments enable trigger trg_shipments_edit_lock;
+  alter table public.shipments enable trigger trg_shipments_billed_guard;
+  alter table public.shipments enable trigger trg_shipments_dispatch_approval;
+  alter table public.shipments enable trigger trg_shipments_submit_dispatch_approval;
+  alter table public.shipments enable trigger trg_shipments_end_on_behalf;
+  alter table public.shipments enable trigger trg_shipments_pricing;
+  alter table public.shipments enable trigger trg_shipments_history;
+  alter table public.shipment_items enable trigger trg_shipment_items_edit_lock;
+  alter table public.shipment_fees enable trigger trg_shipment_fees_edit_lock;
+end;
+$$;
+
 create or replace function legacy.run_import()
 returns table (buoc text, nguon integer, da_chuyen integer, ghi_chu text)
 language plpgsql
@@ -183,7 +204,8 @@ declare
   f record;
   it record;
 begin
-  -- Chỉ tắt các kiểm tra nghiệp vụ trên bảng vận hành trong lúc nhập (tự bật lại khi kết thúc giao dịch lỗi/thành công)
+  -- Chỉ tắt các kiểm tra nghiệp vụ trên bảng vận hành trong lúc nhập. ALTER TABLE không tự hoàn tác khi COMMIT,
+  -- nên cuối hàm PHẢI bật lại (xem legacy.enable_guards); lỗi giữa chừng thì ROLLBACK hoàn tác cả lệnh tắt.
   alter table public.transport_orders disable trigger trg_transport_orders_guard;
   alter table public.shipments disable trigger trg_shipments_guard;
   alter table public.shipments disable trigger trg_shipments_edit_lock;
@@ -727,6 +749,7 @@ begin
                          'travelClaims', 'quotes', 'priceLists', 'financeSettings', 'costs3pl', 'ownerClaim')
   group by d.collection;
 
+  perform legacy.enable_guards();
   return query select _rep.buoc, _rep.nguon, _rep.da_chuyen, _rep.ghi_chu from _rep order by _rep.ord, _rep.buoc;
 end $$;
 
