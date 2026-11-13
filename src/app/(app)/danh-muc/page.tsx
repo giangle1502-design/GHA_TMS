@@ -31,7 +31,7 @@ const SOURCES = [
 ] as const;
 
 export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
-  await requirePagePermission("catalogs.view");
+  await requirePagePermission("catalogs.view", "products.view");
   const raw = await searchParams;
   const sp: SP = { ...raw };
   const legacy = typeof sp.tab === "string" ? LEGACY[sp.tab] : undefined;
@@ -43,6 +43,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     basePath: "/danh-muc",
     searchParams: sp,
     tabs: [
+      { key: "products", label: "Mã hàng" },
       { key: "vehicle_types" },
       { key: "fee_catalog_groups", label: "Nhóm phí" },
       { key: "fee_catalog_items", label: "Danh mục phí" },

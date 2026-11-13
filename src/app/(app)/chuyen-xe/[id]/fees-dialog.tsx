@@ -60,7 +60,7 @@ export function FeesDialog({ shipmentId, code, fees, feeDocs }: { shipmentId: st
         <Receipt /> {fees.length ? "Sửa phí thu khách" : "Thêm phí thu khách"}
       </Button>
       <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-        <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto">
+        <DialogContent className="max-h-[94vh] w-[97vw] max-w-[1400px] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Phí thu khách của chuyến {code}</DialogTitle>
             <DialogDescription>Phí theo nhóm: Phí vận chuyển (cộng vào Tổng cước), Chi hộ, Tờ khai, Bốc xếp. Phí chi hộ có trong số khách phải trả nhưng không tính doanh thu. Chuyến đã lập công nợ thì không sửa được phí.</DialogDescription>

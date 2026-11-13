@@ -31,11 +31,17 @@ export function CarrierCard(props: {
   supplierName: string | null;
   costs: CarrierCost[];
   payable: CarrierPayable | null;
+  /** Công nợ bốc xếp của các đơn vị 3PL khác nhà xe */
+  loadingPayables: (CarrierPayable & { supplier_id: string | null })[];
+  loadingFeeTypes: { id: string; name: string }[];
+  loadingUnitPrice: number;
+  tripTons: number;
   canSeePayable: boolean;
   customerPassThrough: CustomerPassThrough[];
   canEdit: boolean;
 }) {
   const total = props.costs.reduce((a, c) => a + Number(c.amount), 0);
+  const vendorName = (c: CarrierCost) => (c.supplier_id ? (c.supplier?.name ?? "đơn vị khác") : null);
   const sum = (k: CarrierKind) => props.costs.filter((c) => c.cost_kind === k).reduce((a, c) => a + Number(c.amount), 0);
   const p = props.payable;
   const pay = p ? (PAY[p.status] ?? null) : null;
@@ -60,6 +66,9 @@ export function CarrierCard(props: {
             costs={props.costs}
             customerPassThrough={props.customerPassThrough}
             paidAmount={Number(p?.paid_amount ?? 0)}
+            loadingFeeTypes={props.loadingFeeTypes}
+            loadingUnitPrice={props.loadingUnitPrice}
+            tripTons={props.tripTons}
           />
         ) : null}
       </CardHeader>
@@ -73,7 +82,7 @@ export function CarrierCard(props: {
             props.costs.map((c) => (
               <Line
                 key={c.line_no}
-                label={`${CARRIER_KIND_LABEL[c.cost_kind]} · ${c.description}${c.quantity != null && c.unit_price != null ? ` · ${formatNumber(c.quantity)} × ${formatNumber(c.unit_price)}` : ""}${c.ref_no ? ` · số ${c.ref_no}` : ""}${c.note ? ` (${c.note})` : ""}`}
+                label={`${c.fee_type?.is_loading ? "Bốc xếp" : CARRIER_KIND_LABEL[c.cost_kind]}${vendorName(c) ? ` (${vendorName(c)})` : ""} · ${c.description}${c.quantity != null && c.unit_price != null ? ` · ${formatNumber(c.quantity)} × ${formatNumber(c.unit_price)}` : ""}${c.ref_no ? ` · số ${c.ref_no}` : ""}${c.note ? ` (${c.note})` : ""}`}
                 value={formatVND(c.amount)}
               />
             ))
@@ -83,7 +92,13 @@ export function CarrierCard(props: {
               <Line label="Cước trả 3PL" value={formatVND(sum("freight"))} />
               <Line label="Chi hộ trả 3PL (không trừ lời/lỗ)" value={formatVND(sum("pass_through"))} />
               {sum("other") ? <Line label="Chi phí khác trả 3PL" value={formatVND(sum("other"))} /> : null}
-              <Line label="Tổng phải trả nhà xe" value={<b>{formatVND(total)}</b>} />
+              {props.costs.some((c) => c.supplier_id) ? (
+                <>
+                  <Line label="Trả nhà xe" value={formatVND(props.costs.filter((c) => !c.supplier_id).reduce((a, c) => a + Number(c.amount), 0))} />
+                  <Line label="Trả đơn vị bốc xếp khác" value={formatVND(props.costs.filter((c) => c.supplier_id).reduce((a, c) => a + Number(c.amount), 0))} />
+                </>
+              ) : null}
+              <Line label="Tổng phải trả 3PL" value={<b>{formatVND(total)}</b>} />
             </div>
           ) : null}
         </div>
@@ -103,8 +118,33 @@ export function CarrierCard(props: {
               {p.invoice_no ? <Line label="Số hóa đơn nhà xe" value={p.invoice_no} /> : null}
             </>
           )}
+          {props.canSeePayable && props.loadingPayables.length ? (
+            <div className="space-y-1 border-t pt-2">
+              <div className="font-medium">Bốc xếp trả đơn vị khác</div>
+              {props.loadingPayables.map((lp) => {
+                const name = props.costs.find((c) => c.supplier_id === lp.supplier_id)?.supplier?.name ?? "Đơn vị bốc xếp";
+                const st = PAY[lp.status];
+                return (
+                  <Line
+                    key={lp.id}
+                    label={`${name} · ${lp.code}`}
+                    value={
+                      <span className="inline-flex items-center gap-2">
+                        {formatVND(Number(lp.amount) - Number(lp.paid_amount))}
+                        {st ? <Badge variant={st.variant}>{st.label}</Badge> : null}
+                      </span>
+                    }
+                  />
+                );
+              })}
+            </div>
+          ) : null}
           <p className="pt-1 text-xs text-muted-foreground">
-            Trả tiền ở{" "}
+            Bốc xếp theo từng đơn vị, bảng kê bốc xếp:{" "}
+            <Link href="/thue-ngoai/boc-xep" className="text-primary hover:underline">
+              Bốc xếp 3PL
+            </Link>
+            . Trả tiền ở{" "}
             <Link href="/thue-ngoai" className="text-primary hover:underline">
               Xe thuê ngoài 3PL
             </Link>{" "}

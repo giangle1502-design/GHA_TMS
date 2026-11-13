@@ -671,6 +671,42 @@ export const ENTITIES: Record<string, EntityDef> = {
     ],
   },
   // ---------------------------------------------------------------- Danh mục hệ thống
+  products: {
+    key: "products",
+    table: "products",
+    customModule: "products",
+    label: "Mã hàng",
+    singular: "mã hàng",
+    perm: "products",
+    hasExport: true,
+    autoCode: true,
+    search: ["code", "name"],
+    defaultSort: { key: "code" },
+    labelCols: ["code", "name"],
+    quickFields: ["code", "name", "unit", "owner_customer_id"],
+    activeFilter: { col: "status", value: "active" },
+    fields: [
+      code(true, { help: "Mã hàng của khách/chủ hàng (VD 4103-0001). Để trống thì tự đặt MH0001." }),
+      { key: "name", label: "Tên hàng", type: "text", required: true, list: true, maxLength: 300 },
+      {
+        key: "unit", label: "Đơn vị tính", type: "text", required: true, list: true, maxLength: 30, defaultValue: "KG",
+        suggestions: ["KG", "TẤN", "BAO", "PALLET", "THÙNG", "CONT"],
+        help: "Đơn vị ghi trên đơn hàng. Khác KG thì nhập Quy đổi kg để tính tấn cho cước và bốc xếp.",
+      },
+      { key: "kg_per_unit", label: "Quy đổi (kg / 1 đơn vị)", type: "number", min: 0, list: true, help: "KG = 1; Bao 25 kg = 25; Tấn = 1000." },
+      { key: "owner_customer_id", label: "Chủ hàng", type: "reference", ref: "customers", list: true, filter: true, help: "Khách hàng sở hữu mã hàng (VD VAP). Để trống nếu dùng chung." },
+      { key: "m3_per_unit", label: "Thể tích (m³ / 1 đơn vị)", type: "number", min: 0 },
+      { key: "is_dangerous", label: "Hàng nguy hiểm", type: "boolean", list: true, filter: true, defaultValue: false },
+      {
+        key: "status", label: "Trạng thái", type: "select", required: true, list: true, filter: true, defaultValue: "active",
+        options: [
+          { value: "active", label: "Đang dùng", tone: "green" },
+          { value: "inactive", label: "Ngừng dùng", tone: "gray" },
+        ],
+      },
+      notes,
+    ],
+  },
   vehicle_types: {
     key: "vehicle_types",
     table: "vehicle_types",

@@ -24,15 +24,22 @@ export type CarrierCost = {
   amount: number;
   ref_no: string | null;
   note: string | null;
-  fee_type?: { name: string } | null;
+  supplier_id?: string | null;
+  supplier?: { name: string } | null;
+  fee_type?: { name: string; is_loading?: boolean } | null;
 };
 
 /** Phí chi hộ thu khách của chuyến: chép sang làm khoản chi hộ trả 3PL */
 export type CustomerPassThrough = { fee_type_id: string; name: string; amount: number; ref_no: string | null; note: string | null };
 
+/** "loading" = Bốc xếp 3PL (lưu là chi phí khác + loại phí nhóm Bốc xếp + đơn vị nhận tiền riêng) */
+type UiKind = CarrierKind | "loading";
+
 type Line = {
   key: number;
-  kind: CarrierKind;
+  kind: UiKind;
+  supplier_id: string;
+  supplier_label: string;
   fee_type_id: string;
   fee_label: string;
   description: string;
@@ -48,6 +55,8 @@ const txt = (v: number | null | undefined) => (v === null || v === undefined ? "
 const newLine = (p: Partial<Line> = {}): Line => ({
   key: ++seq,
   kind: "freight",
+  supplier_id: "",
+  supplier_label: "",
   fee_type_id: "",
   fee_label: "",
   description: "",
@@ -81,7 +90,24 @@ export function CarrierCostsDialog(props: {
   costs: CarrierCost[];
   customerPassThrough: CustomerPassThrough[];
   paidAmount: number;
+  /** Loại phí nhóm Bốc xếp (để nhập bốc xếp 3PL) */
+  loadingFeeTypes?: { id: string; name: string }[];
+  /** Đơn giá bốc xếp mặc định (đ/tấn) */
+  loadingUnitPrice?: number;
+  /** Trọng lượng chuyến (tấn) */
+  tripTons?: number;
 }) {
+  const loadingTypes = props.loadingFeeTypes ?? [];
+  const defaultLoadingType = loadingTypes.find((t) => /3-?pl/i.test(t.name)) ?? loadingTypes[0];
+  const newLoadingLine = () =>
+    newLine({
+      kind: "loading",
+      fee_type_id: defaultLoadingType?.id ?? "",
+      fee_label: defaultLoadingType?.name ?? "",
+      description: defaultLoadingType?.name ?? "Bốc xếp",
+      quantity: props.tripTons ? formatNumber(props.tripTons) : "",
+      unit_price: formatNumber(props.loadingUnitPrice ?? 40000),
+    });
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [supplier, setSupplier] = useState(props.supplierId ?? "");
@@ -100,7 +126,9 @@ export function CarrierCostsDialog(props: {
       props.costs.length
         ? props.costs.map((c) =>
             newLine({
-              kind: c.cost_kind,
+              kind: c.fee_type?.is_loading ? "loading" : c.cost_kind,
+              supplier_id: c.supplier_id ?? "",
+              supplier_label: c.supplier?.name ?? "",
               fee_type_id: c.fee_type_id ?? "",
               fee_label: c.fee_type?.name ?? "",
               description: c.description,
@@ -139,7 +167,9 @@ export function CarrierCostsDialog(props: {
   const save = () =>
     start(async () => {
       const bad = lines.find((l) => [l.amount, l.quantity, l.unit_price].some((s) => s.trim() && n(s) === null));
-      if (bad) return void toast.error(`Số không hợp lệ ở khoản "${bad.description || CARRIER_KIND_LABEL[bad.kind]}"`);
+      if (bad) return void toast.error(`Số không hợp lệ ở khoản "${bad.description || (bad.kind === "loading" ? "Bốc xếp 3PL" : CARRIER_KIND_LABEL[bad.kind])}"`);
+      const noType = lines.find((l) => l.kind === "loading" && lineAmount(l) > 0 && !l.fee_type_id);
+      if (noType) return void toast.error("Chọn loại phí bốc xếp cho khoản bốc xếp (danh mục Loại phí, nhóm Bốc xếp).");
       const r = await saveCarrierCosts({
         shipmentId: props.shipmentId,
         supplierId: supplier || null,
@@ -148,8 +178,9 @@ export function CarrierCostsDialog(props: {
         lines: lines
           .filter((l) => lineAmount(l) > 0)
           .map((l) => ({
-            kind: l.kind,
+            kind: l.kind === "loading" ? ("other" as const) : l.kind,
             feeTypeId: l.fee_type_id || null,
+            supplierId: l.kind === "loading" || l.kind === "other" ? l.supplier_id || null : null,
             description: l.description,
             quantity: n(l.quantity),
             unitPrice: n(l.unit_price),
@@ -170,7 +201,7 @@ export function CarrierCostsDialog(props: {
         <Truck /> {props.costs.length ? "Sửa chi phí 3PL" : "Nhập chi phí 3PL"}
       </Button>
       <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
-        <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+        <DialogContent className="max-h-[94vh] w-[97vw] max-w-7xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chi phí trả 3PL chuyến {props.code}</DialogTitle>
             <DialogDescription>
@@ -200,7 +231,7 @@ export function CarrierCostsDialog(props: {
           </div>
 
           <div className="space-y-2">
-            <div className="hidden gap-1.5 px-1 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[8.5rem_minmax(0,1fr)_5rem_7rem_8rem_7rem_minmax(0,9rem)_2rem]">
+            <div className="hidden gap-1.5 px-1 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[9rem_minmax(0,1.6fr)_5.5rem_7rem_8.5rem_7rem_minmax(0,9rem)_2rem]">
               <span>Loại khoản</span>
               <span>Nội dung</span>
               <span>SL</span>
@@ -211,18 +242,57 @@ export function CarrierCostsDialog(props: {
               <span />
             </div>
             {lines.map((l, i) => (
-              <div key={l.key} className="grid gap-1.5 rounded-lg border p-2 lg:grid-cols-[8.5rem_minmax(0,1fr)_5rem_7rem_8rem_7rem_minmax(0,9rem)_2rem] lg:items-start lg:border-0 lg:p-0">
+              <div key={l.key} className="grid gap-1.5 rounded-lg border p-2 lg:grid-cols-[9rem_minmax(0,1.6fr)_5.5rem_7rem_8.5rem_7rem_minmax(0,9rem)_2rem] lg:items-start lg:border-0 lg:p-0">
                 <NativeSelect
                   aria-label={`Loại khoản dòng ${i + 1}`}
                   className="h-8"
                   value={l.kind}
-                  onChange={(e) => patch(l.key, { kind: e.target.value as CarrierKind })}
+                  onChange={(e) => {
+                    const k = e.target.value as UiKind;
+                    if (k === "loading") {
+                      const d = newLoadingLine();
+                      patch(l.key, { kind: k, fee_type_id: d.fee_type_id, fee_label: d.fee_label, description: d.description, quantity: l.quantity || d.quantity, unit_price: l.unit_price || d.unit_price, amount: "" });
+                    } else patch(l.key, { kind: k, ...(l.kind === "loading" ? { fee_type_id: "", fee_label: "", supplier_id: "", supplier_label: "" } : {}) });
+                  }}
                 >
                   <option value="freight">Cước 3PL</option>
                   <option value="pass_through">Chi hộ 3PL</option>
+                  <option value="loading">Bốc xếp 3PL</option>
                   <option value="other">Chi phí khác</option>
                 </NativeSelect>
-                {l.kind === "pass_through" ? (
+                {l.kind === "loading" ? (
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    <div>
+                      <ReferenceSelect
+                        id={`cc-vendor-${l.key}`}
+                        refKey="suppliers"
+                        value={l.supplier_id}
+                        initialLabel={l.supplier_label}
+                        onChange={(id, label) => patch(l.key, { supplier_id: id, supplier_label: label })}
+                      />
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">Đơn vị bốc xếp 3PL nhận tiền (trống = nhà xe của chuyến)</p>
+                    </div>
+                    <div>
+                      <NativeSelect
+                        aria-label={`Loại phí bốc xếp dòng ${i + 1}`}
+                        className="h-8"
+                        value={l.fee_type_id}
+                        onChange={(e) => {
+                          const t = loadingTypes.find((x) => x.id === e.target.value);
+                          patch(l.key, { fee_type_id: e.target.value, fee_label: t?.name ?? "", description: t?.name ?? l.description });
+                        }}
+                      >
+                        <option value="">Chọn loại phí bốc xếp</option>
+                        {loadingTypes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">SL = tấn, Đơn giá = đ/tấn (tự tính), hoặc gõ thẳng Số tiền</p>
+                    </div>
+                  </div>
+                ) : l.kind === "pass_through" ? (
                   <div>
                     <ReferenceSelect
                       id={`cc-fee-${l.key}`}
@@ -307,6 +377,9 @@ export function CarrierCostsDialog(props: {
               <Button type="button" size="sm" variant="outline" onClick={() => setLines((ls) => [...ls, newLine({ kind: ls.some((x) => x.kind === "freight") ? "pass_through" : "freight" })])}>
                 <Plus /> Thêm khoản
               </Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => setLines((ls) => [...ls, newLoadingLine()])} disabled={!loadingTypes.length}>
+                <Plus /> Thêm bốc xếp 3PL
+              </Button>
               <Button type="button" size="sm" variant="outline" onClick={copyPassThrough} disabled={!props.customerPassThrough.length}>
                 <Copy /> Chép phí chi hộ thu khách
               </Button>
@@ -316,15 +389,15 @@ export function CarrierCostsDialog(props: {
             </p>
           </div>
 
-          <div className="grid gap-1 rounded-md bg-muted/50 p-3 text-sm sm:grid-cols-4">
-            {(["freight", "pass_through", "other"] as CarrierKind[]).map((k) => (
+          <div className="grid gap-1 rounded-md bg-muted/50 p-3 text-sm sm:grid-cols-5">
+            {(["freight", "pass_through", "loading", "other"] as UiKind[]).map((k) => (
               <div key={k}>
-                <div className="text-xs text-muted-foreground">{CARRIER_KIND_LABEL[k]}</div>
+                <div className="text-xs text-muted-foreground">{k === "loading" ? "Bốc xếp 3PL" : CARRIER_KIND_LABEL[k]}</div>
                 <div className="tabular-nums">{formatVND(lines.filter((l) => l.kind === k).reduce((a, l) => a + lineAmount(l), 0))}</div>
               </div>
             ))}
             <div>
-              <div className="text-xs text-muted-foreground">Tổng phải trả nhà xe</div>
+              <div className="text-xs text-muted-foreground">Tổng phải trả 3PL</div>
               <div className="font-semibold tabular-nums">{formatVND(total)}</div>
             </div>
           </div>

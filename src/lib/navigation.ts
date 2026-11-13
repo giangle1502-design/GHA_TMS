@@ -45,6 +45,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/de-nghi", label: "Đề nghị chi, mua sắm", icon: "ClipboardList", anyOf: ["purchase_requests.view", "purchase_requests.create", "purchase_requests.pay"] },
       { href: "/cong-no", label: "Công nợ", icon: "Wallet", anyOf: ["receivables.view", "payments.view"] },
       { href: "/thue-ngoai", label: "Xe thuê ngoài 3PL", icon: "Handshake", anyOf: ["reports.view", "receivables.view"] },
+      { href: "/thue-ngoai/boc-xep", label: "Bốc xếp 3PL", icon: "PackageOpen", anyOf: ["carriers.view"] },
       { href: "/tong-chi", label: "Tổng chi theo nhóm", icon: "PieChart", anyOf: ["reports.view"] },
       { href: "/phe-duyet", label: "Phê duyệt", icon: "BadgeCheck", anyOf: ["approvals.view"] },
       { href: "/bao-cao", label: "Báo cáo", icon: "BarChart3", anyOf: ["reports.view"] },
@@ -53,6 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Quản trị",
     items: [
+      { href: "/danh-muc?tab=products", label: "Danh mục mã hàng", icon: "Package", anyOf: ["products.view"] },
       { href: "/danh-muc", label: "Danh mục hệ thống", icon: "ListTree", anyOf: ["catalogs.view"] },
       { href: "/truong-du-lieu", label: "Quản lý trường dữ liệu", icon: "Columns3", anyOf: ["fields.view"] },
       { href: "/bieu-mau", label: "Quản lý biểu mẫu", icon: "FileInput", anyOf: ["forms.view"], phase: 8 },
