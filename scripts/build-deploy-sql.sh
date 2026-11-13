@@ -7,7 +7,7 @@ OUT=supabase/deploy/cai-dat-lan-dau.sql
 mkdir -p "$(dirname "$OUT")"
 {
   echo "-- ============================================================================="
-  echo "-- KHÁNH HÀ TMS – CÀI ĐẶT CƠ SỞ DỮ LIỆU LẦN ĐẦU"
+  echo "-- GHA-TMS – CÀI ĐẶT CƠ SỞ DỮ LIỆU LẦN ĐẦU"
   echo "-- Dán toàn bộ tệp vào Supabase → SQL Editor → Run. Chỉ chạy MỘT LẦN trên dự án mới."
   echo "-- Không chứa dữ liệu mẫu. Tệp được ghép tự động từ supabase/migrations/ – không sửa tay."
   echo "-- ============================================================================="

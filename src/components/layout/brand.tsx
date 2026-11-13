@@ -7,7 +7,7 @@ export function Brand() {
         <Truck className="size-5" />
       </div>
       <div className="leading-tight">
-        <div className="text-base font-bold tracking-wide text-white">KHÁNH HÀ TMS</div>
+        <div className="text-base font-bold tracking-wide text-white">GHA-TMS</div>
         <div className="text-[11px] text-sidebar-muted">Quản lý vận tải</div>
       </div>
     </div>

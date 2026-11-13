@@ -23,7 +23,7 @@ export async function exportTableView(input: TableExportInput): Promise<ActionRe
     await requirePermission("dispatch.view");
     const d = schema.parse(input);
     const wb = new ExcelJS.Workbook();
-    wb.creator = "KHÁNH HÀ TMS";
+    wb.creator = "GHA-TMS";
     const ws = wb.addWorksheet(d.sheet.replace(/[\\/?*[\]:]/g, " "));
     let headerRow = 1;
     if (d.title) {

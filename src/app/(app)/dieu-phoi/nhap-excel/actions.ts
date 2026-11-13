@@ -128,7 +128,7 @@ export async function downloadImportTemplate(): Promise<ActionResult<FileResult>
     const supabase = await createClient();
     const ctx = await loadContext(supabase, me.permissions);
     const wb = new ExcelJS.Workbook();
-    wb.creator = "KHÁNH HÀ TMS";
+    wb.creator = "GHA-TMS";
     const ws = wb.addWorksheet(SHEET);
     const guide = wb.addWorksheet("Hướng dẫn");
     const lists = wb.addWorksheet("Danh mục");

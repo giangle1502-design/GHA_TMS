@@ -91,8 +91,8 @@ describe("Excel bảng kê", () => {
     expect(ws.getCell(1, 1).value).toBe("CÔNG TY ABC");
     expect(texts).toContain("BẢNG KÊ CƯỚC PHÍ VẬN CHUYỂN 11-2026");
     expect(texts).toContain("(Từ ngày 01/11/2026 đến ngày 30/11/2026)");
-    expect(texts).toContain("CÔNG TY TNHH THƯƠNG MẠI DỊCH VỤ VẬN TẢI KHÁNH HÀ");
-    expect(texts).toContain("Mã số thuế: 0313167085");
+    expect(texts).toContain("CÔNG TY TNHH GHA LOGISTICS & SERVICE");
+    expect(texts).toContain("Mã số thuế: 3703489735");
     expect(texts).toContain("TỔNG CỘNG");
     expect(texts).toContain("7750000");
     expect(texts.some((t) => t === "Bằng chữ: Bảy triệu bảy trăm năm mươi nghìn đồng.")).toBe(true);

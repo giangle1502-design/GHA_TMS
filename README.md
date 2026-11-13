@@ -1,5 +1,7 @@
-# KHÁNH HÀ TMS – Phần mềm quản lý vận tải (Công ty Vận tải Khánh Hà)
+# GHA-TMS – Phần mềm quản lý vận tải (Công ty TNHH GHA Logistics & Service)
 
+
+Dựng trên nền mã nguồn Khánh Hà TMS. Chuyển dữ liệu từ app QLVT cũ: [`docs/gha/chuyen-du-lieu.md`](docs/gha/chuyen-du-lieu.md).
 Ứng dụng web quản lý vận tải: điều phối, chuyến xe, ứng dụng tài xế, chi phí, phê duyệt, quyết toán, công nợ, báo cáo.
 Công nghệ: Next.js 16 (App Router, TypeScript) · Tailwind CSS 4 · Supabase (PostgreSQL, Auth Google, Storage) · Vercel.
 

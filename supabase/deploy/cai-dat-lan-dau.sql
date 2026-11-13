@@ -1,5 +1,5 @@
 -- =============================================================================
--- KHÁNH HÀ TMS – CÀI ĐẶT CƠ SỞ DỮ LIỆU LẦN ĐẦU
+-- GHA-TMS – CÀI ĐẶT CƠ SỞ DỮ LIỆU LẦN ĐẦU
 -- Dán toàn bộ tệp vào Supabase → SQL Editor → Run. Chỉ chạy MỘT LẦN trên dự án mới.
 -- Không chứa dữ liệu mẫu. Tệp được ghép tự động từ supabase/migrations/ – không sửa tay.
 -- =============================================================================
@@ -21504,5 +21504,1270 @@ begin
 end;
 $$;
 revoke all on function private.payroll_compute(uuid, date, numeric, numeric, jsonb, boolean) from public, anon, authenticated;
+
+-- >>> 20261113009001_gha_xe_tai_ma_hang.sql
+-- =============================================================================
+-- GHA 9001: Phân loại phương tiện (xe tải / đầu kéo / rơ moóc) + Danh mục mã hàng
+--           + Đơn cha có dòng mã hàng con (1 shipment = 1 đơn, nhiều mã hàng)
+-- Chạy sau toàn bộ migration của nền Khánh Hà TMS.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 1. LOẠI PHƯƠNG TIỆN
+--    truck   = Xe tải (tự chở hàng trên thùng; có tải trọng, kiểu thùng, kích thước thùng)
+--    tractor = Đầu kéo (kéo rơ moóc/sơ mi rơ moóc chở container hoặc hàng rời)
+--    trailer = Rơ moóc / sơ mi rơ moóc (không tự chạy, không có tài xế)
+-- -----------------------------------------------------------------------------
+alter table public.vehicle_types
+  add column if not exists vehicle_kind text not null default 'truck'
+    check (vehicle_kind in ('truck', 'tractor', 'trailer'));
+comment on column public.vehicle_types.vehicle_kind is 'truck = xe tải, tractor = đầu kéo, trailer = rơ moóc/sơ mi rơ moóc';
+
+alter table public.vehicles
+  add column if not exists vehicle_kind text not null default 'truck'
+    check (vehicle_kind in ('truck', 'tractor', 'trailer')),
+  add column if not exists payload_tons numeric(8,2) check (payload_tons is null or payload_tons >= 0),
+  add column if not exists body_type text
+    check (body_type is null or body_type in ('closed', 'canvas', 'flatbed', 'dump', 'refrigerated', 'tank', 'container_chassis', 'other')),
+  add column if not exists body_length_m numeric(5,2) check (body_length_m is null or body_length_m > 0),
+  add column if not exists body_width_m numeric(5,2) check (body_width_m is null or body_width_m > 0),
+  add column if not exists body_height_m numeric(5,2) check (body_height_m is null or body_height_m > 0),
+  add column if not exists body_volume_m3 numeric(8,2) generated always as
+    (round(body_length_m * body_width_m * body_height_m, 2)) stored,
+  add column if not exists trailer_size text check (trailer_size is null or trailer_size in ('20', '40', '45', 'flex')),
+  add column if not exists default_trailer_id uuid references public.vehicles (id) on delete set null;
+comment on column public.vehicles.vehicle_kind is 'truck = xe tải, tractor = đầu kéo, trailer = rơ moóc; lấy theo loại xe nếu có';
+comment on column public.vehicles.body_type is 'Kiểu thùng xe tải: closed kín, canvas mui bạt, flatbed lửng, dump ben, refrigerated đông lạnh, tank bồn';
+comment on column public.vehicles.default_trailer_id is 'Rơ moóc thường kéo (chỉ cho đầu kéo)';
+create index if not exists vehicles_kind_idx on public.vehicles (vehicle_kind);
+
+-- Quy tắc: lấy loại phương tiện theo loại xe; rơ moóc không có tài xế; chỉ đầu kéo mới gắn rơ moóc
+create or replace function private.vehicles_kind_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_kind text;
+begin
+  if new.vehicle_type_id is not null then
+    select vt.vehicle_kind into v_kind from public.vehicle_types vt where vt.id = new.vehicle_type_id;
+    if v_kind is not null then new.vehicle_kind := v_kind; end if;
+  end if;
+  if new.vehicle_kind = 'trailer' and new.assigned_driver_id is not null then
+    raise exception 'Rơ moóc không gắn tài xế' using errcode = '23514';
+  end if;
+  if new.default_trailer_id is not null then
+    if new.vehicle_kind <> 'tractor' then
+      raise exception 'Chỉ đầu kéo mới gắn rơ moóc' using errcode = '23514';
+    end if;
+    if not exists (select 1 from public.vehicles t where t.id = new.default_trailer_id and t.vehicle_kind = 'trailer') then
+      raise exception 'Xe được gắn làm rơ moóc không phải rơ moóc' using errcode = '23514';
+    end if;
+  end if;
+  if new.vehicle_kind <> 'truck' then
+    new.body_type := case when new.vehicle_kind = 'trailer' then new.body_type else null end;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_vehicles_kind_guard on public.vehicles;
+create trigger trg_vehicles_kind_guard before insert or update on public.vehicles
+for each row execute function private.vehicles_kind_guard();
+
+-- Đổi loại của "loại xe" thì cập nhật các xe thuộc loại đó
+create or replace function private.vehicle_types_kind_sync()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.vehicle_kind is distinct from old.vehicle_kind then
+    update public.vehicles set vehicle_kind = new.vehicle_kind where vehicle_type_id = new.id;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_vehicle_types_kind_sync on public.vehicle_types;
+create trigger trg_vehicle_types_kind_sync after update of vehicle_kind on public.vehicle_types
+for each row execute function private.vehicle_types_kind_sync();
+
+-- Chuyến: rơ moóc kéo theo + số container + seal
+alter table public.shipments
+  add column if not exists trailer_id uuid references public.vehicles (id),
+  add column if not exists container_no text check (container_no is null or length(container_no) <= 30),
+  add column if not exists seal_no text check (seal_no is null or length(seal_no) <= 50);
+comment on column public.shipments.trailer_id is 'Rơ moóc của chuyến (chỉ khi xe chạy là đầu kéo)';
+create index if not exists shipments_trailer_idx on public.shipments (trailer_id) where trailer_id is not null;
+
+create or replace function private.shipments_vehicle_kind_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_kind text;
+begin
+  if new.vehicle_id is not null then
+    select v.vehicle_kind into v_kind from public.vehicles v where v.id = new.vehicle_id;
+    if v_kind = 'trailer' then
+      raise exception 'Xe chạy chuyến không được là rơ moóc; chọn đầu kéo hoặc xe tải' using errcode = '23514';
+    end if;
+  end if;
+  if new.trailer_id is not null then
+    if coalesce(v_kind, 'tractor') <> 'tractor' then
+      raise exception 'Chỉ chuyến chạy bằng đầu kéo mới có rơ moóc' using errcode = '23514';
+    end if;
+    if not exists (select 1 from public.vehicles t where t.id = new.trailer_id and t.vehicle_kind = 'trailer') then
+      raise exception 'Xe được chọn làm rơ moóc không phải rơ moóc' using errcode = '23514';
+    end if;
+  elsif v_kind = 'tractor' and (tg_op = 'INSERT' or new.vehicle_id is distinct from old.vehicle_id) then
+    select v.default_trailer_id into new.trailer_id from public.vehicles v where v.id = new.vehicle_id;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_shipments_vehicle_kind_guard on public.shipments;
+create trigger trg_shipments_vehicle_kind_guard before insert or update of vehicle_id, trailer_id on public.shipments
+for each row execute function private.shipments_vehicle_kind_guard();
+
+-- Loại xe mẫu (sửa/thêm được ở Danh mục → Loại xe)
+insert into public.vehicle_types (code, name, payload_tons, vehicle_kind, sort_order) values
+  ('XT1T5', 'Xe tải 1.5 tấn', 1.5, 'truck', 10),
+  ('XT2T5', 'Xe tải 2.5 tấn', 2.5, 'truck', 11),
+  ('XT5T', 'Xe tải 5 tấn', 5, 'truck', 12),
+  ('XT10T', 'Xe tải 10 tấn', 10, 'truck', 14),
+  ('XT15T', 'Xe tải 15 tấn', 15, 'truck', 15),
+  ('XT', 'Xe tải (chưa rõ tải trọng)', null, 'truck', 19),
+  ('DK', 'Đầu kéo', null, 'tractor', 20),
+  ('RM20', 'Sơ mi rơ moóc 20''', null, 'trailer', 30),
+  ('RM40', 'Sơ mi rơ moóc 40''', null, 'trailer', 31),
+  ('RMSAN', 'Rơ moóc sàn / lửng', null, 'trailer', 32)
+on conflict (code) do nothing;
+
+-- -----------------------------------------------------------------------------
+-- 2. DANH MỤC MÃ HÀNG
+-- -----------------------------------------------------------------------------
+insert into public.catalogs (code, name, description, is_system) values
+  ('product_group', 'Nhóm hàng', 'Phân nhóm mã hàng (VD: PP, HDPE, LLDPE...)', true),
+  ('product_unit', 'Đơn vị tính hàng hóa', 'KG, TẤN, BAO, PALLET, CONT...', true),
+  ('product_packing', 'Quy cách đóng gói', 'Bao 25kg, Jumbo 1 tấn, Pallet...', true)
+on conflict (code) do nothing;
+insert into public.catalog_items (catalog_id, code, name, sort_order, metadata)
+select c.id, v.code, v.name, v.sort, v.meta::jsonb
+from public.catalogs c
+join (values
+  ('product_unit', 'KG', 'Kg', 1, '{"kg_per_unit": 1}'),
+  ('product_unit', 'TAN', 'Tấn', 2, '{"kg_per_unit": 1000}'),
+  ('product_unit', 'BAO', 'Bao', 3, '{}'),
+  ('product_unit', 'PALLET', 'Pallet', 4, '{}'),
+  ('product_unit', 'THUNG', 'Thùng', 5, '{}'),
+  ('product_packing', 'BAO25', 'Bao 25 kg', 1, '{"kg_per_pack": 25}'),
+  ('product_packing', 'JUMBO', 'Bao jumbo 1 tấn', 2, '{"kg_per_pack": 1000}')
+) as v(cat, code, name, sort, meta) on v.cat = c.code
+on conflict (catalog_id, code) do nothing;
+
+create table if not exists public.products (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique check (length(trim(code)) between 1 and 100),
+  name text not null check (length(trim(name)) between 1 and 300),
+  unit text not null default 'KG' check (length(unit) <= 30),
+  group_id uuid references public.catalog_items (id),
+  packing_id uuid references public.catalog_items (id),
+  owner_customer_id uuid references public.customers (id),
+  kg_per_unit numeric(14,4) check (kg_per_unit is null or kg_per_unit > 0),
+  m3_per_unit numeric(14,6) check (m3_per_unit is null or m3_per_unit > 0),
+  is_dangerous boolean not null default false,
+  status text not null default 'active' check (status in ('active', 'inactive')),
+  notes text check (notes is null or length(notes) <= 1000),
+  custom_fields jsonb not null default '{}'::jsonb check (jsonb_typeof(custom_fields) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  updated_by uuid
+);
+comment on table public.products is 'Danh mục mã hàng (hàng hóa vận chuyển)';
+comment on column public.products.owner_customer_id is 'Chủ hàng (VD: VAP, PLA); để trống nếu dùng chung';
+comment on column public.products.kg_per_unit is 'Quy đổi 1 đơn vị tính ra kg (để tính tấn cho cước/bốc xếp). KG = 1';
+create index if not exists products_search_idx on public.products using gin (to_tsvector('simple', code || ' ' || name));
+select private.attach_standard_triggers('public.products');
+create trigger trg_products_audit after insert or update or delete on public.products
+  for each row execute function private.audit_row_change('id');
+create trigger trg_products_code before insert on public.products
+  for each row execute function private.fill_master_code('MH', '4');
+
+alter table public.products enable row level security;
+create policy products_select on public.products for select to authenticated
+  using ((select private.is_active_user()));
+create policy products_insert on public.products for insert to authenticated
+  with check ((select private.has_perm('products.create')));
+create policy products_update on public.products for update to authenticated
+  using ((select private.has_perm('products.update'))) with check ((select private.has_perm('products.update')));
+create policy products_delete on public.products for delete to authenticated
+  using ((select private.has_perm('products.delete')));
+revoke all on public.products from anon;
+grant select, insert, update, delete on public.products to authenticated;
+
+insert into public.permissions (code, module, action, name, sort_order) values
+  ('products.view', 'products', 'view', 'Xem - Mã hàng', 2701),
+  ('products.create', 'products', 'create', 'Thêm - Mã hàng', 2702),
+  ('products.update', 'products', 'update', 'Sửa - Mã hàng', 2703),
+  ('products.delete', 'products', 'delete', 'Xóa - Mã hàng', 2704),
+  ('products.export', 'products', 'export', 'Xuất dữ liệu - Mã hàng', 2705)
+on conflict (code) do nothing;
+-- Ai có quyền với Địa điểm thì có quyền tương ứng với Mã hàng
+insert into public.role_permissions (role_id, permission_code)
+select rp.role_id, replace(rp.permission_code, 'locations.', 'products.')
+from public.role_permissions rp
+where rp.permission_code in ('locations.view', 'locations.create', 'locations.update', 'locations.delete', 'locations.export')
+on conflict do nothing;
+
+-- -----------------------------------------------------------------------------
+-- 3. ĐƠN CHA + DÒNG MÃ HÀNG CON
+--    transport_orders = đơn cha (Ngày giao, Số shipment, Điểm nhận, Điểm giao, Tổng SL tự tính)
+--    transport_order_items = mã hàng con (Mã, Tên, SL, đã xếp xe)
+--    shipment_items.order_item_id = dòng hàng trên xe thuộc dòng nào của đơn
+-- -----------------------------------------------------------------------------
+alter table public.transport_orders
+  add column if not exists delivery_date date,
+  add column if not exists ref_no text check (ref_no is null or length(ref_no) <= 100),
+  add column if not exists voucher_no text check (voucher_no is null or length(voucher_no) <= 100),
+  add column if not exists pickup_location_id uuid references public.locations (id),
+  add column if not exists delivery_location_id uuid references public.locations (id),
+  add column if not exists destination_note text check (destination_note is null or length(destination_note) <= 500),
+  add column if not exists carrier_supplier_id uuid references public.suppliers (id);
+comment on column public.transport_orders.ref_no is 'Số đơn của khách / số đơn cũ (ORD-...)';
+comment on column public.transport_orders.voucher_no is 'Số phiếu xuất kho (PXK)';
+
+create table if not exists public.transport_order_items (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references public.transport_orders (id) on delete cascade,
+  line_no smallint not null check (line_no between 1 and 500),
+  product_id uuid references public.products (id),
+  item_code text check (item_code is null or length(item_code) <= 100),
+  item_name text check (item_name is null or length(item_name) <= 300),
+  unit text check (unit is null or length(unit) <= 30),
+  quantity numeric(16,3) not null check (quantity >= 0),
+  note text check (note is null or length(note) <= 500),
+  custom_fields jsonb not null default '{}'::jsonb check (jsonb_typeof(custom_fields) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by uuid,
+  updated_by uuid,
+  unique (order_id, line_no)
+);
+comment on table public.transport_order_items is 'Mã hàng của đơn (dòng con của đơn cha)';
+create index if not exists transport_order_items_product_idx on public.transport_order_items (product_id);
+select private.attach_standard_triggers('public.transport_order_items');
+create trigger trg_transport_order_items_audit after insert or update or delete on public.transport_order_items
+  for each row execute function private.audit_row_change('id');
+
+alter table public.shipment_items
+  add column if not exists product_id uuid references public.products (id),
+  add column if not exists order_item_id uuid references public.transport_order_items (id) on delete set null,
+  add column if not exists weight_kg numeric(16,3) check (weight_kg is null or weight_kg >= 0);
+create index if not exists shipment_items_order_item_idx on public.shipment_items (order_item_id) where order_item_id is not null;
+create index if not exists shipment_items_product_idx on public.shipment_items (product_id) where product_id is not null;
+
+-- Chọn mã hàng thì tự điền mã/tên/ĐVT và quy ra kg
+create or replace function private.fill_item_from_product()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  p public.products;
+begin
+  if new.product_id is not null then
+    select * into p from public.products where id = new.product_id;
+    new.item_code := coalesce(nullif(new.item_code, ''), p.code);
+    new.item_name := coalesce(nullif(new.item_name, ''), p.name);
+    new.unit := coalesce(nullif(new.unit, ''), p.unit);
+    if tg_table_name = 'shipment_items' then
+      if new.weight_kg is null and p.kg_per_unit is not null and new.quantity is not null then
+        new.weight_kg := round(new.quantity * p.kg_per_unit, 3);
+      end if;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+create trigger trg_order_items_product before insert or update of product_id, quantity on public.transport_order_items
+  for each row execute function private.fill_item_from_product();
+create trigger trg_shipment_items_product before insert or update of product_id, quantity on public.shipment_items
+  for each row execute function private.fill_item_from_product();
+
+alter table public.transport_order_items enable row level security;
+create policy transport_order_items_select on public.transport_order_items for select to authenticated
+  using (exists (select 1 from public.transport_orders o where o.id = order_id));
+create policy transport_order_items_write on public.transport_order_items for all to authenticated
+  using ((select private.has_perm('dispatch.update')) or (select private.has_perm('dispatch.create')))
+  with check ((select private.has_perm('dispatch.update')) or (select private.has_perm('dispatch.create')));
+revoke all on public.transport_order_items from anon;
+grant select, insert, update, delete on public.transport_order_items to authenticated;
+
+-- Số lượng đã xếp xe / còn lại của từng dòng mã hàng (không tính chuyến hủy)
+create or replace view public.order_item_balance with (security_invoker = true) as
+select oi.id as order_item_id, oi.order_id, oi.line_no, oi.product_id, oi.item_code, oi.item_name, oi.unit,
+       oi.quantity,
+       coalesce(sum(si.quantity) filter (where s.status <> 'cancelled'), 0) as assigned_quantity,
+       oi.quantity - coalesce(sum(si.quantity) filter (where s.status <> 'cancelled'), 0) as remaining_quantity
+from public.transport_order_items oi
+left join public.shipment_items si on si.order_item_id = oi.id
+left join public.shipments s on s.id = si.shipment_id
+group by oi.id;
+grant select on public.order_item_balance to authenticated;
+
+-- Tổng số lượng đơn cha (tự tính)
+create or replace view public.order_totals with (security_invoker = true) as
+select o.id as order_id, o.order_code,
+       coalesce(sum(b.quantity), 0) as total_quantity,
+       coalesce(sum(b.assigned_quantity), 0) as assigned_quantity,
+       coalesce(sum(b.remaining_quantity), 0) as remaining_quantity,
+       count(b.order_item_id) as item_count
+from public.transport_orders o
+left join public.order_item_balance b on b.order_id = o.id
+group by o.id;
+grant select on public.order_totals to authenticated;
+
+
+-- -----------------------------------------------------------------------------
+-- 4. ẨN 3-PL VỚI TÀI KHOẢN KHÁCH HÀNG
+--    Quyền mới "carriers.view" (Xem nhà xe 3-PL và cước 3-PL). Chỉ vai trò nội bộ GHA có.
+--    Không có quyền này: không thấy nhà xe 3-PL/đơn vị vận tải, cước 3-PL, công nợ trả 3-PL;
+--    danh sách xe xem qua public.vehicles_for_customer (không có chủ xe, không có "thuê ngoài"),
+--    nên khách chỉ biết đó là xe của GHA.
+-- -----------------------------------------------------------------------------
+insert into public.permissions (code, module, action, name, description, sort_order) values
+  ('carriers.view', 'carriers', 'view', 'Xem nhà xe 3-PL và cước 3-PL', 'Không cấp cho tài khoản khách hàng', 2710),
+  ('vehicles.view_basic', 'vehicles', 'view_basic', 'Xem biển số, loại xe (không thấy chủ xe)', 'Dùng cho tài khoản khách hàng', 2711)
+on conflict (code) do nothing;
+insert into public.role_permissions (role_id, permission_code)
+select r.id, p.code from public.roles r cross join (values ('carriers.view'), ('vehicles.view_basic')) p(code)
+where r.code in ('super_admin', 'admin', 'director', 'accountant', 'dispatcher', 'ops_manager')
+on conflict do nothing;
+
+insert into public.roles (code, name, description, is_system, sort_order)
+values ('customer_admin', 'Quản trị bên khách hàng', 'Tài khoản của khách (VD: VAP): xem đơn, chuyến, xe của GHA; không thấy 3-PL và cước 3-PL', true, 90)
+on conflict (code) do nothing;
+insert into public.role_permissions (role_id, permission_code)
+select r.id, p.code from public.roles r
+cross join (values ('dispatch.view'), ('vehicles.view_basic'), ('products.view'), ('locations.view')) p(code)
+where r.code = 'customer_admin'
+on conflict do nothing;
+
+create or replace function private.can_view_3pl() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select private.has_perm('carriers.view')
+$$;
+
+drop policy if exists shipment_carrier_costs_select on public.shipment_carrier_costs;
+create policy shipment_carrier_costs_select on public.shipment_carrier_costs for select to authenticated
+  using ((select private.can_view_3pl()) and ((select private.has_perm('dispatch.view')) or (select private.has_perm('receivables.view'))
+         or (select private.has_perm('reports.view')) or (select private.has_perm('expenses.view'))));
+
+drop policy if exists suppliers_select on public.suppliers;
+create policy suppliers_select on public.suppliers for select to authenticated
+  using ((select private.has_perm('customers.view'))
+         and (coalesce(custom_fields ->> 'supplier_kind', '') not in ('3pl', 'carrier', 'internal_fleet', 'self_pickup')
+              or (select private.can_view_3pl())));
+
+drop policy if exists payables_select on public.payables;
+create policy payables_select on public.payables for select to authenticated
+  using ((select private.has_perm('receivables.view')) and (kind <> 'carrier' or (select private.can_view_3pl())));
+
+-- Danh sách xe cho khách: không có chủ xe, kiểu sở hữu, tài chính
+create or replace view public.vehicles_for_customer as
+select v.id, v.code, v.plate_number, v.vehicle_kind, vt.name as vehicle_type_name, coalesce(v.payload_tons, vt.payload_tons) as payload_tons,
+       v.body_type, v.body_length_m, v.body_width_m, v.body_height_m, v.body_volume_m3, v.trailer_size, v.status
+from public.vehicles v
+left join public.vehicle_types vt on vt.id = v.vehicle_type_id
+where v.archived_at is null
+  and ((select private.has_perm('vehicles.view_basic')) or (select private.has_perm('vehicles.view')));
+revoke all on public.vehicles_for_customer from anon;
+grant select on public.vehicles_for_customer to authenticated;
+
+-- Cho phép thêm trường riêng (cột bổ sung) cho Mã hàng và dòng mã hàng của đơn
+CREATE OR REPLACE FUNCTION private.custom_field_table(p_module text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO ''
+AS $function$
+  select case p_module
+    when 'vehicles' then 'vehicles'
+    when 'drivers' then 'drivers'
+    when 'customers' then 'customers'
+    when 'suppliers' then 'suppliers'
+    when 'locations' then 'locations'
+    when 'shipments' then 'shipments'
+    when 'transport_orders' then 'transport_orders'
+    when 'vehicle_types' then 'vehicle_types'
+    when 'routes' then 'routes'
+    when 'price_lists' then 'transport_price_lists'
+    when 'fuel_rules' then 'fuel_support_rules'
+    when 'expense_categories' then 'expense_categories'
+    when 'expense_groups' then 'expense_groups'
+    when 'banks' then 'banks'
+    when 'payment_methods' then 'payment_methods'
+    when 'company_entities' then 'company_entities'
+    when 'salary_rules' then 'salary_rules'
+    when 'maintenance_records' then 'maintenance_records'
+    when 'catalog_items' then 'catalog_items'
+    when 'advances' then 'advance_requests'
+    when 'expenses' then 'shipment_expenses'
+    when 'payrolls' then 'driver_payrolls'
+    when 'receivables' then 'receivables'
+    when 'payables' then 'payables'
+    when 'shipment_items' then 'shipment_items'
+    when 'fee_types' then 'fee_types'
+    when 'fee_groups' then 'fee_groups'
+    when 'declaration_types' then 'declaration_types'
+    when 'leaves' then 'leave_requests'
+    when 'purchase_requests' then 'purchase_requests'
+    when 'purchase_request_types' then 'purchase_request_types'
+    when 'tasks' then 'tasks'
+    when 'transport_plans' then 'transport_plans'
+    when 'pay_zones' then 'pay_zones'
+    when 'trip_pay_rates' then 'trip_pay_rates'
+    when 'pay_components' then 'pay_components'
+    when 'driver_pay_components' then 'driver_pay_components'
+    when 'pay_holidays' then 'pay_holidays'
+    when 'products' then 'products'
+    when 'order_items' then 'transport_order_items'
+  end;
+$function$;
+
+-- Xóa dữ liệu thử (GĐ Khánh Hà) phải xóa cả dòng mã hàng của đơn
+CREATE OR REPLACE FUNCTION public.purge_test_data(p_password text, p_confirm text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+declare
+  v_before jsonb;
+begin
+  begin
+    perform private.check_purge_password(p_password);
+  exception when sqlstate '42501' or sqlstate '22023' then
+    if sqlerrm = 'Mật khẩu xóa dữ liệu không đúng.' then
+      insert into public.audit_logs (actor_id, action, entity_type, entity_id, reason)
+      values (auth.uid(), 'test_data.password_failed', 'system', 'du-lieu-thu', 'Nhập sai mật khẩu xóa dữ liệu');
+    end if;
+    return jsonb_build_object('ok', false, 'error', sqlerrm);
+  end;
+  if coalesce(upper(trim(p_confirm)), '') <> 'XOA DU LIEU' then
+    raise exception 'Chữ xác nhận chưa đúng. Gõ XOA DU LIEU để xóa.' using errcode = '22023';
+  end if;
+
+  v_before := private.test_data_counts_raw();
+  insert into public.audit_logs (actor_id, action, entity_type, entity_id, old_data, reason)
+  values (auth.uid(), 'test_data.purge', 'system', 'du-lieu-thu', v_before, 'Xóa dữ liệu thử trong ứng dụng');
+
+  delete from public.documents
+  where entity_type in ('shipment', 'shipment_expense', 'advance_request', 'payment', 'driver_payroll', 'approval_request', 'receivable', 'payable',
+                        'transport_order', 'purchase_request');
+
+  truncate table
+    public.advance_transactions,
+    public.payments,
+    public.shipment_expenses,
+    public.advance_requests,
+    public.purchase_requests,
+    public.driver_payrolls,
+    public.approval_steps,
+    public.approval_requests,
+    public.payables,
+    public.receivables,
+    public.shipment_assignments,
+    public.shipment_status_history,
+    public.shipment_items,
+    public.transport_order_items,
+    public.shipment_fees,
+    public.shipment_carrier_costs,
+    public.shipments,
+    public.transport_orders,
+    public.transport_plans,
+    public.notifications,
+    private.driver_upload_tickets;
+
+  delete from public.code_sequences where scope in ('ORD', 'SHP', 'APR', 'ADV', 'PAY', 'AR', 'AP', 'BL', 'DN');
+  delete from public.code_sequences where scope = 'master:transport_plans';
+  return jsonb_build_object('ok', true, 'counts', v_before);
+end;
+$function$;
+
+-- Thương hiệu GHA
+update public.system_settings set value = '"CÔNG TY TNHH GHA LOGISTICS & SERVICE"'::jsonb where key = 'company.name';
+
+-- >>> 20261113009002_legacy_import.sql
+-- =============================================================================
+-- GHA 9002: Chuyển dữ liệu từ file sao lưu JSON của app QLVT cũ (Firebase) vào GHA-TMS
+--
+-- Cách dùng (script scripts/import-legacy.mjs làm hộ):
+--   1. Nạp file:  insert into legacy.backup_files(file_name, content) values (..., <json>)
+--   2. Tách:      select legacy.load_backup(<id>);       -- bung từng bản ghi vào legacy.raw_docs
+--   3. Chuyển:    select * from legacy.run_import();     -- trả về bảng đối chiếu số lượng
+--   Chạy lại được: bản ghi đã chuyển (có trong legacy.id_map) sẽ bỏ qua, chỉ thêm bản ghi mới.
+--
+-- Toàn bộ bản gốc (kể cả ảnh base64, cấu hình, tài khoản) được giữ nguyên trong legacy.raw_docs,
+-- nên phần nào chưa chuyển (tài chính, EIR, ảnh) vẫn chuyển tiếp được về sau, không mất dữ liệu.
+-- Schema legacy KHÔNG mở cho API (chỉ quản trị CSDL đọc được).
+-- =============================================================================
+
+create schema if not exists legacy;
+revoke all on schema legacy from public, anon, authenticated;
+
+create table if not exists legacy.backup_files (
+  id bigint generated always as identity primary key,
+  file_name text,
+  exported_at timestamptz,
+  content jsonb not null,
+  loaded_at timestamptz not null default now()
+);
+
+create table if not exists legacy.raw_docs (
+  collection text not null,
+  doc_id text not null,
+  data jsonb not null,
+  backup_id bigint references legacy.backup_files (id) on delete set null,
+  loaded_at timestamptz not null default now(),
+  primary key (collection, doc_id)
+);
+
+-- Bản ghi cũ -> bản ghi mới
+create table if not exists legacy.id_map (
+  collection text not null,
+  doc_id text not null,
+  target_table text not null,
+  target_id uuid not null,
+  imported_at timestamptz not null default now(),
+  primary key (collection, doc_id, target_table)
+);
+create index if not exists id_map_target_idx on legacy.id_map (target_table, target_id);
+
+create table if not exists legacy.import_log (
+  id bigint generated always as identity primary key,
+  run_at timestamptz not null default now(),
+  level text not null check (level in ('info', 'warn')),
+  collection text,
+  doc_id text,
+  message text not null
+);
+
+-- ---------- Hàm tiện ích ----------
+create or replace function legacy.txt(v jsonb) returns text language sql immutable as $$
+  select nullif(btrim(case jsonb_typeof(v) when 'string' then v #>> '{}' when 'number' then v::text when 'boolean' then v::text else null end), '')
+$$;
+
+create or replace function legacy.num(v jsonb) returns numeric language plpgsql immutable as $$
+declare t text := replace(replace(legacy.txt(v), ',', ''), ' ', '');
+begin
+  if t is null or t !~ '^-?[0-9]+(\.[0-9]+)?$' then return null; end if;
+  return t::numeric;
+end $$;
+
+create or replace function legacy.bool(v jsonb) returns boolean language sql immutable as $$
+  select coalesce(case jsonb_typeof(v) when 'boolean' then (v #>> '{}')::boolean
+                                       when 'string' then lower(v #>> '{}') in ('true', '1', 'x', 'yes', 'có') end, false)
+$$;
+
+create or replace function legacy.ts(v jsonb) returns timestamptz language plpgsql immutable as $$
+declare t text := legacy.txt(v);
+begin
+  if t is null then return null; end if;
+  if t ~ '^\d{4}-\d{2}-\d{2}$' then return (t || ' 00:00')::timestamp at time zone 'Asia/Ho_Chi_Minh'; end if;
+  return t::timestamptz;
+exception when others then return null;
+end $$;
+
+create or replace function legacy.dt(v jsonb) returns date language sql immutable as $$
+  select (legacy.ts(v) at time zone 'Asia/Ho_Chi_Minh')::date
+$$;
+
+create or replace function legacy.plate(t text) returns text language sql immutable as $$
+  select nullif(upper(regexp_replace(coalesce(t, ''), '[^A-Za-z0-9]', '', 'g')), '')
+$$;
+
+create or replace function legacy.map_id(p_collection text, p_doc_id text, p_table text) returns uuid language sql stable as $$
+  select target_id from legacy.id_map where collection = p_collection and doc_id = p_doc_id and target_table = p_table
+$$;
+
+-- Bỏ các trường ảnh base64 khỏi custom_fields (ảnh vẫn nằm trong legacy.raw_docs)
+create or replace function legacy.strip_images(d jsonb) returns jsonb language sql immutable as $$
+  select coalesce(jsonb_object_agg(k, v), '{}'::jsonb)
+  from jsonb_each(d) as e(k, v)
+  where not (jsonb_typeof(v) = 'string' and (v #>> '{}') like 'data:%;base64,%')
+    and k not in ('token', 'shipmentLink')
+$$;
+
+
+-- Tìm địa điểm theo id cũ; id đã bị xóa ở app cũ thì tìm theo tên/mã; vẫn không có thì tạo mới theo tên
+create or replace function legacy.resolve_location(p_collection text, p_id text, p_code text, p_name text, p_address text)
+returns uuid language plpgsql as $$
+declare v uuid;
+begin
+  v := legacy.map_id(p_collection, p_id, 'locations');
+  if v is not null then return v; end if;
+  select m.target_id into v from legacy.id_map m join public.locations l on l.id = m.target_id
+  where m.collection = p_collection and m.target_table = 'locations'
+    and ((p_code is not null and l.code = upper(p_code)) or upper(btrim(l.name)) = upper(btrim(p_name)))
+  order by (p_code is not null and l.code = upper(p_code)) desc limit 1;
+  if v is null and coalesce(p_name, p_code) is not null then
+    insert into public.locations (code, name, company_name, full_address, custom_fields)
+    values (case when p_code is not null and not exists (select 1 from public.locations where code = upper(p_code)) then upper(p_code) end,
+            coalesce(p_name, p_code), p_name, coalesce(p_address, p_name, p_code),
+            jsonb_build_object('location_kind', case p_collection when 'warehouses' then 'pickup' else 'delivery' end,
+                               'created_from_missing_ref', p_id))
+    returning id into v;
+    insert into legacy.import_log (level, collection, doc_id, message)
+    values ('warn', p_collection, p_id, format('Không còn bản ghi gốc (đã xóa ở app cũ); đã tạo địa điểm "%s" theo tên trên đơn', coalesce(p_name, p_code)));
+  end if;
+  if v is not null and p_id is not null then
+    insert into legacy.id_map values (p_collection, p_id, 'locations', v) on conflict do nothing;
+  end if;
+  return v;
+end $$;
+
+-- ---------- Nạp file ----------
+create or replace function legacy.load_backup(p_backup_id bigint) returns table (collection text, docs integer)
+language plpgsql as $$
+declare
+  b legacy.backup_files;
+begin
+  select * into b from legacy.backup_files where id = p_backup_id;
+  if b.id is null then raise exception 'Không có file sao lưu %', p_backup_id; end if;
+  if jsonb_typeof(b.content -> 'collections') <> 'object' then
+    raise exception 'File không đúng định dạng sao lưu QLVT (thiếu "collections")';
+  end if;
+  update legacy.backup_files set exported_at = legacy.ts(b.content -> '_exportedAt') where id = b.id;
+
+  insert into legacy.raw_docs (collection, doc_id, data, backup_id)
+  select c.key, d.value ->> '_id', d.value - '_id', b.id
+  from jsonb_each(b.content -> 'collections') c
+  cross join lateral jsonb_array_elements(c.value) d
+  where d.value ->> '_id' is not null
+  on conflict on constraint raw_docs_pkey do update set data = excluded.data, backup_id = excluded.backup_id, loaded_at = now();
+
+  insert into legacy.import_log (level, collection, message)
+  select 'warn', s.key, 'File sao lưu KHÔNG có dữ liệu này (thiếu quyền khi xuất): ' || (s.value #>> '{}')
+  from jsonb_each(coalesce(b.content -> '_skipped', '{}'::jsonb)) s;
+
+  return query
+  select c.key, jsonb_array_length(c.value)
+  from jsonb_each(b.content -> 'collections') c order by 1;
+end $$;
+
+-- ---------- Chuyển dữ liệu ----------
+create or replace function legacy.run_import()
+returns table (buoc text, nguon integer, da_chuyen integer, ghi_chu text)
+language plpgsql
+set search_path = public, legacy, private, pg_temp
+as $$
+declare
+  r record;
+  v_id uuid;
+  v_gha uuid;
+  v_unknown_customer uuid;
+  v_code text;
+  v_n int;
+  v_line int;
+  v_fee_type uuid;
+  v_fee_kind text;
+  v_extra numeric;
+  v_pass numeric;
+  v_costs jsonb;
+  v_unit numeric;
+  v_fuel_rate numeric;
+  v_fuel_amt numeric;
+  v_freight numeric;
+  v_xsum numeric;
+  v_fee_defs jsonb;
+  f record;
+  it record;
+begin
+  -- Chỉ tắt các kiểm tra nghiệp vụ trên bảng vận hành trong lúc nhập (tự bật lại khi kết thúc giao dịch lỗi/thành công)
+  alter table public.transport_orders disable trigger trg_transport_orders_guard;
+  alter table public.shipments disable trigger trg_shipments_guard;
+  alter table public.shipments disable trigger trg_shipments_edit_lock;
+  alter table public.shipments disable trigger trg_shipments_billed_guard;
+  alter table public.shipments disable trigger trg_shipments_dispatch_approval;
+  alter table public.shipments disable trigger trg_shipments_submit_dispatch_approval;
+  alter table public.shipments disable trigger trg_shipments_end_on_behalf;
+  alter table public.shipments disable trigger trg_shipments_pricing;
+  alter table public.shipments disable trigger trg_shipments_history;
+  alter table public.shipment_items disable trigger trg_shipment_items_edit_lock;
+  alter table public.shipment_fees disable trigger trg_shipment_fees_edit_lock;
+
+  -- Bảng tạm ghi kết quả
+  create temp table if not exists _rep (ord int, buoc text, nguon int, da_chuyen int, ghi_chu text) on commit drop;
+  truncate _rep;
+
+  -- 0. Pháp nhân GHA
+  select id into v_gha from public.company_entities where tax_code = '3703489735' or code = 'GHA' limit 1;
+  if v_gha is null then
+    insert into public.company_entities (code, name, tax_code)
+    values ('GHA', 'CÔNG TY TNHH GHA LOGISTICS & SERVICE', '3703489735') returning id into v_gha;
+  end if;
+
+  -- 1. Công ty xuất hàng (VAP, PLA...) -> Khách hàng (người thuê vận chuyển, trả cước)
+  for r in
+    -- Trùng mã: lấy bản ghi được dùng nhiều nhất trên đơn/xe làm bản chính (bản thừa thường do nhập file lỗi)
+    select upper(legacy.txt(d.data -> 'code')) as code,
+           array_agg(d.doc_id order by d.refs desc, d.doc_id) as ids,
+           (array_agg(legacy.txt(d.data -> 'name') order by d.refs desc, d.doc_id))[1] as name,
+           (array_agg(legacy.txt(d.data -> 'taxCode') order by d.refs desc, legacy.txt(d.data -> 'taxCode') nulls last))[1] as tax,
+           (array_agg(legacy.txt(d.data -> 'address') order by d.refs desc, legacy.txt(d.data -> 'address') nulls last))[1] as addr,
+           (array_agg(legacy.bool(d.data -> 'isExternal') order by d.refs desc, d.doc_id))[1] as ext,
+           count(distinct legacy.bool(d.data -> 'isExternal')) > 1 as ext_conflict
+    from (select c.*, (select count(*) from legacy.raw_docs o where o.collection in ('orders', 'shipmentDetails')
+                         and o.data ->> 'companyId' = c.doc_id) as refs
+          from legacy.raw_docs c where c.collection = 'companies') d
+    where not exists (select 1 from legacy.id_map m where m.collection = 'companies' and m.doc_id = d.doc_id)
+    group by 1
+  loop
+    select c.id into v_id from public.customers c
+    where c.code = r.code or (r.tax is not null and c.tax_code = r.tax) limit 1;
+    if v_id is null then
+      insert into public.customers (code, name, tax_code, billing_address, is_shipper, is_payer, custom_fields)
+      values (r.code, coalesce(r.name, r.code), r.tax, r.addr, true, true,
+              jsonb_build_object('is_external', r.ext, 'legacy_ids', to_jsonb(r.ids)))
+      returning id into v_id;
+    end if;
+    insert into legacy.id_map (collection, doc_id, target_table, target_id)
+    select 'companies', x, 'customers', v_id from unnest(r.ids) x on conflict do nothing;
+    if array_length(r.ids, 1) > 1 then
+      insert into legacy.import_log (level, collection, message) values ('warn', 'companies',
+        format('Công ty %s có %s bản ghi trùng mã, đã gộp làm 1%s', r.code, array_length(r.ids, 1),
+               case when r.ext_conflict then '; ô "bên ngoài" lấy theo bản ghi được dùng trên đơn nhiều nhất: ' || case when r.ext then 'bên ngoài' else 'không phải bên ngoài' end else '' end));
+    end if;
+  end loop;
+  insert into _rep select 1, 'Công ty xuất hàng → Khách hàng', (select count(*) from raw_docs where collection = 'companies'),
+    (select count(distinct target_id) from id_map where collection = 'companies'), 'gộp theo mã công ty';
+
+  -- 2. Kho / điểm nhận -> Địa điểm
+  for r in
+    select d.doc_id, d.data from legacy.raw_docs d
+    where d.collection = 'warehouses' and legacy.map_id('warehouses', d.doc_id, 'locations') is null
+    order by legacy.txt(d.data -> 'name')
+  loop
+    insert into public.locations (name, company_name, full_address, billing_address, phone, google_maps_url, custom_fields)
+    values (coalesce(legacy.txt(r.data -> 'name'), r.doc_id), legacy.txt(r.data -> 'name'),
+            coalesce(legacy.txt(r.data -> 'address'), legacy.txt(r.data -> 'name'), r.doc_id),
+            coalesce(legacy.txt(r.data -> 'invoiceInfo'), legacy.txt(r.data -> 'x_mvg6qt1q')),
+            left(legacy.txt(r.data -> 'contactPhone'), 100), legacy.txt(r.data -> 'mapLink'),
+            jsonb_build_object('location_kind', 'pickup', 'has_gate_control', legacy.bool(r.data -> 'hasGateControl'),
+                               'legacy_id', r.doc_id, 'legacy', legacy.strip_images(r.data)))
+    returning id into v_id;
+    insert into legacy.id_map values ('warehouses', r.doc_id, 'locations', v_id);
+  end loop;
+  insert into _rep select 2, 'Kho / điểm nhận → Địa điểm', (select count(*) from raw_docs where collection = 'warehouses'),
+    (select count(*) from id_map where collection = 'warehouses'), 'mã tự sinh DDxxx';
+
+  -- 3. Khách hàng (điểm giao) -> Địa điểm giao (giữ mã, MST, thông tin xuất hóa đơn)
+  for r in
+    select d.doc_id, d.data, upper(legacy.txt(d.data -> 'code')) as code from legacy.raw_docs d
+    where d.collection = 'customers' and legacy.map_id('customers', d.doc_id, 'locations') is null
+    order by legacy.txt(d.data -> 'code'), d.doc_id
+  loop
+    v_code := r.code;
+    if v_code is not null and exists (select 1 from public.locations l where l.code = v_code) then
+      v_n := 2;
+      while exists (select 1 from public.locations l where l.code = v_code || '-' || v_n) loop v_n := v_n + 1; end loop;
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('warn', 'customers', r.doc_id, format('Mã khách hàng %s dùng cho 2 điểm giao khác nhau, điểm này mang mã %s', v_code, v_code || '-' || v_n));
+      v_code := v_code || '-' || v_n;
+    end if;
+    insert into public.locations (code, name, company_name, full_address, tax_code, billing_address, phone, google_maps_url, custom_fields)
+    values (v_code, coalesce(legacy.txt(r.data -> 'name'), r.doc_id), legacy.txt(r.data -> 'name'),
+            coalesce(legacy.txt(r.data -> 'address'), legacy.txt(r.data -> 'name'), r.doc_id),
+            legacy.txt(r.data -> 'taxCode'), legacy.txt(r.data -> 'invoiceInfo'),
+            left(legacy.txt(r.data -> 'phone'), 100), legacy.txt(r.data -> 'mapLink'),
+            jsonb_strip_nulls(jsonb_build_object('location_kind', 'delivery', 'legacy_id', r.doc_id,
+              'receiver_phone', legacy.txt(r.data -> 'receiverPhone'),
+              'delivery_contact_phone', legacy.txt(r.data -> 'deliveryContactPhone'),
+              'legacy', legacy.strip_images(r.data))))
+    returning id into v_id;
+    insert into legacy.id_map values ('customers', r.doc_id, 'locations', v_id);
+  end loop;
+  insert into _rep select 3, 'Khách hàng (điểm giao) → Địa điểm', (select count(*) from raw_docs where collection = 'customers'),
+    (select count(*) from id_map where collection = 'customers'), 'giữ mã khách hàng cũ';
+
+  -- 4. Mã hàng -> Danh mục mã hàng
+  for r in
+    select d.doc_id, d.data, upper(legacy.txt(d.data -> 'code')) as code from legacy.raw_docs d
+    where d.collection = 'products' and legacy.map_id('products', d.doc_id, 'products') is null
+    order by 3, d.doc_id
+  loop
+    select p.id into v_id from public.products p where p.code = r.code;
+    if v_id is null then
+      insert into public.products (code, name, unit, kg_per_unit, custom_fields)
+      values (r.code, coalesce(legacy.txt(r.data -> 'name'), r.code), coalesce(upper(legacy.txt(r.data -> 'unit')), 'KG'),
+              case upper(coalesce(legacy.txt(r.data -> 'unit'), 'KG')) when 'KG' then 1 when 'TẤN' then 1000 when 'TAN' then 1000 end,
+              jsonb_build_object('legacy_id', r.doc_id))
+      returning id into v_id;
+    else
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('warn', 'products', r.doc_id, format('Mã hàng %s trùng, đã gộp vào mã có sẵn', r.code));
+    end if;
+    insert into legacy.id_map values ('products', r.doc_id, 'products', v_id);
+  end loop;
+  insert into _rep select 4, 'Mã hàng → Danh mục mã hàng', (select count(*) from raw_docs where collection = 'products'),
+    (select count(distinct target_id) from id_map where collection = 'products'), 'ĐVT KG quy đổi 1 kg';
+
+  -- 5. Đơn vị vận tải và 3-PL -> Nhà cung cấp (nhà xe)
+  for r in
+    select d.doc_id, d.data from legacy.raw_docs d
+    where d.collection = 'carriers' and legacy.map_id('carriers', d.doc_id, 'suppliers') is null order by d.doc_id
+  loop
+    insert into public.suppliers (name, email, notes, custom_fields)
+    values (coalesce(legacy.txt(r.data -> 'name'), r.doc_id),
+            case when legacy.txt(r.data -> 'email') not like '%@qlvt.local' then legacy.txt(r.data -> 'email') end,
+            'Đơn vị vận tải (app cũ)',
+            jsonb_strip_nulls(jsonb_build_object(
+              'supplier_kind', case when legacy.bool(r.data -> 'isSelfPickup') then 'self_pickup'
+                                    when legacy.bool(r.data -> 'isInternalFleet') then 'internal_fleet' else 'carrier' end,
+              'legacy_login', legacy.txt(r.data -> 'email'), 'legacy_id', r.doc_id)))
+    returning id into v_id;
+    insert into legacy.id_map values ('carriers', r.doc_id, 'suppliers', v_id);
+  end loop;
+  for r in
+    select d.doc_id, d.data from legacy.raw_docs d
+    where d.collection = 'subCarriers' and legacy.map_id('subCarriers', d.doc_id, 'suppliers') is null order by d.doc_id
+  loop
+    insert into public.suppliers (name, notes, custom_fields)
+    values (coalesce(legacy.txt(r.data -> 'name'), r.doc_id),
+            '3-PL thuộc ' || coalesce(legacy.txt(r.data -> 'carrierName'), '?'),
+            jsonb_strip_nulls(jsonb_build_object('supplier_kind', '3pl',
+              'short_code', case when legacy.txt(r.data -> 'code') not like '%@%' then legacy.txt(r.data -> 'code') end,
+              'legacy_login', case when legacy.txt(r.data -> 'code') like '%@%' then legacy.txt(r.data -> 'code') end,
+              'parent_supplier_id', legacy.map_id('carriers', legacy.txt(r.data -> 'carrierId'), 'suppliers'),
+              'legacy_id', r.doc_id)))
+    returning id into v_id;
+    insert into legacy.id_map values ('subCarriers', r.doc_id, 'suppliers', v_id);
+  end loop;
+  insert into _rep select 5, 'Đơn vị vận tải + 3-PL → Nhà cung cấp',
+    (select count(*) from raw_docs where collection in ('carriers', 'subCarriers')),
+    (select count(*) from id_map where collection in ('carriers', 'subCarriers')), 'đánh dấu loại: carrier / 3pl / internal_fleet / self_pickup';
+
+  -- 6. Tài xế: hồ sơ tài xế + xe nội bộ + tài xế ghi trên chuyến (gộp theo CCCD, không có CCCD thì theo tên)
+  create temp table _drv on commit drop as
+  with src as (
+    select 'driverProfiles' as col, d.doc_id, legacy.txt(d.data -> 'driverName') as name, legacy.txt(d.data -> 'idNumber') as idno,
+           legacy.txt(d.data -> 'carrierId') as carrier_id, null::text as sub_id, legacy.plate(legacy.txt(d.data -> 'truckNo')) as plate,
+           false as internal, legacy.ts(d.data -> 'updatedAt') as at
+    from legacy.raw_docs d where d.collection = 'driverProfiles'
+    union all
+    select 'internalTrucks', d.doc_id, legacy.txt(d.data -> 'driverName'), legacy.txt(d.data -> 'driverIdNumber'),
+           legacy.txt(d.data -> 'carrierId'), null, legacy.plate(legacy.txt(d.data -> 'truckNo')), true, null
+    from legacy.raw_docs d where d.collection = 'internalTrucks'
+    union all
+    select 'shipmentDetails', d.doc_id, legacy.txt(d.data -> 'driverName'), legacy.txt(d.data -> 'driverIdNumber'),
+           legacy.txt(d.data -> 'carrierId'), legacy.txt(d.data -> 'subCarrierId'), legacy.plate(legacy.txt(d.data -> 'truckNo')), false,
+           legacy.ts(d.data -> 'createdAt')
+    from legacy.raw_docs d where d.collection = 'shipmentDetails'
+  )
+  select *, case when regexp_replace(coalesce(idno, ''), '\s', '', 'g') ~ '^[0-9]{9,12}$'
+                 then 'ID:' || regexp_replace(idno, '\s', '', 'g')
+                 else 'NM:' || upper(regexp_replace(btrim(name), '\s+', ' ', 'g')) end as dkey
+  from src where name is not null;
+
+  for r in
+    select dkey,
+           (array_agg(name order by internal desc, at desc nulls last))[1] as name,
+           (array_agg(idno order by internal desc, at desc nulls last) filter (where idno ~ '^[0-9\s]{9,14}$'))[1] as idno,
+           bool_or(internal) as internal,
+           (array_agg(coalesce(nullif(sub_id, ''), carrier_id) order by internal desc, at desc nulls last))[1] as owner_id,
+           array_agg(distinct plate) filter (where plate is not null) as plates
+    from _drv group by dkey order by 2
+  loop
+    v_id := (select m.target_id from legacy.id_map m where m.collection = 'drivers' and m.doc_id = r.dkey);
+    if v_id is null then
+      insert into public.drivers (full_name, is_outsourced, supplier_id, notes, custom_fields)
+      values (r.name, not r.internal,
+              coalesce(legacy.map_id('subCarriers', r.owner_id, 'suppliers'), legacy.map_id('carriers', r.owner_id, 'suppliers')),
+              'Chuyển từ app cũ', jsonb_build_object('legacy_key', r.dkey, 'legacy_plates', to_jsonb(r.plates)))
+      returning id into v_id;
+      if r.idno is not null then
+        insert into public.driver_sensitive (driver_id, national_id) values (v_id, regexp_replace(r.idno, '\s', '', 'g'));
+      end if;
+      insert into legacy.id_map values ('drivers', r.dkey, 'drivers', v_id);
+    end if;
+  end loop;
+  insert into _rep select 6, 'Tài xế (hồ sơ + xe nội bộ + trên chuyến)', (select count(distinct dkey) from _drv),
+    (select count(*) from id_map where collection = 'drivers'), 'gộp theo CCCD, không có CCCD thì theo tên; ảnh CCCD giữ ở bản gốc';
+
+  -- 7. Phương tiện: xe nội bộ + mọi biển số đã chạy chuyến (trừ "KHÁCH HÀNG" tự lấy)
+  --    Phân loại: có số container => Đầu kéo, còn lại => Xe tải (cần kiểm lại trong danh sách xe)
+  for r in
+    with plates as (
+      select legacy.plate(legacy.txt(d.data -> 'truckNo')) as plate, legacy.txt(d.data -> 'truckNo') as raw,
+             true as internal, legacy.txt(d.data -> 'carrierId') as owner_id, false as has_cont, d.doc_id,
+             legacy.txt(d.data -> 'driverName') as dname, legacy.txt(d.data -> 'driverIdNumber') as didno, null::timestamptz as at
+      from legacy.raw_docs d where d.collection = 'internalTrucks'
+      union all
+      select legacy.plate(legacy.txt(d.data -> 'truckNo')), legacy.txt(d.data -> 'truckNo'), false,
+             coalesce(legacy.txt(d.data -> 'subCarrierId'), legacy.txt(d.data -> 'carrierId')),
+             legacy.txt(d.data -> 'contNo') is not null, d.doc_id, null, null, legacy.ts(d.data -> 'createdAt')
+      from legacy.raw_docs d where d.collection = 'shipmentDetails'
+    )
+    select plate, bool_or(internal) as internal, bool_or(has_cont) as has_cont,
+           (array_agg(raw order by internal desc, at desc nulls last))[1] as raw,
+           array_agg(distinct raw) as raws,
+           (array_agg(owner_id order by internal desc, at desc nulls last))[1] as owner_id,
+           (array_agg(case when internal then 'NM:' || upper(regexp_replace(btrim(dname), '\s+', ' ', 'g')) end) filter (where internal))[1] as dname_key,
+           (array_agg(case when internal and regexp_replace(coalesce(didno, ''), '\s', '', 'g') ~ '^[0-9]{9,12}$'
+                           then 'ID:' || regexp_replace(didno, '\s', '', 'g') end) filter (where internal))[1] as did_key
+    from plates
+    where plate is not null and plate !~ '^KH' and plate <> upper('KHÁCHHÀNG')
+    group by plate
+  loop
+    continue when r.plate ~ '^[^0-9]';  -- chữ "KHÁCH HÀNG" và các giá trị không phải biển số
+    select v.id into v_id from public.vehicles v
+    where upper(regexp_replace(v.plate_number, '[^A-Za-z0-9]', '', 'g')) = r.plate;
+    if v_id is null then
+      insert into public.vehicles (code, plate_number, vehicle_type_id, vehicle_kind, ownership_type, supplier_id, notes, custom_fields)
+      values (r.plate, r.raw,
+              (select id from public.vehicle_types where code = case when r.has_cont then 'DK' else 'XT' end),
+              case when r.has_cont then 'tractor' else 'truck' end,
+              case when r.internal then 'owned' else 'outsourced' end,
+              case when not r.internal then coalesce(legacy.map_id('subCarriers', r.owner_id, 'suppliers'), legacy.map_id('carriers', r.owner_id, 'suppliers')) end,
+              'Loại xe suy ra từ app cũ: ' || case when r.has_cont then 'có chở container → đầu kéo' else 'không chở container → xe tải' end || ' (cần kiểm lại)',
+              jsonb_build_object('legacy_plates', to_jsonb(r.raws), 'kind_inferred', true))
+      returning id into v_id;
+      if r.internal then
+        update public.vehicles set assigned_driver_id = coalesce(
+          (select target_id from legacy.id_map where collection = 'drivers' and doc_id = r.did_key),
+          (select target_id from legacy.id_map where collection = 'drivers' and doc_id = r.dname_key))
+        where id = v_id
+          and not exists (select 1 from public.vehicles x where x.assigned_driver_id = coalesce(
+            (select target_id from legacy.id_map where collection = 'drivers' and doc_id = r.did_key),
+            (select target_id from legacy.id_map where collection = 'drivers' and doc_id = r.dname_key)));
+      end if;
+    end if;
+    insert into legacy.id_map values ('plates', r.plate, 'vehicles', v_id) on conflict do nothing;
+    if array_length(r.raws, 1) > 1 then
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('info', 'vehicles', r.plate, 'Gộp các cách ghi biển số: ' || array_to_string(r.raws, ', '));
+    end if;
+    if r.plate !~ '^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$' then
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('warn', 'vehicles', r.plate, 'Biển số không đúng dạng thường gặp: ' || r.raw || ' (kiểm lại)');
+    end if;
+  end loop;
+  insert into _rep select 7, 'Phương tiện', (select count(*) from raw_docs where collection = 'internalTrucks'),
+    (select count(*) from id_map where collection = 'plates'), 'gồm xe nội bộ + xe 3-PL đã chạy; gộp biển số viết khác nhau';
+
+  -- Khách hàng dự phòng khi đơn không có công ty
+  select id into v_unknown_customer from public.customers where code = 'CHUARO';
+
+  -- 8. Đơn hàng: các dòng mã hàng cùng Số shipment -> 1 đơn cha + nhiều dòng mã hàng
+  for r in
+    select legacy.txt(d.data -> 'shipmentNo') as shp,
+           array_agg(d.doc_id order by d.data ->> 'createdAt', d.doc_id) as ids,
+           (array_agg(d.data order by d.data ->> 'createdAt', d.doc_id))[1] as h,
+           string_agg(distinct legacy.txt(d.data -> 'orderNo'), ', ') as order_nos,
+           string_agg(distinct legacy.txt(d.data -> 'voucherNo'), ', ') as vouchers,
+           string_agg(distinct legacy.txt(d.data -> 'notes'), '; ') as notes,
+           string_agg(distinct legacy.txt(d.data -> 'destinationPoint'), '; ') as dest,
+           count(distinct legacy.txt(d.data -> 'customerId')) as n_cust,
+           bool_and(legacy.txt(d.data -> 'status') = 'fully_split') as all_split
+    from legacy.raw_docs d
+    where d.collection = 'orders' and legacy.txt(d.data -> 'shipmentNo') is not null
+    group by 1 order by 1
+  loop
+    v_id := (select m.target_id from legacy.id_map m where m.collection = 'orderShipments' and m.doc_id = r.shp);
+    if v_id is null then
+      if legacy.map_id('companies', legacy.txt(r.h -> 'companyId'), 'customers') is null and v_unknown_customer is null then
+        insert into public.customers (code, name, notes) values ('CHUARO', 'Chưa rõ công ty (dữ liệu cũ)', 'Tạo khi chuyển dữ liệu cũ cho đơn không có công ty xuất hàng')
+        returning id into v_unknown_customer;
+      end if;
+      insert into public.transport_orders (order_code, order_date, delivery_date, company_entity_id, customer_id, payer_customer_id,
+        status, notes, ref_no, voucher_no, pickup_location_id, delivery_location_id, destination_note, carrier_supplier_id, custom_fields, created_at)
+      values (r.shp,
+              coalesce(legacy.dt(r.h -> 'createdAt'), legacy.dt(r.h -> 'deliveryDate'), current_date),
+              legacy.dt(r.h -> 'deliveryDate'), v_gha,
+              coalesce(legacy.map_id('companies', legacy.txt(r.h -> 'companyId'), 'customers'), v_unknown_customer),
+              coalesce(legacy.map_id('companies', legacy.txt(r.h -> 'companyId'), 'customers'), v_unknown_customer),
+              'open', r.notes, r.order_nos, r.vouchers,
+              legacy.resolve_location('warehouses', legacy.txt(r.h -> 'warehouseId'), null, legacy.txt(r.h -> 'warehouseName'), null),
+              legacy.resolve_location('customers', legacy.txt(r.h -> 'customerId'), legacy.txt(r.h -> 'customerCode'),
+                                      legacy.txt(r.h -> 'customerName'), legacy.txt(r.h -> 'customerAddress')),
+              r.dest,
+              coalesce(legacy.map_id('subCarriers', legacy.txt(r.h -> 'subCarrierId'), 'suppliers'),
+                       legacy.map_id('carriers', legacy.txt(r.h -> 'carrierId'), 'suppliers')),
+              jsonb_strip_nulls(jsonb_build_object('legacy_order_line_ids', to_jsonb(r.ids),
+                'created_by_carrier', case when legacy.bool(r.h -> 'createdByCarrier') then true end)),
+              coalesce(legacy.ts(r.h -> 'createdAt'), now()))
+      returning id into v_id;
+      insert into legacy.id_map values ('orderShipments', r.shp, 'transport_orders', v_id);
+      if r.n_cust > 1 then
+        insert into legacy.import_log (level, collection, doc_id, message)
+        values ('warn', 'orders', r.shp, 'Cùng số shipment nhưng nhiều khách hàng (điểm giao) khác nhau; đơn cha lấy điểm giao của dòng đầu');
+      end if;
+    end if;
+    -- dòng mã hàng
+    v_line := coalesce((select max(line_no) from public.transport_order_items where order_id = v_id), 0);
+    for it in
+      select d.doc_id, d.data from legacy.raw_docs d
+      where d.collection = 'orders' and d.doc_id = any (r.ids)
+        and legacy.map_id('orders', d.doc_id, 'transport_order_items') is null
+      order by array_position(r.ids, d.doc_id)
+    loop
+      v_line := v_line + 1;
+      insert into public.transport_order_items (order_id, line_no, product_id, item_code, item_name, unit, quantity, note, custom_fields)
+      values (v_id, v_line, legacy.map_id('products', legacy.txt(it.data -> 'productId'), 'products'),
+              legacy.txt(it.data -> 'productCode'), legacy.txt(it.data -> 'productName'), null,
+              coalesce(legacy.num(it.data -> 'qty'), 0), null,
+              jsonb_strip_nulls(jsonb_build_object('legacy_id', it.doc_id, 'legacy_order_no', legacy.txt(it.data -> 'orderNo'),
+                'legacy_registered_qty', legacy.num(it.data -> 'registeredQty'))))
+      returning id into v_id;
+      insert into legacy.id_map values ('orders', it.doc_id, 'transport_order_items', v_id);
+      v_id := (select m.target_id from legacy.id_map m where m.collection = 'orderShipments' and m.doc_id = r.shp);
+    end loop;
+  end loop;
+  insert into _rep select 8, 'Dòng đơn hàng → Đơn cha', (select count(*) from raw_docs where collection = 'orders'),
+    (select count(*) from id_map where collection = 'orderShipments'), 'gộp theo số shipment (SHP-...)';
+  insert into _rep select 9, 'Dòng đơn hàng → Mã hàng của đơn', (select count(*) from raw_docs where collection = 'orders'),
+    (select count(*) from id_map where collection = 'orders'), 'số lượng giữ nguyên';
+
+  -- Loại phí cho cước GHA (tìm theo tên, chưa có thì tạo)
+  create temp table _fee_map (cost_key text primary key, fee_name text, fee_kind text, is_loading boolean) on commit drop;
+  insert into _fee_map values
+    ('x_phi_thu_thu_ve_sp_itc_vict', 'Phụ thu vé (SP-ITC...)', 'revenue', false),
+    ('x_phi_phu_thu_ha_trai_tuyen', 'Phụ thu hạ trái tuyến', 'revenue', false),
+    ('unloadEmptyFee', 'Phí hạ', 'pass_through', false),
+    ('liftFee', 'Phí nâng', 'pass_through', false),
+    ('loadingFee', 'Phí bốc xếp', 'pass_through', true),
+    ('customsDeclFee', 'Phí tờ khai theo cont', 'revenue', false),
+    ('truckDetentionFee', 'Phí neo xe', 'revenue', false),
+    ('otherFee', 'Phí bổ sung khác', 'revenue', false);
+  -- Trường cước tự thêm ở app cũ (config/costFieldDefs) chưa có trong bảng trên
+  select data -> 'fields' into v_fee_defs from legacy.raw_docs where collection = 'config' and doc_id = 'costFieldDefs';
+  insert into _fee_map
+  select x ->> 'key', left(x ->> 'label', 150), 'revenue', false
+  from jsonb_array_elements(coalesce(v_fee_defs, '[]'::jsonb)) x
+  where x ->> 'type' = 'number' and x ->> 'key' is not null
+  on conflict (cost_key) do nothing;
+
+  -- 9. Xe / chuyến -> Chuyến (1 xe = 1 chuyến, nhiều mã hàng)
+  for r in
+    select d.doc_id, d.data,
+           o.target_id as order_id,
+           c.data as cost
+    from legacy.raw_docs d
+    left join legacy.id_map o on o.collection = 'orderShipments' and o.doc_id = legacy.txt(d.data -> 'parentShipmentNo')
+    left join legacy.raw_docs c on c.collection = 'costsGha' and c.doc_id = d.doc_id
+    where d.collection = 'shipmentDetails' and legacy.map_id('shipmentDetails', d.doc_id, 'shipments') is null
+    order by legacy.txt(d.data -> 'shipmentNo'), d.doc_id
+  loop
+    if r.order_id is null then
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('warn', 'shipmentDetails', r.doc_id, format('Bỏ qua xe %s: không tìm thấy đơn cha %s',
+        legacy.txt(r.data -> 'shipmentNo'), legacy.txt(r.data -> 'parentShipmentNo')));
+      continue;
+    end if;
+    v_costs := coalesce(r.cost -> 'costs', '{}'::jsonb);
+    v_unit := legacy.num(v_costs -> 'unitFreightPrice');
+    v_freight := legacy.num(v_costs -> 'freightCost');
+    v_fuel_rate := legacy.num(v_costs -> 'fuelSupportPercent');
+    if v_unit is null then v_unit := v_freight; v_fuel_rate := null; end if;
+    v_fuel_amt := case when v_unit is not null and v_fuel_rate is not null then round(v_unit * v_fuel_rate / 100, 0) else 0 end;
+
+    v_code := legacy.txt(r.data -> 'shipmentNo');
+    if v_code is null or exists (select 1 from public.shipments s where s.shipment_code = v_code) then
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('warn', 'shipmentDetails', r.doc_id, format('Số chuyến %s trống hoặc trùng, đã cấp số mới', coalesce(v_code, '(trống)')));
+      v_code := null;
+    end if;
+
+    insert into public.shipments (shipment_code, order_id, sequence_in_order, pickup_at,
+      pickup_location_id, delivery_location_id, vehicle_type_id, vehicle_id, driver_id, carrier_supplier_id,
+      container_no, unit_price, pricing_unit, quantity, fuel_support_rate, fuel_support_amount,
+      status, document_status, arrived_pickup_at, departed_pickup_at, arrived_delivery_at, completed_at,
+      delivery_result, completion_note, notes, custom_fields, created_at, dispatch_approval)
+    select v_code, r.order_id,
+      coalesce((select max(s.sequence_in_order) from public.shipments s where s.order_id = r.order_id), 0) + 1,
+      coalesce(legacy.ts(r.data -> 'arrivedAt'), legacy.ts(r.data -> 'registeredAt'),
+               legacy.ts(r.data -> 'date') + interval '8 hours', legacy.ts(r.data -> 'createdAt')),
+      coalesce(legacy.resolve_location('warehouses', legacy.txt(r.data -> 'warehouseId'), null, legacy.txt(r.data -> 'warehouseName'), null),
+               o.pickup_location_id),
+      coalesce(case when legacy.txt(r.data -> 'customerId') is not null
+                    then legacy.resolve_location('customers', legacy.txt(r.data -> 'customerId'), legacy.txt(r.data -> 'customerCode'),
+                                                 legacy.txt(r.data -> 'customerName'), legacy.txt(r.data -> 'customerAddress')) end,
+               o.delivery_location_id),
+      v.vehicle_type_id, v.id,
+      coalesce(
+        (select target_id from legacy.id_map where collection = 'drivers' and doc_id =
+           'ID:' || regexp_replace(coalesce(legacy.txt(r.data -> 'driverIdNumber'), ''), '\s', '', 'g')),
+        (select target_id from legacy.id_map where collection = 'drivers' and doc_id =
+           'NM:' || upper(regexp_replace(btrim(coalesce(legacy.txt(r.data -> 'driverName'), '')), '\s+', ' ', 'g')))),
+      coalesce(legacy.map_id('subCarriers', legacy.txt(r.data -> 'subCarrierId'), 'suppliers'),
+               case when (select custom_fields ->> 'supplier_kind' from public.suppliers
+                          where id = legacy.map_id('carriers', legacy.txt(r.data -> 'carrierId'), 'suppliers')) = 'carrier'
+                    then legacy.map_id('carriers', legacy.txt(r.data -> 'carrierId'), 'suppliers') end),
+      legacy.txt(r.data -> 'contNo'),
+      coalesce(v_unit, 0), 'trip', 1, v_fuel_rate, v_fuel_amt,
+      case legacy.txt(r.data -> 'status')
+        when 'completed' then 'driver_completed'
+        when 'waiting_arrival' then 'assigned'
+        when 'arrived_pickup' then 'in_transit' when 'waiting_gate' then 'in_transit' when 'in_progress' then 'in_transit'
+        when 'waiting_exit' then 'in_transit' when 'waiting_delivery' then 'in_transit' when 'arrived_delivery' then 'in_transit'
+        else 'assigned' end,
+      case when legacy.txt(r.data -> 'deliveryPhotoUrl') is not null or legacy.txt(r.data -> 'pxkImageUrl') is not null
+           then 'submitted' else 'missing' end,
+      legacy.ts(r.data -> 'arrivedAt'), legacy.ts(r.data -> 'receivedAt'), legacy.ts(r.data -> 'arrivedDeliveryAt'),
+      case when legacy.txt(r.data -> 'status') = 'completed'
+           then coalesce(legacy.ts(r.data -> 'deliveredAt'), legacy.ts(r.data -> 'confirmedAt'), legacy.ts(r.data -> 'arrivedDeliveryAt')) end,
+      case when legacy.txt(r.data -> 'status') = 'completed' then 'full' end,
+      legacy.txt(r.data -> 'confirmNote'),
+      nullif(concat_ws('; ', legacy.txt(v_costs -> 'notes'),
+                       case when legacy.plate(legacy.txt(r.data -> 'truckNo')) !~ '^[0-9]' then 'Xe: ' || legacy.txt(r.data -> 'truckNo') end), ''),
+      jsonb_strip_nulls(jsonb_build_object(
+        'legacy_id', r.doc_id,
+        'legacy_truck_no', legacy.txt(r.data -> 'truckNo'),
+        'legacy_driver_name', legacy.txt(r.data -> 'driverName'),
+        'legacy_driver_id_number', legacy.txt(r.data -> 'driverIdNumber'),
+        'self_pickup', case when legacy.plate(legacy.txt(r.data -> 'truckNo')) !~ '^[0-9]' then true end,
+        'origin_point', legacy.txt(r.data -> 'originPoint'),
+        'destination_point', legacy.txt(r.data -> 'destinationPoint'),
+        'voucher_no', legacy.txt(r.data -> 'voucherNo'),
+        'legacy_order_no', legacy.txt(r.data -> 'orderNo'),
+        'has_gate_control', legacy.bool(r.data -> 'hasGateControl'),
+        'confirmed_by', legacy.txt(r.data -> 'confirmedByName'),
+        'confirmed_on_behalf', case when legacy.bool(r.data -> 'confirmedOnBehalf') then true end,
+        'completed_by_admin', case when legacy.bool(r.data -> 'completedByAdmin') then true end,
+        'returned_from', legacy.txt(r.data -> 'returnedFrom'),
+        'return_info', r.data -> 'returnInfo',
+        'gps', jsonb_strip_nulls(jsonb_build_object('arrived', r.data -> 'arrivedLocation', 'received', r.data -> 'receivedLocation',
+                 'arrived_delivery', r.data -> 'arrivedDeliveryLocation', 'delivered', r.data -> 'deliveredLocation')),
+        'legacy_photos', jsonb_strip_nulls(jsonb_build_object(
+                 'delivery', case when legacy.txt(r.data -> 'deliveryPhotoUrl') is not null then true end,
+                 'pxk', case when legacy.txt(r.data -> 'pxkImageUrl') is not null then true end,
+                 'driver_id', case when legacy.txt(r.data -> 'driverIdImageUrl') is not null then true end)),
+        'legacy_cost_gha', case when r.cost is not null then v_costs end,
+        'legacy_cost_updated_by', legacy.txt(r.cost -> 'updatedBy'))),
+      coalesce(legacy.ts(r.data -> 'createdAt'), now()),
+      'not_required'
+    from public.transport_orders o
+    left join public.vehicles v on v.id = legacy.map_id('plates', legacy.plate(legacy.txt(r.data -> 'truckNo')), 'vehicles')
+    where o.id = r.order_id
+    returning id into v_id;
+    insert into legacy.id_map values ('shipmentDetails', r.doc_id, 'shipments', v_id);
+
+    -- hàng trên xe
+    v_line := 0;
+    for it in select x, ord from jsonb_array_elements(coalesce(r.data -> 'items', '[]'::jsonb)) with ordinality as t(x, ord) loop
+      v_line := v_line + 1;
+      insert into public.shipment_items (shipment_id, line_no, product_id, order_item_id, item_code, item_name, quantity, custom_fields)
+      values (v_id, v_line, legacy.map_id('products', legacy.txt(it.x -> 'productId'), 'products'),
+              legacy.map_id('orders', legacy.txt(it.x -> 'orderId'), 'transport_order_items'),
+              legacy.txt(it.x -> 'productCode'), legacy.txt(it.x -> 'productName'), legacy.num(it.x -> 'qty'),
+              jsonb_build_object('legacy_order_line_id', legacy.txt(it.x -> 'orderId')));
+    end loop;
+
+    -- phụ phí / chi hộ từ cước GHA
+    v_line := 0; v_extra := 0; v_pass := 0; v_xsum := 0;
+    for f in select m.*, legacy.num(v_costs -> m.cost_key) as amt from _fee_map m
+             where legacy.num(v_costs -> m.cost_key) is not null and legacy.num(v_costs -> m.cost_key) <> 0 loop
+      select ft.id, ft.fee_kind into v_fee_type, v_fee_kind from public.fee_types ft
+      where lower(ft.name) = lower(f.fee_name) order by ft.is_active desc, ft.code limit 1;
+      if v_fee_type is null then
+        insert into public.fee_types (name, fee_kind, is_loading, description)
+        values (f.fee_name, f.fee_kind, f.is_loading, 'Tạo khi chuyển dữ liệu cước từ app cũ (' || f.cost_key || ')')
+        returning id, fee_kind into v_fee_type, v_fee_kind;
+      end if;
+      if f.amt < 0 then
+        insert into legacy.import_log (level, collection, doc_id, message)
+        values ('warn', 'costsGha', r.doc_id, format('%s âm (%s), không chuyển được, cần nhập tay', f.fee_name, f.amt));
+        continue;
+      end if;
+      v_line := v_line + 1;
+      insert into public.shipment_fees (shipment_id, line_no, fee_type_id, fee_kind, amount, note, ref_no)
+      values (v_id, v_line, v_fee_type, v_fee_kind, round(f.amt, 0),
+              case when f.cost_key = 'otherFee' then legacy.txt(v_costs -> 'otherFeeReason') end,
+              case when f.cost_key = 'unloadEmptyFee' then left(legacy.txt(v_costs -> 'invoiceNo'), 100) end);
+      if v_fee_kind = 'pass_through' then v_pass := v_pass + round(f.amt, 0); else v_extra := v_extra + round(f.amt, 0); end if;
+      if f.cost_key like 'x\_%' then v_xsum := v_xsum + f.amt; end if;
+    end loop;
+    update public.shipments set extra_fee_amount = v_extra, pass_through_amount = v_pass where id = v_id;
+
+    -- Đối chiếu: cước cũ = đơn giá + hỗ trợ dầu + phụ thu (theo công thức app cũ)
+    if v_freight is not null and abs(v_freight - (coalesce(v_unit, 0) + v_fuel_amt + v_xsum)) > 1 then
+      insert into legacy.import_log (level, collection, doc_id, message)
+      values ('warn', 'costsGha', r.doc_id, format('Chuyến %s: cước cũ %s ≠ đơn giá %s + dầu %s + phụ thu %s; đã giữ đơn giá/dầu/phụ thu, số gốc ở custom_fields.legacy_cost_gha',
+        legacy.txt(r.data -> 'shipmentNo'), v_freight, coalesce(v_unit, 0), v_fuel_amt, v_xsum));
+    end if;
+  end loop;
+  insert into _rep select 10, 'Xe / chuyến → Chuyến', (select count(*) from raw_docs where collection = 'shipmentDetails'),
+    (select count(*) from id_map where collection = 'shipmentDetails'), 'trạng thái "Hoàn thành" → chờ kế toán đóng chuyến';
+  insert into _rep select 11, 'Cước GHA → giá + phụ phí của chuyến', (select count(*) from raw_docs where collection = 'costsGha'),
+    (select count(*) from raw_docs c join id_map m on m.collection = 'shipmentDetails' and m.doc_id = c.doc_id where c.collection = 'costsGha'),
+    'xem bảng đối chiếu tiền bên dưới';
+
+  -- Cước không gắn được xe
+  insert into legacy.import_log (level, collection, doc_id, message)
+  select 'warn', 'costsGha', c.doc_id, 'Cước của xe ' || coalesce(legacy.txt(c.data -> 'shipmentNo'), '?') || ' không còn xe tương ứng, chưa chuyển'
+  from legacy.raw_docs c
+  where c.collection = 'costsGha' and not exists (select 1 from legacy.id_map m where m.collection = 'shipmentDetails' and m.doc_id = c.doc_id)
+    and not exists (select 1 from legacy.import_log l where l.collection = 'costsGha' and l.doc_id = c.doc_id);
+
+  -- Đơn cha: hoàn tất khi mọi chuyến đã xong và đã xếp đủ hàng
+  update public.transport_orders o set status = 'completed'
+  where o.id in (select target_id from legacy.id_map where collection = 'orderShipments')
+    and exists (select 1 from public.shipments s where s.order_id = o.id)
+    and not exists (select 1 from public.shipments s where s.order_id = o.id and s.status not in ('driver_completed', 'closed', 'cancelled'))
+    and not exists (select 1 from public.order_item_balance b where b.order_id = o.id and b.remaining_quantity > 0);
+
+  -- Phần giữ nguyên trong legacy.raw_docs, chưa chuyển
+  insert into _rep
+  select 20, 'Giữ ở bản gốc, chưa chuyển: ' || d.collection, count(*)::int, 0,
+         case d.collection when 'users' then 'tài khoản: cấp lại ở hệ thống mới (mật khẩu cũ không dùng được)'
+                           when 'config' then 'cấu hình trường/công thức cũ (đã dùng để tạo loại phí)'
+                           else 'chuyển ở bước làm module tương ứng' end
+  from legacy.raw_docs d
+  where d.collection in ('users', 'config', 'eirRequests', 'eirPrivate', 'tripFinance', 'payReqs', 'overheadExpenses',
+                         'travelClaims', 'quotes', 'priceLists', 'financeSettings', 'costs3pl', 'ownerClaim')
+  group by d.collection;
+
+  return query select _rep.buoc, _rep.nguon, _rep.da_chuyen, _rep.ghi_chu from _rep order by _rep.ord, _rep.buoc;
+end $$;
+
+-- Đối chiếu số liệu cũ ↔ mới (chạy sau run_import)
+create or replace view legacy.reconcile as
+with old_sd as (
+  select d.doc_id, legacy.num(d.data -> 'qty') as qty,
+         legacy.num(c.data #> '{costs,freightCost}') as freight,
+         (select coalesce(sum(legacy.num(c.data -> 'costs' -> k)), 0) from unnest(array['loadingFee', 'unloadEmptyFee', 'liftFee', 'customsDeclFee', 'truckDetentionFee', 'otherFee']) k) as fees_other
+  from legacy.raw_docs d left join legacy.raw_docs c on c.collection = 'costsGha' and c.doc_id = d.doc_id
+  where d.collection = 'shipmentDetails'
+), new_s as (
+  select s.id, s.custom_fields ->> 'legacy_id' as legacy_id, s.freight_amount + s.fuel_support_amount as base,
+         s.extra_fee_amount, s.pass_through_amount,
+         (select coalesce(sum(i.quantity), 0) from public.shipment_items i where i.shipment_id = s.id) as qty
+  from public.shipments s where s.custom_fields ? 'legacy_id'
+)
+select 'Số chuyến' as chi_tieu, (select count(*) from old_sd)::numeric as cu, (select count(*) from new_s)::numeric as moi
+union all select 'Tổng số lượng hàng trên xe (kg)', (select sum(qty) from old_sd), (select sum(qty) from new_s)
+union all select 'Tổng số lượng đơn hàng (kg)',
+  (select sum(legacy.num(data -> 'qty')) from legacy.raw_docs where collection = 'orders'),
+  (select sum(quantity) from public.transport_order_items i where i.custom_fields ? 'legacy_id')
+union all select 'Tổng cước GHA (cước vận chuyển gồm dầu + phụ thu)',
+  (select sum(freight) from old_sd),
+  (select sum(n.base) + coalesce(sum(n.extra_fee_amount), 0)
+     - coalesce((select sum(f.amount) from public.shipment_fees f join public.fee_types t on t.id = f.fee_type_id
+                 join new_s x on x.id = f.shipment_id
+                 where f.fee_kind = 'revenue' and t.name in ('Phí neo xe', 'Phí tờ khai theo cont', 'Phí bổ sung khác')), 0)
+   from new_s n)
+union all select 'Tổng phí khác (bốc xếp, hạ, nâng, tờ khai, neo, khác)',
+  (select sum(fees_other) from old_sd),
+  (select coalesce(sum(f.amount), 0) from public.shipment_fees f join public.fee_types t on t.id = f.fee_type_id
+   join new_s x on x.id = f.shipment_id
+   where f.fee_kind = 'pass_through' or t.name in ('Phí neo xe', 'Phí tờ khai theo cont', 'Phí bổ sung khác'));
 
 commit;
