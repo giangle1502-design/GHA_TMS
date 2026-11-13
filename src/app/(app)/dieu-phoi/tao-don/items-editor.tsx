@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, NativeSelect, Textarea } from "@/components/ui/input";
@@ -10,6 +10,33 @@ import { computeFormula } from "@/lib/formula";
 import { formatNumber } from "@/lib/format";
 import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
 import { AddOptionButton, useFieldOptions } from "@/components/entities/add-option";
+import { createClient } from "@/lib/supabase/client";
+
+type Product = { code: string; name: string; unit: string | null };
+let productCache: Promise<Product[]> | null = null;
+
+/** Danh mục mã hàng (đang dùng) để gợi ý khi nhập Mã hàng / Tên hàng; tải một lần mỗi phiên */
+function useProducts() {
+  const [list, setList] = useState<Product[]>([]);
+  useEffect(() => {
+    productCache ??= (async () => {
+      const { data, error } = await createClient().from("products").select("code, name, unit").eq("status", "active").order("code").limit(10000);
+      if (error) {
+        productCache = null;
+        return [];
+      }
+      return (data ?? []) as Product[];
+    })();
+    let alive = true;
+    void productCache.then((d) => alive && setList(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return list;
+}
+
+const norm = (v: string) => v.trim().toUpperCase();
 
 export type ItemLine = { key: number; item_code: string; item_name: string; quantity: string; unit: string; note: string; custom: Record<string, unknown> };
 
@@ -63,6 +90,20 @@ export function ItemsEditor({
   const sysSet = systemSettingsOf("shipment_items", fieldRows);
   const cols = applyLayout([...SYSTEM_COLS.map((c) => ({ key: c.key as string, sys: { ...c, label: systemLabel(sysSet, c.key, c.label) }, field: null as FieldDef | null })), ...fields.map((f) => ({ key: f.key, sys: null, field: f }))], layout);
   const set = (key: number, patch: Partial<ItemLine>) => onChange(value.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const products = useProducts();
+  const byCode = useMemo(() => new Map(products.map((p) => [norm(p.code), p])), [products]);
+  const byName = useMemo(() => new Map(products.map((p) => [norm(p.name), p])), [products]);
+  /** Gõ/chọn đúng một mã (hoặc tên) có trong danh mục thì tự điền phần còn lại */
+  function setSys(l: ItemLine, key: SysKey, v: string) {
+    const patch: Partial<ItemLine> = { [key]: v };
+    const p = key === "item_code" ? byCode.get(norm(v)) : key === "item_name" ? byName.get(norm(v)) : undefined;
+    if (p) {
+      if (key === "item_code") patch.item_name = l.item_name.trim() && byCode.get(norm(l.item_code))?.name !== l.item_name ? l.item_name : p.name;
+      if (key === "item_name" && !l.item_code.trim()) patch.item_code = p.code;
+      if (!l.unit.trim() && p.unit) patch.unit = p.unit;
+    }
+    set(l.key, patch);
+  }
   const totalQty = value.reduce((a, l) => a + (parseNumberVN(l.quantity) ?? 0), 0);
   const sumOf = (f: FieldDef) => value.reduce((a, l) => a + (f.type === "formula" ? (computeFormula(f.formula, lineVars(l)) ?? 0) : (parseNumberVN(l.custom[f.key], f.type === "currency") ?? 0)), 0);
 
@@ -123,7 +164,9 @@ export function ItemsEditor({
                           placeholder={i === 0 ? c.sys.placeholder : undefined}
                           value={l[c.key as SysKey]}
                           maxLength={c.key === "item_name" ? 300 : c.key === "note" ? 500 : 100}
-                          onChange={(e) => set(l.key, { [c.key]: e.target.value } as Partial<ItemLine>)}
+                          list={products.length && (c.key === "item_code" || c.key === "item_name") ? `${idPrefix}ds-${c.key}` : undefined}
+                          autoComplete="off"
+                          onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
                         />
                       ) : (
                         <CellInput field={c.field!} line={l} index={i} onChange={(v) => set(l.key, { custom: { ...l.custom, [c.field!.key]: v } })} />
@@ -160,6 +203,24 @@ export function ItemsEditor({
       ) : (
         <p className="text-xs text-muted-foreground">Chưa có dòng hàng nào. Bấm “Thêm dòng” để nhập từng mã hàng, hoặc “Dán từ Excel” để dán nhiều dòng cùng lúc.</p>
       )}
+      {products.length ? (
+        <>
+          <datalist id={`${idPrefix}ds-item_code`}>
+            {products.map((p) => (
+              <option key={p.code} value={p.code}>
+                {p.name}
+              </option>
+            ))}
+          </datalist>
+          <datalist id={`${idPrefix}ds-item_name`}>
+            {products.map((p) => (
+              <option key={p.code} value={p.name}>
+                {p.code}
+              </option>
+            ))}
+          </datalist>
+        </>
+      ) : null}
       {canAddField ? <AddFieldButton module="shipment_items" customRows={fieldRows} label="Thêm cột (VD: Số seal, Trọng lượng, Thành tiền)" /> : null}
 
       <Dialog open={paste !== null} onOpenChange={(o) => !o && setPaste(null)}>
