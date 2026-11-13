@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, NativeSelect, Textarea } from "@/components/ui/input";
@@ -10,6 +10,33 @@ import { computeFormula } from "@/lib/formula";
 import { formatNumber } from "@/lib/format";
 import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
 import { AddOptionButton, useFieldOptions } from "@/components/entities/add-option";
+import { createClient } from "@/lib/supabase/client";
+
+type Product = { code: string; name: string; unit: string | null };
+let productCache: Promise<Product[]> | null = null;
+
+/** Danh mục mã hàng (đang dùng) để gợi ý khi nhập Mã hàng / Tên hàng; tải một lần mỗi phiên */
+function useProducts() {
+  const [list, setList] = useState<Product[]>([]);
+  useEffect(() => {
+    productCache ??= (async () => {
+      const { data, error } = await createClient().from("products").select("code, name, unit").eq("status", "active").order("code").limit(10000);
+      if (error) {
+        productCache = null;
+        return [];
+      }
+      return (data ?? []) as Product[];
+    })();
+    let alive = true;
+    void productCache.then((d) => alive && setList(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return list;
+}
+
+const norm = (v: string) => v.trim().toUpperCase();
 
 export type ItemLine = { key: number; item_code: string; item_name: string; quantity: string; unit: string; note: string; custom: Record<string, unknown> };
 
@@ -29,7 +56,7 @@ export const itemsPayload = (lines: ItemLine[]) =>
   lines.map((l) => ({ item_code: l.item_code, item_name: l.item_name, quantity: l.quantity, unit: l.unit, note: l.note, custom: l.custom }));
 
 const SYSTEM_COLS = [
-  { key: "item_code", label: "Mã hàng", width: "w-32", placeholder: "VD: MH001" },
+  { key: "item_code", label: "Mã hàng", width: "min-w-56", placeholder: "VD: MH001" },
   { key: "item_name", label: "Tên hàng", width: "min-w-48", placeholder: "VD: Thép cuộn" },
   { key: "quantity", label: "Số lượng", width: "w-24", placeholder: "0" },
   { key: "unit", label: "ĐVT", width: "w-20", placeholder: "kiện" },
@@ -63,6 +90,23 @@ export function ItemsEditor({
   const sysSet = systemSettingsOf("shipment_items", fieldRows);
   const cols = applyLayout([...SYSTEM_COLS.map((c) => ({ key: c.key as string, sys: { ...c, label: systemLabel(sysSet, c.key, c.label) }, field: null as FieldDef | null })), ...fields.map((f) => ({ key: f.key, sys: null, field: f }))], layout);
   const set = (key: number, patch: Partial<ItemLine>) => onChange(value.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const products = useProducts();
+  const byCode = useMemo(() => new Map(products.map((p) => [norm(p.code), p])), [products]);
+  /** Mã hàng có trong danh mục thì Tên hàng và ĐVT lấy theo thiết lập của mã hàng */
+  const fromProduct = (code: string): Partial<ItemLine> => {
+    const p = byCode.get(norm(code));
+    return p ? { item_code: p.code, item_name: p.name, unit: p.unit ?? "" } : {};
+  };
+  // Dòng đã lưu trước đây: ĐVT theo thiết lập hiện tại của mã hàng
+  useEffect(() => {
+    if (!byCode.size) return;
+    const unitOf = (l: ItemLine) => byCode.get(norm(l.item_code))?.unit ?? null;
+    if (value.some((l) => unitOf(l) !== null && unitOf(l) !== l.unit)) onChange(value.map((l) => (unitOf(l) !== null ? { ...l, unit: unitOf(l)! } : l)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byCode]);
+  function setSys(l: ItemLine, key: SysKey, v: string) {
+    set(l.key, key === "item_code" ? { item_code: v, ...fromProduct(v) } : ({ [key]: v } as Partial<ItemLine>));
+  }
   const totalQty = value.reduce((a, l) => a + (parseNumberVN(l.quantity) ?? 0), 0);
   const sumOf = (f: FieldDef) => value.reduce((a, l) => a + (f.type === "formula" ? (computeFormula(f.formula, lineVars(l)) ?? 0) : (parseNumberVN(l.custom[f.key], f.type === "currency") ?? 0)), 0);
 
@@ -72,7 +116,7 @@ export function ItemsEditor({
       .map((r) => r.split("\t"))
       .filter((c) => c.some((x) => x.trim()));
     const add = lines.map(([item_code = "", item_name = "", quantity = "", unit = "", note = ""]) =>
-      newItem({ item_code: item_code.trim(), item_name: item_name.trim(), quantity: quantity.trim(), unit: unit.trim(), note: note.trim() }),
+      newItem({ item_code: item_code.trim(), item_name: item_name.trim(), quantity: quantity.trim(), unit: unit.trim(), note: note.trim(), ...fromProduct(item_code) }),
     );
     onChange([...value.filter((l) => l.item_code || l.item_name || l.quantity || l.note), ...add].slice(0, 500));
     setPaste(null);
@@ -114,16 +158,34 @@ export function ItemsEditor({
                   <td className="py-1 pr-2 pt-3 text-muted-foreground">{i + 1}</td>
                   {cols.map((c) => (
                     <td key={c.key} className="py-1 pr-2">
-                      {c.sys ? (
+                      {c.key === "item_code" && products.length ? (
+                        <NativeSelect
+                          aria-label={`${c.sys!.label} dòng ${i + 1}`}
+                          id={i === 0 ? `${idPrefix}${c.key}` : undefined}
+                          className="h-8"
+                          value={byCode.get(norm(l.item_code))?.code ?? l.item_code}
+                          onChange={(e) => setSys(l, "item_code", e.target.value)}
+                        >
+                          <option value="">— Chọn mã hàng —</option>
+                          {products.map((p) => (
+                            <option key={p.code} value={p.code}>
+                              {p.code} · {p.name}
+                            </option>
+                          ))}
+                          {l.item_code && !byCode.has(norm(l.item_code)) ? <option value={l.item_code}>{l.item_code} (chưa có trong danh mục)</option> : null}
+                        </NativeSelect>
+                      ) : c.sys ? (
                         <Input
                           aria-label={`${c.sys.label} dòng ${i + 1}`}
                           id={i === 0 ? `${idPrefix}${c.key}` : undefined}
-                          className="h-8"
+                          className={`h-8 ${c.key === "unit" && byCode.has(norm(l.item_code)) ? "bg-muted/50" : ""}`}
                           inputMode={c.key === "quantity" ? "decimal" : undefined}
                           placeholder={i === 0 ? c.sys.placeholder : undefined}
                           value={l[c.key as SysKey]}
                           maxLength={c.key === "item_name" ? 300 : c.key === "note" ? 500 : 100}
-                          onChange={(e) => set(l.key, { [c.key]: e.target.value } as Partial<ItemLine>)}
+                          readOnly={c.key === "unit" && byCode.has(norm(l.item_code))}
+                          title={c.key === "unit" && byCode.has(norm(l.item_code)) ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)" : undefined}
+                          onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
                         />
                       ) : (
                         <CellInput field={c.field!} line={l} index={i} onChange={(v) => set(l.key, { custom: { ...l.custom, [c.field!.key]: v } })} />
