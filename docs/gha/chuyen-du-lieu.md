@@ -89,4 +89,12 @@ Gói này gồm 2 migration, 1 script nhập và 1 bộ kiểm thử. Đã chạ
    ```
    Lệnh trên chạy thử rồi hủy. Xem báo cáo, đúng thì thêm `--commit`.
 
+**Khi không kết nối thẳng được cổng 5432** (VD môi trường cloud chỉ đi HTTPS): dùng API quản lý của Supabase.
+```
+SUPABASE_ACCESS_TOKEN=sbp_... node scripts/supabase-api-import.mjs --ref <mã dự án> --install          # dựng CSDL (dự án trống)
+SUPABASE_ACCESS_TOKEN=sbp_... node scripts/supabase-api-import.mjs --ref <mã dự án> --file qlvt_backup.json   # chạy thử
+... --commit                                                                                           # ghi thật
+```
+Sau proxy HTTPS thêm `NODE_USE_ENV_PROXY=1`.
+
 File sao lưu chứa dữ liệu thật (tên, SĐT, CCCD, ảnh): **không đưa vào repo** (repo đang công khai).

@@ -730,6 +730,36 @@ begin
   return query select _rep.buoc, _rep.nguon, _rep.da_chuyen, _rep.ghi_chu from _rep order by _rep.ord, _rep.buoc;
 end $$;
 
+
+-- Chạy thử toàn bộ rồi HỦY (dùng khi chỉ gọi được từng câu lệnh rời, VD qua API quản lý của Supabase).
+-- Trả về jsonb: kết quả từng bước, đối chiếu, cảnh báo. Không ghi gì (trừ legacy.raw_docs đã nạp trước đó).
+create or replace function legacy.dry_run() returns jsonb
+language plpgsql as $$
+declare res jsonb;
+begin
+  begin
+    select jsonb_build_object('buoc', jsonb_agg(to_jsonb(r))) into res from legacy.run_import() r;
+    res := res || jsonb_build_object(
+      'doi_chieu', (select jsonb_agg(to_jsonb(c)) from legacy.reconcile c),
+      'canh_bao', (select jsonb_agg(jsonb_build_object('level', l.level, 'collection', l.collection, 'doc_id', l.doc_id, 'message', l.message) order by l.id) from legacy.import_log l));
+    raise exception using errcode = 'P0001', message = '__chay_thu_huy__';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> '__chay_thu_huy__' then raise; end if;
+  end;
+  return res;
+end $$;
+
+-- Nạp thẳng một lô bản ghi (mảng [{collection, doc_id, data}]) vào legacy.raw_docs, dùng khi không gửi được cả file một lần
+create or replace function legacy.load_docs(p_docs jsonb) returns integer
+language sql as $$
+  with ins as (
+    insert into legacy.raw_docs (collection, doc_id, data)
+    select x ->> 'collection', x ->> 'doc_id', x -> 'data' from jsonb_array_elements(p_docs) x
+    on conflict on constraint raw_docs_pkey do update set data = excluded.data, loaded_at = now()
+    returning 1)
+  select count(*)::int from ins
+$$;
+
 -- Đối chiếu số liệu cũ ↔ mới (chạy sau run_import)
 create or replace view legacy.reconcile as
 with old_sd as (
