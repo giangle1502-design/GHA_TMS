@@ -3,7 +3,9 @@ import { redirect } from "next/navigation";
 import { Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { signInWithGoogle } from "@/app/auth/actions";
+import Link from "next/link";
+import { Input } from "@/components/ui/input";
+import { signInWithGoogle, signInWithPassword } from "@/app/auth/actions";
 import { isSupabaseConfigured } from "@/lib/env";
 import { getCurrentUser, homePathFor } from "@/lib/auth/session";
 
@@ -13,6 +15,8 @@ const ERRORS: Record<string, string> = {
   oauth: "Không khởi tạo được đăng nhập Google. Kiểm tra cấu hình Google provider trên Supabase.",
   "thieu-ma": "Đăng nhập bị hủy hoặc thiếu mã xác thực.",
   "xac-thuc": "Xác thực không thành công. Vui lòng thử lại.",
+  "sai-mat-khau": "Tên đăng nhập hoặc mật khẩu không đúng.",
+  "thieu-thong-tin": "Nhập tên đăng nhập (hoặc email) và mật khẩu.",
 };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; loi?: string }> }) {
@@ -43,6 +47,19 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         ) : null}
 
         {configured ? (
+          <>
+          <form action={signInWithPassword} className="space-y-3">
+            <input type="hidden" name="next" value={next ?? "/"} />
+            <Input name="login" placeholder="Tên đăng nhập hoặc email" autoComplete="username" required />
+            <Input name="password" type="password" placeholder="Mật khẩu" autoComplete="current-password" required />
+            <Button type="submit" size="lg" className="w-full">Đăng nhập</Button>
+            <div className="text-right text-sm">
+              <Link href="/quen-mat-khau" className="text-primary hover:underline">Quên mật khẩu?</Link>
+            </div>
+          </form>
+          <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="h-px flex-1 bg-border" />hoặc<div className="h-px flex-1 bg-border" />
+          </div>
           <form action={signInWithGoogle}>
             <input type="hidden" name="next" value={next ?? "/"} />
             <Button type="submit" variant="outline" size="lg" className="w-full">
@@ -55,6 +72,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
               Đăng nhập bằng Google
             </Button>
           </form>
+          </>
         ) : (
           <Alert variant="warning">
             <AlertTitle>Chưa cấu hình kết nối Supabase</AlertTitle>
@@ -66,7 +84,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         )}
 
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          Chỉ tài khoản Google đã được quản trị viên cấp quyền mới truy cập được dữ liệu.
+          Chỉ tài khoản đã được quản trị viên cấp quyền mới truy cập được dữ liệu.
         </p>
       </div>
     </main>
