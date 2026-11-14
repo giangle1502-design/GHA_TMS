@@ -2,8 +2,9 @@ import { withErrorDetail } from "@/components/layout/page-error-detail";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import { notFound } from "next/navigation";
-import { ArrowRight, ChevronLeft } from "lucide-react";
+import { ArrowRight, ChevronLeft, Copy } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { missingColumn } from "@/lib/supabase/missing-column";
@@ -335,6 +336,13 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                     />
                   ))
               : null}
+            {s.status !== "cancelled" && me.permissions.has("dispatch.create") && me.permissions.has("dispatch.update") ? (
+              <Button asChild variant="outline" title="Thêm một chuyến giống chuyến này vào cùng đơn (VD chia hàng cho xe 3PL khác)">
+                <Link href={`/dieu-phoi/don-hang/${s.order_id}/sua?nhanban=${s.id}`}>
+                  <Copy /> Nhân bản chuyến
+                </Link>
+              </Button>
+            ) : null}
             {canCancel ? <CancelDialog shipmentId={s.id} shipmentCode={s.shipment_code} /> : null}
             {s.status === "cancelled" && (me.permissions.has("dispatch.delete") || me.permissions.has("shipments.delete")) ? (
               <RestoreShipmentButton shipmentId={s.id} shipmentCode={s.shipment_code} />

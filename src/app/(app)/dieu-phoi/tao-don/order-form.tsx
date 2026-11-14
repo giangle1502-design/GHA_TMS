@@ -142,6 +142,8 @@ const pick = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(
 const PRICE_FIELD_TYPES: FieldDef["type"][] = ["currency", "percent", "number", "formula"];
 
 let seq = 0;
+/** Khóa cố định của chuyến nhân bản (máy chủ và trình duyệt sinh cùng id) */
+const DUPLICATE_KEY = -1000;
 /** pod = mặc định ô "Khách yêu cầu chụp chứng từ" cho chuyến mới (Cấu hình) */
 const newRow = (from?: Row, pod = true): Row => ({
   key: ++seq,
@@ -245,7 +247,10 @@ export function OrderForm({
   canCancelTrips = false,
   closeHref,
   podPhotoDefault = true,
+  duplicateOf,
 }: {
+  /** Sửa đơn: mở sẵn một chuyến mới giống chuyến này (nút Nhân bản ở trang chuyến / Quản lý chuyến) */
+  duplicateOf?: string;
   /** Đơn mới mặc định tích "Khách yêu cầu chụp chứng từ" */
   podPhotoDefault?: boolean;
   order?: {
@@ -303,11 +308,18 @@ export function OrderForm({
     const priceKeys = shipmentFields.filter((f) => PRICE_FIELD_TYPES.includes(f.type)).map((f) => f.key);
     const generalKeys = shipmentFields.filter((f) => !PRICE_FIELD_TYPES.includes(f.type)).map((f) => f.key);
     // Khóa theo thứ tự để máy chủ và trình duyệt sinh cùng id
-    return edit.shipments.map((s, i) => ({
+    const list = edit.shipments.map((s, i) => ({
       ...rowFromShipment(s, generalKeys, priceKeys),
       key: -(i + 1),
     }));
+    const at = duplicateOf && canCreate ? list.findIndex((r) => r.id === duplicateOf) : -1;
+    if (at >= 0) list.splice(at + 1, 0, { ...newRow(list[at], podPhotoDefault), key: DUPLICATE_KEY });
+    return list;
   });
+  // Mở trang để nhân bản: cuộn tới chuyến mới
+  useEffect(() => {
+    if (duplicateOf) document.getElementById("chuyen-nhan-ban")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [duplicateOf]);
   const lockedHeader = Boolean(edit?.billed);
   const oSys = systemSettingsOf("transport_orders", orderFieldRows);
   const [pending, start] = useTransition();
@@ -719,7 +731,7 @@ function ShipmentEditor({
     total_revenue: fuel === null ? null : freight + surcharge + fuel,
   };
 
-  const anchor = row.code ? `chuyen-${row.code}` : undefined;
+  const anchor = row.code ? `chuyen-${row.code}` : row.key === DUPLICATE_KEY ? "chuyen-nhan-ban" : undefined;
   const title = (
     <CardTitle className="flex flex-wrap items-center gap-2 text-base">
       Chuyến {index + 1}

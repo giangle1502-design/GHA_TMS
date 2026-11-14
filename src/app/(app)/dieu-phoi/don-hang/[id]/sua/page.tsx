@@ -82,13 +82,14 @@ type ItemRow = {
 const SHIP_COLS =
   "id, shipment_code, status, version, receivable_id, pickup_at, expected_delivery_at, pickup_location_id, delivery_location_id, empty_return_location_id, offroute_return_location_id, trip_order, vehicle_type_id, vehicle_id, driver_id, price_list_id, unit_price, pricing_unit, quantity, surcharge_amount, fuel_support_rate, fuel_support_base, fuel_support_amount, pricing_snapshot, notes, pod_photo_required, custom_fields";
 
-export default async function Page(props: { params: Promise<{ id: string }> }) {
+export default async function Page(props: { params: Promise<{ id: string }>; searchParams: Promise<{ nhanban?: string }> }) {
   return withErrorDetail(() => PageInner(props));
 }
 
-async function PageInner({ params }: { params: Promise<{ id: string }> }) {
+async function PageInner({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ nhanban?: string }> }) {
   const me = await requirePagePermission("dispatch.update");
   const { id } = await params;
+  const { nhanban } = await searchParams;
   if (!isUuid(id)) notFound();
   const sb = await createClient();
   // Mặc định ô "Khách yêu cầu chụp chứng từ" (Cấu hình → Ứng dụng tài xế); CSDL chưa nâng cấp thì bật
@@ -266,6 +267,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
           closeHref={`/dieu-phoi/don-hang/${o.id}`}
           edit={edit}
           canCreate={o.status === "open" && me.permissions.has("dispatch.create")}
+          duplicateOf={nhanban && isUuid(nhanban) ? nhanban : undefined}
           canCancelTrips={me.permissions.has("dispatch.delete") || me.permissions.has("shipments.delete")}
           canCreatePriceList={me.permissions.has("price_lists.create")}
           orderFields={orderFields}

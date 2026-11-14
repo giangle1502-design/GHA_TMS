@@ -16,7 +16,7 @@ import {
   type VisibilityState,
 } from "@tanstack/react-table";
 import { toast } from "sonner";
-import { ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Download, Loader2, Pencil, RotateCcw, Save } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Copy, Download, Loader2, Pencil, RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ColumnsMenu } from "@/components/grid/columns-menu";
@@ -736,6 +736,13 @@ function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: Shi
         <Button asChild variant="ghost" size="sm" className="h-7 px-2" title={`Sửa toàn bộ đơn ${r.order_code}, mở tới chuyến ${r.shipment_code}`}>
           <Link href={`/dieu-phoi/don-hang/${r.order_id}/sua#chuyen-${r.shipment_code}`}>
             <Pencil /> Sửa
+          </Link>
+        </Button>
+      ) : null}
+      {canAssign && r.status !== "cancelled" ? (
+        <Button asChild variant="ghost" size="icon" className="size-7" title={`Nhân bản: thêm chuyến giống ${r.shipment_code} vào đơn ${r.order_code}`}>
+          <Link href={`/dieu-phoi/don-hang/${r.order_id}/sua?nhanban=${r.id}`} aria-label={`Nhân bản chuyến ${r.shipment_code}`}>
+            <Copy />
           </Link>
         </Button>
       ) : null}
