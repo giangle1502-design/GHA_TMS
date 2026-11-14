@@ -451,8 +451,22 @@ export async function vehicleDefaultDriver(vehicleId: string): Promise<ActionRes
     const supabase = await createClient();
     const { data, error } = await supabase.from("vehicles").select("assigned_driver_id, vehicle_type_id, ownership_type, supplier_id").eq("id", vehicleId).maybeSingle();
     if (error) throw error;
+    let driverId = (data?.assigned_driver_id as string | null) ?? null;
+    // Xe chưa gắn tài xế (VD xe 3PL chuyển từ app cũ): lấy tài xế của chuyến gần nhất chạy xe này
+    if (!driverId && data) {
+      const { data: last } = await supabase
+        .from("shipments")
+        .select("driver_id")
+        .eq("vehicle_id", vehicleId)
+        .not("driver_id", "is", null)
+        .neq("status", "cancelled")
+        .order("pickup_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      driverId = (last?.driver_id as string | null) ?? null;
+    }
     return {
-      driverId: data?.assigned_driver_id ?? null,
+      driverId,
       vehicleTypeId: data?.vehicle_type_id ?? null,
       outsourced: data?.ownership_type === "outsourced" || Boolean(data?.supplier_id),
       supplierId: (data?.supplier_id as string | null) ?? null,

@@ -842,13 +842,13 @@ function ShipmentEditor({
             empty_return_location_id: (
               <div className="space-y-1 lg:col-span-2">
                 <SysLabel s={sSys} k="empty_return_location_id" htmlFor={id("empty-return")}>Điểm hạ rỗng</SysLabel>
-                <ReferenceSelect id={id("empty-return")} refKey="locations" value={row.emptyReturnLocationId} onChange={(v) => onChange({ emptyReturnLocationId: v })} />
+                <ReferenceSelect id={id("empty-return")} refKey="locations_depot" value={row.emptyReturnLocationId} onChange={(v) => onChange({ emptyReturnLocationId: v })} />
               </div>
             ),
             offroute_return_location_id: (
               <div className="space-y-1 lg:col-span-2">
                 <SysLabel s={sSys} k="offroute_return_location_id" htmlFor={id("offroute-return")}>Điểm hạ rỗng trái tuyến</SysLabel>
-                <ReferenceSelect id={id("offroute-return")} refKey="locations" value={row.offrouteReturnLocationId} onChange={(v) => onChange({ offrouteReturnLocationId: v })} />
+                <ReferenceSelect id={id("offroute-return")} refKey="locations_depot" value={row.offrouteReturnLocationId} onChange={(v) => onChange({ offrouteReturnLocationId: v })} />
               </div>
             ),
             trip_order: (
