@@ -12,6 +12,7 @@ import { formatDate, formatDateTime, formatNumber, formatVND } from "@/lib/forma
 import { ASSIGNABLE_STATUSES, CANCELLABLE_STATUSES, PRICING_UNITS, documentStatus, settlementStatus, shipmentStatus } from "@/lib/status";
 import { isLate, type ShipmentListRow } from "@/lib/shipments";
 import { PageHeader } from "@/components/layout/page-header";
+import { ClosePageButton } from "@/components/layout/close-page-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/dispatch/status-badge";
@@ -284,6 +285,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
       <Link href="/chuyen-xe" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ChevronLeft className="size-4" /> Quản lý chuyến xe
       </Link>
+      <ClosePageButton fallbackHref="/chuyen-xe" />
       <PageHeader
         title={`Chuyến ${s.shipment_code}`}
         description={

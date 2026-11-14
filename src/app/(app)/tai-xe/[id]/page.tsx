@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
+import { ClosePageButton } from "@/components/layout/close-page-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChildList, RecordCard } from "@/components/entities/record-card";
@@ -49,6 +50,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       <Link href="/tai-xe" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ChevronLeft className="size-4" /> Danh sách tài xế
       </Link>
+      <ClosePageButton fallbackHref="/tai-xe" />
       <PageHeader
         title={`${record.full_name} (${record.code})`}
         description={<Badge variant={record.status === "active" ? "success" : "secondary"}>{status?.label ?? String(record.status)}</Badge>}

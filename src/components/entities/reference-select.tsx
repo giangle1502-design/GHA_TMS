@@ -22,6 +22,9 @@ function loadMeta(refKey: string) {
   return metaCache.get(refKey)!;
 }
 
+/** Bộ nhớ tạm kết quả tìm kiếm của các ô chọn (theo danh mục + từ khóa), sống trong phiên trình duyệt */
+const refCache = new Map<string, RefOption[]>();
+
 export function ReferenceSelect({
   id,
   refKey,
@@ -71,9 +74,18 @@ export function ReferenceSelect({
   }, [allowQuickCreate, entity, disabled, refKey]);
 
   function search(term: string) {
+    // Hiện ngay kết quả đã tìm trước đó (trong phiên), rồi cập nhật lại từ máy chủ
+    const key = `${refKey}|${JSON.stringify(where ?? {})}|${term.trim().toLowerCase()}|${value}`;
+    const hit = refCache.get(key);
+    if (hit) setOptions(hit);
     startLoading(async () => {
       const r = await searchReferences(refKey, term, value ? [value] : [], where ?? {});
-      if (r.ok) setOptions(r.data ?? []);
+      if (r.ok) {
+        const data = r.data ?? [];
+        if (refCache.size > 300) refCache.clear();
+        refCache.set(key, data);
+        setOptions(data);
+      }
     });
   }
 
@@ -87,7 +99,7 @@ export function ReferenceSelect({
   function onQuery(term: string) {
     setQ(term);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => search(term), 250);
+    timer.current = setTimeout(() => search(term), 150);
   }
 
   function pick(o: RefOption | null) {

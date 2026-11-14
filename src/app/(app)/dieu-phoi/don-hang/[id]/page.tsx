@@ -10,6 +10,7 @@ import { isUuid } from "@/lib/entities/record";
 import { formatDate, formatDateTime, formatVND } from "@/lib/format";
 import type { ShipmentListRow } from "@/lib/shipments";
 import { PageHeader } from "@/components/layout/page-header";
+import { ClosePageButton } from "@/components/layout/close-page-button";
 import { CancelOrderDialog } from "./cancel-order-dialog";
 import { loadCustomFields, loadTableView, visibleCustomRows } from "@/lib/entities/server";
 import { formatValue, moduleCustomFields } from "@/lib/entities/record";
@@ -84,6 +85,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
       <Link href="/dieu-phoi" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ChevronLeft className="size-4" /> Điều phối
       </Link>
+      <ClosePageButton fallbackHref="/dieu-phoi" />
       <PageHeader
         title={`Đơn hàng ${order.order_code}`}
         description={<Badge variant={st.variant}>{st.label}</Badge>}

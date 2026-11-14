@@ -537,6 +537,7 @@ export const ENTITIES: Record<string, EntityDef> = {
       { key: "company_name", label: "Tên công ty tại điểm", type: "text", list: true, maxLength: 250 },
       { key: "full_address", label: "Địa chỉ đầy đủ", type: "text", required: true, list: true, wide: true, maxLength: 500 },
       { key: "province", label: "Tỉnh/Thành", type: "text", list: true, maxLength: 100 },
+      { key: "is_depot", label: "Depot (điểm hạ rỗng)", type: "boolean", list: true, filter: true, defaultValue: false, help: "Đánh dấu thì điểm này hiện trong ô Điểm hạ rỗng khi tạo đơn." },
       { key: "pay_zone_id", label: "Vùng lương", type: "reference", ref: "pay_zones", list: true, filter: true, help: "Không bắt buộc. Dùng tra lương chuyến của tài xế theo vùng (ví dụ Bến Tre). Chưa có thì gõ tên rồi bấm Thêm mới." },
       { key: "contact_name", label: "Người liên hệ", type: "text", list: true, maxLength: 150 },
       { key: "phone", label: "Số điện thoại", type: "phone", list: true },
@@ -2459,6 +2460,15 @@ export const ENTITIES: Record<string, EntityDef> = {
   },
 };
 
+// Ô Điểm hạ rỗng: chỉ hiện depot; thêm mới từ ô này tự đánh dấu depot
+ENTITIES.locations_depot = {
+  ...ENTITIES.locations,
+  key: "locations_depot",
+  label: "Depot (điểm hạ rỗng)",
+  singular: "depot",
+  refOr: "is_depot.is.true",
+  writeFixed: { is_depot: "true" },
+};
 // Ô chọn xe khi phân công / tạo đơn tách theo nguồn xe: Xe nội bộ (không có xe 3PL) và Xe 3-PL (chỉ xe thuê ngoài).
 // Cùng bảng vehicles, nên trang Phương tiện, app tài xế, chi phí 3PL vẫn dùng chung.
 ENTITIES.vehicles_internal = {
