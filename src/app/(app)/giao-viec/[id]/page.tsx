@@ -5,6 +5,7 @@ import { ArrowLeft, Clock, Eye, EyeOff } from "lucide-react";
 import { requireActiveUser } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
+import { ClosePageButton } from "@/components/layout/close-page-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -97,6 +98,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           </Link>
         </Button>
       </div>
+      <ClosePageButton fallbackHref="/giao-viec" />
       <PageHeader
         title={`${t.code} · ${t.title}`}
         description={

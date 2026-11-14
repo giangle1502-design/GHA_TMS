@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
+import { ClosePageButton } from "@/components/layout/close-page-button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ALL_PERMISSIONS, MODULE_LABELS, ACTION_LABELS, type ModuleKey, permissionLabel } from "@/lib/permissions";
@@ -54,6 +55,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
       <Link href="/nguoi-dung" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="size-4" /> Người dùng
       </Link>
+      <ClosePageButton fallbackHref="/nguoi-dung" />
       <PageHeader
         title={profile.full_name || profile.email}
         description={
