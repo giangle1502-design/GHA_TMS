@@ -34,6 +34,7 @@ import { ASSIGNED_ROW_CELL, DROP_OFF_RE, SHIPMENT_ADV_FIELDS, isAssignedRow, isL
 import { StatusBadge } from "@/components/dispatch/status-badge";
 import { updateShipmentField, type EditableField } from "./actions";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
+import { VehicleOrderCell } from "@/components/dispatch/vehicle-order-cell";
 
 type Col = {
   key: string;
@@ -88,7 +89,14 @@ const COLS: Col[] = [
     width: 160,
     render: (r) => (r.offroute_return_name ? <span className="font-medium text-amber-700 dark:text-amber-400">{r.offroute_return_name}</span> : null),
   },
-  { key: "trip_order", label: "Thứ tự chuyến", width: 90, align: "right", render: (r) => (r.trip_order ? formatNumber(r.trip_order) : "") },
+  // Thứ tự chuyến của xe trong ngày (ứng dụng tài xế bắt nhận đúng thứ tự); chưa nhập thì hiện thứ tự từ kế hoạch (nhạt)
+  {
+    key: "trip_order",
+    label: "Thứ tự chuyến",
+    width: 90,
+    align: "right",
+    render: (r) => (r.vehicle_day_order ? <b>{r.vehicle_day_order}</b> : r.trip_order ? <span className="text-muted-foreground">{formatNumber(r.trip_order)}</span> : ""),
+  },
   { key: "driver_pay", label: "Lương chuyến", width: 110, align: "right", render: (r) => <DriverPayCell r={r} /> },
   {
     key: "delivery_days",
@@ -202,6 +210,7 @@ export function ShipmentGrid({
   canAddField = false,
   canSeeProfit = false,
   canFillDriver = false,
+  canSetOrder = false,
 }: {
   rows: ShipmentListRow[];
   canEdit: boolean;
@@ -215,6 +224,8 @@ export function ShipmentGrid({
   canSeeProfit?: boolean;
   /** Điền nhanh CCCD / GPLX còn thiếu trong hộp Thông tin tài xế */
   canFillDriver?: boolean;
+  /** Nhập thứ tự chuyến của xe trong ngày (quyền điều phối) */
+  canSetOrder?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -266,6 +277,7 @@ export function ShipmentGrid({
         cell: ({ row }) => {
           const r = row.original;
           const editable = canEdit && c.edit && (c.edit === "notes" || !LOCKED_STATUSES.includes(r.status));
+          if (c.key === "trip_order") return <VehicleOrderCell r={r} editable={canSetOrder} />;
           if (c.key === "driver_name" && r.driver_id)
             return (
               <div className="flex items-center gap-1">
@@ -276,7 +288,7 @@ export function ShipmentGrid({
           return editable ? <EditCell row={r} col={c} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? nr : x)))} /> : c.render(r);
         },
       })),
-    [canEdit, allCols, canFillDriver],
+    [canEdit, allCols, canFillDriver, canSetOrder],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library
