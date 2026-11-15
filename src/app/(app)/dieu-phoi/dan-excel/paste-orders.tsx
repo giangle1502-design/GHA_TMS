@@ -2,7 +2,10 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CheckCircle2, ClipboardPaste, ImageUp, Loader2, Save, Trash2, Upload, X } from "lucide-react";
+import { CheckCircle2, ClipboardPaste, ImageUp, Loader2, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { EntityFormDialog } from "@/components/entities/entity-form-dialog";
+import { getEntityMeta } from "@/lib/entities/actions";
+import type { CustomFieldRow } from "@/lib/entities/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,7 +41,7 @@ import {
 } from "@/lib/paste-orders";
 import { gridToTSV } from "@/lib/ocr-table";
 import { ocrTableImage } from "@/lib/ocr-image";
-import { commitPaste, deleteAlias, findExistingContainers, saveAliases, type AliasKind, type CatalogItem, type PasteCatalog, type PasteOutcome, type SavedAlias } from "./actions";
+import { commitPaste, deleteAlias, findExistingContainers, loadPasteCatalog, saveAliases, type AliasKind, type CatalogItem, type PasteCatalog, type PasteOutcome, type SavedAlias } from "./actions";
 
 const KIND_LABEL: Record<AliasKind, string> = { customer: "Khách hàng (Pháp nhân)", location: "Địa điểm", product: "Mã hàng" };
 const RAW_KEEP = "__raw";
@@ -46,9 +49,17 @@ const dmy = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice
 const label = (x: CatalogItem | undefined) => (x ? (x.code && x.code !== x.name ? `${x.code} · ${x.name}` : x.name) : "");
 
 type Pick = { id: string | null; how: "manual" | "alias" | "code" | "name" | "core" | "ambiguous" | "none" | "empty"; candidates: string[] };
-type Name = { kind: AliasKind; raw: string; key: string; rows: number; auto: MatchResult };
+type Role = "pickup" | "delivery";
+type Name = { kind: AliasKind; raw: string; key: string; rows: number; auto: MatchResult; roles: Set<Role> };
+const ENTITY_OF: Record<AliasKind, string> = { customer: "customers", location: "locations", product: "products" };
+type QuickMeta = { customRows: CustomFieldRow[]; canCreate: boolean };
 
-export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
+export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog }) {
+  /** Danh mục (tải lại sau khi người dùng bấm "Thêm mới") */
+  const [catalog, setCatalog] = useState<PasteCatalog>(initialCatalog);
+  /** Ô "Thêm mới" đang mở: tên trong Excel cần thêm vào danh mục */
+  const [adding, setAdding] = useState<Name | null>(null);
+  const [quickMeta, setQuickMeta] = useState<Partial<Record<AliasKind, QuickMeta>>>({});
   const [text, setText] = useState("");
   const [map, setMap] = useState<ColumnMap>([]);
   const [headerRow, setHeaderRow] = useState<number | null>(null);
@@ -141,22 +152,24 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
   // Danh sách tên khác nhau trong phần dán, để xem và chọn lại một lần cho mọi dòng
   const names: Name[] = useMemo(() => {
     const m = new Map<string, Name>();
-    const add = (kind: AliasKind, raw: string | undefined) => {
+    const add = (kind: AliasKind, raw: string | undefined, role?: Role) => {
       const key = matchKey(raw ?? "");
       if (!key) return;
       const id = `${kind}|${key}`;
-      const cur = m.get(id);
-      if (cur) cur.rows++;
-      else m.set(id, { kind, raw: raw!, key, rows: 1, auto: matchers[kind](raw!) });
+      const cur = m.get(id) ?? { kind, raw: raw!, key, rows: 0, auto: matchers[kind](raw!), roles: new Set<Role>() };
+      cur.rows++;
+      if (role) cur.roles.add(role);
+      m.set(id, cur);
     };
     for (const r of records) {
       add("customer", r.phap_nhan);
-      add("location", pickFrom("location", pickupNames(r)).raw);
-      add("location", pickFrom("location", deliveryNames(r), deliveryDisplay(r)).raw);
+      add("location", pickFrom("location", pickupNames(r)).raw, "pickup");
+      add("location", pickFrom("location", deliveryNames(r), deliveryDisplay(r)).raw, "delivery");
       add("product", r.ma_hang);
     }
     const rank = (n: Name) => (n.auto.status === "ok" ? 2 : n.auto.status === "ambiguous" ? 1 : 0);
-    return [...m.values()].sort((a, b) => rank(a) - rank(b) || a.kind.localeCompare(b.kind) || a.raw.localeCompare(b.raw));
+    const order = (n: Name) => (n.kind === "customer" ? 0 : n.kind === "product" ? 3 : n.roles.has("pickup") ? 1 : 2);
+    return [...m.values()].sort((a, b) => rank(a) - rank(b) || order(a) - order(b) || a.raw.localeCompare(b.raw));
     // pickFrom đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records, matchers, manual]);
@@ -195,7 +208,8 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
       const product = pick("product", r.ma_hang);
       const date = isoDate(r.ngay_giao);
       const cont = containerOf(r);
-      const qty = parseQty(r.so_luong);
+      // ảnh chụp hay đọc nhầm "24,750" thành "24.750": số lượng đọc từ ảnh có dạng 24.750 hiểu là hàng nghìn
+      const qty = parseQty(unsure && /^\d{1,3}(\.\d{3})+$/.test((r.so_luong ?? "").trim()) ? r.so_luong!.replace(/\./g, "") : r.so_luong);
       if (!r.phap_nhan) errors.push(template === "theo_doi" ? "Thiếu Pháp nhân" : "Thiếu Công ty");
       else if (!customer.id) errors.push(`Chưa ghép khách hàng "${r.phap_nhan}"`);
       if (!pickup.raw) errors.push(template === "theo_doi" ? "Thiếu Điểm lấy cont" : "Thiếu Điểm đi / Kho xuất");
@@ -245,6 +259,29 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
   const orderCount = new Set(chosen.map((x) => x.group)).size;
   const unmatched = names.filter((n) => !pick(n.kind, n.raw).id).length;
+
+  // Quyền "Thêm mới" theo từng danh mục (lấy khi đã có tên cần ghép)
+  const hasNames = names.length > 0;
+  useEffect(() => {
+    if (!hasNames) return;
+    let alive = true;
+    for (const kind of ["customer", "location", "product"] as AliasKind[]) {
+      void getEntityMeta(ENTITY_OF[kind]).then((r) => {
+        if (alive && r.ok && r.data) setQuickMeta((m) => ({ ...m, [kind]: { customRows: r.data!.customRows, canCreate: r.data!.access.create } }));
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [hasNames]);
+
+  /** Đã thêm mục mới vào danh mục: tải lại danh mục rồi chọn mục đó cho tên này */
+  const onAdded = async (n: Name, id: string) => {
+    const r = await loadPasteCatalog();
+    if (r.ok && r.data) setCatalog({ ...r.data, aliases: catalog.aliases });
+    setChoice(n, id);
+    toast.success("Đã thêm vào danh mục và chọn cho tên này");
+  };
 
   const setChoice = (n: Name, v: string) => {
     const id = `${n.kind}|${n.key}`;
@@ -438,7 +475,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
             <CardTitle className="text-base">2. Ghép tên với danh mục</CardTitle>
             <CardDescription>
               Tên trong Excel có thể khác tên trong phần mềm. Xem cột &quot;Ghép với&quot; và chọn lại nếu chưa đúng; chọn một lần là áp cho mọi dòng cùng tên. Phần mềm
-              KHÔNG thêm tên trong Excel vào danh mục. Tick &quot;Ghi nhớ&quot; để lần sau tự ghép tên đó với mục đã chọn.
+              KHÔNG tự thêm tên trong Excel vào danh mục; khách, điểm hay mã hàng mới thật sự thì bấm &quot;Thêm mới&quot; dưới ô chọn. Tick &quot;Ghi nhớ&quot; để lần sau tự ghép tên đó với mục đã chọn.
               {!catalog.aliasesReady ? " (Chưa bật ghi nhớ: cần chạy bản nâng cấp 9010.)" : ""}
             </CardDescription>
           </CardHeader>
@@ -465,7 +502,9 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
                     const sugg = n.auto.status === "ambiguous" || n.auto.status === "none" ? n.auto.candidates : [];
                     return (
                       <tr key={id} className={cn("border-t", !p.id && "bg-destructive/5")}>
-                        <td className="px-2 py-1 text-xs whitespace-nowrap text-muted-foreground">{KIND_LABEL[n.kind]}</td>
+                        <td className="px-2 py-1 text-xs whitespace-nowrap">
+                          <KindLabel n={n} template={template} />
+                        </td>
                         <td className="px-2 py-1 font-medium">{n.raw}</td>
                         <td className="px-2 py-1 text-center tabular-nums">{n.rows}</td>
                         <td className="min-w-72 px-2 py-1">
@@ -494,6 +533,15 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
                               ))}
                             </optgroup>
                           </SearchSelect>
+                          {quickMeta[n.kind]?.canCreate ? (
+                            <button
+                              type="button"
+                              onClick={() => setAdding(n)}
+                              className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                            >
+                              <Plus className="size-3" /> Thêm mới vào danh mục {KIND_LABEL[n.kind].toLowerCase()}
+                            </button>
+                          ) : null}
                         </td>
                         <td className="px-2 py-1 whitespace-nowrap">
                           <HowBadge how={p.how} />
@@ -657,8 +705,45 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
         </Card>
       ) : null}
 
+      {adding && quickMeta[adding.kind] ? (
+        <EntityFormDialog
+          entityKey={ENTITY_OF[adding.kind]}
+          customRows={quickMeta[adding.kind]!.customRows}
+          open
+          onOpenChange={(o) => {
+            if (!o) setAdding(null);
+          }}
+          quick
+          initialValues={adding.kind === "product" ? { code: adding.raw, name: adding.raw } : { name: adding.raw }}
+          onSaved={(res) => {
+            const n = adding;
+            setAdding(null);
+            void onAdded(n, res.id);
+          }}
+        />
+      ) : null}
       {catalog.aliasesReady ? <SavedAliases aliases={aliases} byId={byId} onDeleted={(id) => setAliases((a) => a.filter((x) => x.id !== id))} /> : null}
     </div>
+  );
+}
+
+/** Loại tên: tách rõ điểm nhận (điểm đi) và điểm giao (điểm đến) */
+function KindLabel({ n, template }: { n: Name; template: PasteTemplate }) {
+  if (n.kind !== "location") return <span className="text-muted-foreground">{KIND_LABEL[n.kind]}</span>;
+  const tags: { role: Role; text: string; cls: string }[] = [
+    { role: "pickup", text: template === "theo_doi" ? "Điểm nhận (lấy cont)" : "Điểm nhận (điểm đi)", cls: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300" },
+    { role: "delivery", text: template === "theo_doi" ? "Điểm giao" : "Điểm giao (điểm đến)", cls: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300" },
+  ];
+  return (
+    <span className="flex flex-col items-start gap-0.5">
+      {tags
+        .filter((t) => n.roles.has(t.role))
+        .map((t) => (
+          <span key={t.role} className={cn("rounded px-1.5 py-0.5 font-medium", t.cls)}>
+            {t.text}
+          </span>
+        ))}
+    </span>
   );
 }
 
