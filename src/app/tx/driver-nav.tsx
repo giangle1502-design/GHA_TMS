@@ -11,7 +11,7 @@ export function DriverNav() {
     { href: "/tx/tien", label: "Ứng tiền & chi phí", icon: Wallet, active: path.startsWith("/tx/tien") },
   ];
   return (
-    <nav className="fixed right-0 bottom-0 left-0 z-20 mx-auto grid max-w-xl grid-cols-2 border-t bg-card pb-[env(safe-area-inset-bottom)]" aria-label="Ứng dụng tài xế">
+    <nav className="print:hidden fixed right-0 bottom-0 left-0 z-20 mx-auto grid max-w-xl grid-cols-2 border-t bg-card pb-[env(safe-area-inset-bottom)]" aria-label="Ứng dụng tài xế">
       {items.map((it) => (
         <Link
           key={it.href}
