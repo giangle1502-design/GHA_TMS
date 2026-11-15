@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CheckCircle2, ClipboardPaste, Loader2, Save, Trash2, Upload, X } from "lucide-react";
+import { CheckCircle2, ClipboardPaste, ImageUp, Loader2, Save, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,13 +22,15 @@ import {
   orderGroupKey,
   parseQty,
   parseTSV,
-  toRecords,
+  toRecordRows,
   tripNote,
   type ColumnMap,
   type MatchResult,
   type PasteField,
   type PasteRecord,
 } from "@/lib/paste-orders";
+import { gridToTSV } from "@/lib/ocr-table";
+import { ocrTableImage } from "@/lib/ocr-image";
 import { commitPaste, deleteAlias, findExistingContainers, saveAliases, type AliasKind, type CatalogItem, type PasteCatalog, type PasteOutcome, type SavedAlias } from "./actions";
 
 const KIND_LABEL: Record<AliasKind, string> = { customer: "Khách hàng (Pháp nhân)", location: "Địa điểm", product: "Mã hàng" };
@@ -53,6 +55,9 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
   const [aliases, setAliases] = useState<SavedAlias[]>(catalog.aliases);
   const [outcome, setOutcome] = useState<PasteOutcome | null>(null);
   const [pending, start] = useTransition();
+  /** Đọc từ ảnh: ô đọc chưa chắc theo [dòng][cột] của phần dán; null = dán chữ */
+  const [unsure, setUnsure] = useState<boolean[][] | null>(null);
+  const [ocr, setOcr] = useState<{ busy: boolean; progress: number; error: string }>({ busy: false, progress: 0, error: "" });
 
   const byId = useMemo(() => {
     const m = new Map<string, CatalogItem>();
@@ -72,8 +77,9 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     };
   }, [catalog, aliases]);
 
-  const read = (t: string) => {
+  const read = (t: string, fromImage: boolean[][] | null = null) => {
     setText(t);
+    setUnsure(t ? fromImage : null);
     setOutcome(null);
     const rows = parseTSV(t);
     const d = detectColumns(rows);
@@ -82,7 +88,21 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     setHeaderRow(d.headerRow);
     setSkip(new Set());
   };
-  const records: PasteRecord[] = useMemo(() => toRecords(grid, map, headerRow), [grid, map, headerRow]);
+  const recordRows = useMemo(() => toRecordRows(grid, map, headerRow), [grid, map, headerRow]);
+  const records: PasteRecord[] = useMemo(() => recordRows.map((x) => x.rec), [recordRows]);
+
+  const readImage = async (file: Blob) => {
+    setOcr({ busy: true, progress: 0, error: "" });
+    try {
+      const g = await ocrTableImage(file, (p) => setOcr((o) => ({ ...o, progress: p })));
+      if (!g.rows.length) throw new Error("Không thấy chữ nào trong ảnh");
+      read(gridToTSV(g.rows), g.unsure);
+      setOcr({ busy: false, progress: 1, error: "" });
+    } catch (e) {
+      setOcr({ busy: false, progress: 0, error: e instanceof Error ? e.message : "Không đọc được ảnh" });
+    }
+  };
+  const imageFrom = (dt: DataTransfer | null) => [...(dt?.files ?? [])].find((f) => f.type.startsWith("image/"));
 
   const pick = (kind: AliasKind, raw: string | undefined): Pick => {
     const k = matchKey(raw ?? "");
@@ -167,6 +187,11 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
       if (!cont) warnings.push("Không có số cont");
       if (existing.has(cont)) warnings.push(`Cont ${cont} đã có ở chuyến ${existing.get(cont)}`);
       if (looksDelivered(r.tinh_trang)) warnings.push(`Tình trạng "${r.tinh_trang}"`);
+      if (unsure) {
+        const src = recordRows[i]?.src;
+        const cols = map.flatMap((f, c) => (f && unsure[src]?.[c] ? [PASTE_COLUMNS.find((x) => x.key === f)!.label] : []));
+        if (cols.length) warnings.push(`Ảnh đọc chưa chắc: ${cols.join(", ")}. Đối chiếu với ảnh, sửa trong ô dán nếu sai`);
+      }
       if (looksScientific(r.so_to_khai)) warnings.push("Số tờ khai bị Excel đổi dạng 1.08E+11: định dạng cột là Text rồi copy lại");
       return { i, r, customer, pickup, delivery, product, date, cont, qty, errors, warnings, group: "" };
     });
@@ -180,7 +205,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     return out.map((x) => ({ ...x, orderNo: x.group ? nums.get(x.group)! : null }));
     // pick đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, manual, matchers, existing, merge, skip]);
+  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map]);
 
   const errorCount = rows.filter((x) => x.errors.length).length;
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
@@ -260,6 +285,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
         ]);
       if (!r.data.failed.length) {
         setText("");
+        setUnsure(null);
         setGrid([]);
         setMap([]);
         setManual(new Map());
@@ -283,12 +309,56 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
         <CardContent className="space-y-3">
           <textarea
             value={text}
-            onChange={(e) => read(e.target.value)}
-            placeholder="Dán (Ctrl+V) các dòng copy từ Excel vào đây…"
+            onChange={(e) => read(e.target.value, unsure)}
+            onPaste={(e) => {
+              const img = imageFrom(e.clipboardData);
+              if (img && !e.clipboardData.getData("text/plain")) {
+                e.preventDefault();
+                void readImage(img);
+              }
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              const img = imageFrom(e.dataTransfer);
+              if (img) {
+                e.preventDefault();
+                void readImage(img);
+              }
+            }}
+            placeholder="Dán (Ctrl+V) các dòng copy từ Excel, hoặc dán / kéo thả ảnh chụp bảng vào đây…"
             aria-label="Dữ liệu dán từ Excel"
             className="h-28 w-full rounded-md border bg-background p-2 font-mono text-xs whitespace-pre"
             spellCheck={false}
           />
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <label className={cn("inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 hover:bg-muted", ocr.busy && "pointer-events-none opacity-50")}>
+              <ImageUp className="size-4" /> Chọn ảnh chụp bảng…
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void readImage(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {ocr.busy ? (
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Đang đọc ảnh{ocr.progress ? ` ${Math.round(ocr.progress * 100)}%` : " (lần đầu tải bộ đọc tiếng Việt, chờ vài giây)"}…
+              </span>
+            ) : null}
+            {ocr.error ? <span className="text-destructive">{ocr.error}</span> : null}
+          </div>
+          {unsure && grid.length ? (
+            <Alert>
+              <AlertDescription>
+                Dữ liệu đọc từ ảnh: máy đọc có thể nhầm (nhất là số cont, số tờ khai, chữ có dấu). Đối chiếu với ảnh, sửa trực tiếp trong ô dán ở trên nếu sai. Dòng có ô
+                đọc chưa chắc được ghi ở cột Kiểm tra. Copy từ Excel vẫn chính xác hơn.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           {grid.length ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Badge variant="muted">{records.length} dòng</Badge>
