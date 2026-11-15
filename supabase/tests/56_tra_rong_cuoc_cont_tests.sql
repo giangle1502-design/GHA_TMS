@@ -106,5 +106,20 @@ reset role;
 select tests.assert(not exists (select 1 from public.shipment_fees f join public.fee_types t on t.id = f.fee_type_id where f.shipment_id = pg_temp.v('s1')::uuid and t.name = 'Phí hạ')
   and (select pass_through_amount = 500000 from public.shipments where id = pg_temp.v('s1')::uuid), 'Xóa trắng trả rỗng: bỏ dòng, tổng chi hộ còn 500,000');
 
+
+-- Xe 3PL: tài xế cũng nhập được trả rỗng / cược cont (chi hộ thu khách)
+update public.vehicles set ownership_type = 'outsourced' where id = '50000000-0000-0000-0000-0000000000e9';
+update public.shipments set container_no = 'TGHU7654321', pod_photo_required = false where id = pg_temp.v('s3')::uuid;
+select tests.login('00000000-0000-0000-0000-0000000000d1');
+set role authenticated;
+select public.assign_shipment(pg_temp.v('s3')::uuid, '40000000-0000-0000-0000-0000000000e9', '50000000-0000-0000-0000-0000000000e9');
+reset role;
+set role anon;
+select public.driver_link_accept(pg_temp.v('tok'), pg_temp.v('s3')::uuid);
+select tests.assert(exists (select 1 from public.driver_link_containers(pg_temp.v('tok')) where shipment_id = pg_temp.v('s3')::uuid), 'Xe 3PL: app tài xế hiện thẻ trả rỗng & cược cont');
+select tests.assert((public.driver_link_set_container(pg_temp.v('tok'), pg_temp.v('s3')::uuid, 250000, 'HD-3PL', 400000, 'HD-3PLC', null) ->> 'ok')::boolean, 'Tài xế 3PL nhập 4 ô');
+reset role;
+select tests.assert((select pass_through_amount = 650000 from public.shipments where id = pg_temp.v('s3')::uuid), 'Chuyến 3PL có chi hộ 650,000');
+update public.vehicles set ownership_type = 'owned' where id = '50000000-0000-0000-0000-0000000000e9';
 \o
 \echo '56_tra_rong_cuoc_cont_tests: OK'

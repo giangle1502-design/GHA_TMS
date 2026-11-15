@@ -21,6 +21,8 @@ end $$;
 --       - điều phối nối chuyến sau vào chuyến trước (container_prev_id), các chuyến thành một chuỗi vỏ;
 --       - phí trả rỗng và cược cont của cả chuỗi GỘP VỀ CHUYẾN ĐẦU của chuỗi (chuyến lấy cont),
 --         nhập ở chuyến nào cũng ghi vào chuyến đầu, mỗi chuỗi chỉ một dòng trả rỗng, một dòng cược.
+--   * Tài xế xe 3PL cũng nhập được (LE 15/11): phí vẫn là chi hộ thu khách; văn phòng chép sang cước 3PL
+--     bằng nút chép chi hộ ở Chi phí trả 3PL khi cần trả lại nhà xe.
 --   * Danh sách "Vỏ chưa trả rỗng": chuyến giữ vỏ mà chưa có chuyến sau.
 -- Không xóa dữ liệu. Chạy lại nhiều lần không lỗi.
 -- =============================================================================
@@ -209,8 +211,7 @@ as $$
   cross join lateral private.container_fees(r.id) fx
   where (s.status in ('assigned', 'accepted', 'in_transit')
          or (s.status in ('driver_completed', 'closed') and s.pickup_at > now() - interval '3 days'))
-    and private.shipment_uses_container(s)
-    and not private.shipment_is_3pl(s);
+    and private.shipment_uses_container(s);
 $$;
 revoke all on function public.driver_link_containers(text) from public;
 grant execute on function public.driver_link_containers(text) to anon, authenticated;
@@ -246,9 +247,6 @@ begin
   end if;
   if v_s.status not in ('accepted', 'in_transit', 'driver_completed') then
     return jsonb_build_object('ok', false, 'error', 'Nhận chuyến trước rồi mới nhập trả rỗng, cược cont.');
-  end if;
-  if private.shipment_is_3pl(v_s) then
-    return jsonb_build_object('ok', false, 'error', 'Xe thuê ngoài 3PL: trả rỗng, cược cont nhập ở cước 3PL.');
   end if;
   if p_state is not null and p_state not in ('returned', 'kept') then
     return jsonb_build_object('ok', false, 'error', 'Chọn "Đã trả rỗng" hoặc "Giữ vỏ cho chuyến sau".');
