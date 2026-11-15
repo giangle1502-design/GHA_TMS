@@ -183,7 +183,8 @@ function TripCard({ t, categories, settings }: { t: Trip; categories: ExpenseCat
         {t.quantity ? <span>Số lượng: {formatNumber(t.quantity)}</span> : null}
       </div>
       {t.notes ? <p className="mt-2 rounded-lg bg-warning/10 p-2 text-sm">Ghi chú: {t.notes}</p> : null}
-      {t.status !== "assigned" ? (
+      {/* Hiện ngay từ lúc chuyến được giao cho tài xế (cả khi chưa bấm nhận) để kịp in phiếu trước khi đi */}
+      {t.status !== "cancelled" ? (
         <Link
           href={`/tx/phieu/${t.shipment_id}`}
           data-delivery-note-link
