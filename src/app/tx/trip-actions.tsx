@@ -9,6 +9,7 @@ import { acceptTrip, changeVehicle, completeTrip, requestUploadTicket, startTrip
 import { PhotoPicker, type PickedFile } from "./photo-picker";
 import type { DriverAppSettings } from "@/lib/driver-link/settings";
 import { ExpenseLinesEditor, lineError, newLine, submitLines, type ExpenseCategory, type ExpenseLine } from "./expense-forms";
+import { ContainerFields, ContainerOrigin, containerError, containerForm, submitContainer, type ContainerForm, type ContainerInfo } from "./container-card";
 
 export function AcceptButton({ shipmentId, code }: { shipmentId: string; code: string }) {
   const router = useRouter();
@@ -109,6 +110,7 @@ export function CompleteButton({
   outsourced = false,
   settings,
   podPhotoRequired,
+  container = null,
 }: {
   shipmentId: string;
   code: string;
@@ -117,6 +119,8 @@ export function CompleteButton({
   settings: DriverAppSettings;
   /** Đơn yêu cầu chụp chứng từ (điều phối chọn khi tạo đơn) */
   podPhotoRequired: boolean;
+  /** Chuyến chở container (không phải 3PL): hỏi Đã trả rỗng / Giữ vỏ và 4 ô trả rỗng, cược cont */
+  container?: ContainerInfo | null;
 }) {
   const photos = settings.photos_enabled;
   // Đơn không yêu cầu chụp chứng từ: bỏ qua bước chụp ảnh giao hàng
@@ -141,6 +145,7 @@ export function CompleteButton({
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const [cont, setCont] = useState<ContainerForm | null>(() => (container && !container.locked ? containerForm(container) : null));
 
   function submit() {
     start(async () => {
@@ -148,6 +153,8 @@ export function CompleteButton({
       if (!completed) {
         if (photoRequired && !files.length) return setError("Chụp ít nhất 1 ảnh hàng đã giao hoặc phiếu ký nhận.");
         if (result !== "full" && !note.trim()) return setError("Ghi lý do giao thiếu / không giao được.");
+        const badCont = cont ? containerError(cont, !container?.next_code) : null;
+        if (badCont) return setError(badCont);
       }
       if (!expenseMode && askExpense) return setError('Chọn "Có chi phí" và nhập chi phí, hoặc chọn "Không phát sinh chi phí".');
       if (!completed && sheetMode && expenseMode === "has" && !sheets.length)
@@ -174,6 +181,13 @@ export function CompleteButton({
           ticket = t.ticket;
         }
         setProgress("Đang lưu…");
+        if (container && cont) {
+          const c = await submitContainer(shipmentId, cont);
+          if (!c.ok) {
+            setProgress(null);
+            return setError(c.error);
+          }
+        }
         const r = await completeTrip({ shipmentId, ticket, result, note: note.trim() || undefined, noExpense: !askExpense || expenseMode === "none" });
         if (!r.ok) {
           setProgress(null);
@@ -275,6 +289,13 @@ export function CompleteButton({
               </div>
             </>
           )}
+          {container && cont && !completed ? (
+            <div data-complete-container className="space-y-2 rounded-xl border p-3">
+              <div className="text-sm font-semibold">Trả rỗng & cược cont{container.container_no ? ` · ${container.container_no}` : ""}</div>
+              <ContainerOrigin c={container} />
+              <ContainerFields id={`done-${shipmentId}`} value={cont} onChange={setCont} askState={!container.next_code} canReturn={!container.next_code} />
+            </div>
+          ) : null}
           <div hidden={completed || !askExpense}>
             <div className="mb-1 text-sm font-medium">{sheetMode ? "Chi phí chuyến" : "Chi phí chuyến (bắt buộc chọn)"}</div>
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label="Chi phí chuyến">

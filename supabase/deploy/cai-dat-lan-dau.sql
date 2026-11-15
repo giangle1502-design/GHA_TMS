@@ -23315,4 +23315,756 @@ where s.status <> 'cancelled' and (coalesce(fl.amount, 0) > 0 or coalesce(lc.n, 
 revoke all on public.report_loading_trips from anon;
 grant select on public.report_loading_trips to authenticated;
 
+-- >>> 20261113009006_lien_ket_ma_hang.sql
+-- =============================================================================
+-- 9006: Liên kết dòng hàng hóa với Danh mục mã hàng theo Mã hàng
+--  - Dòng hàng (của đơn / của chuyến) có Mã hàng trùng mã trong danh mục thì tự gắn product_id
+--  - ĐVT luôn theo thiết lập của mã hàng; Tên hàng trống thì lấy tên trong danh mục; tự quy ra kg
+--  - Gắn lại các dòng đã nhập tay trước đây (chỉ dòng chưa gắn mã hàng)
+-- =============================================================================
+create or replace function private.fill_item_from_product()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  p public.products;
+begin
+  if new.product_id is null and nullif(trim(new.item_code), '') is not null then
+    select * into p from public.products where upper(code) = upper(trim(new.item_code)) order by (status = 'active') desc limit 1;
+    new.product_id := p.id;
+  elsif new.product_id is not null then
+    select * into p from public.products where id = new.product_id;
+  end if;
+  if p.id is not null then
+    new.item_code := p.code;
+    new.item_name := coalesce(nullif(trim(new.item_name), ''), p.name);
+    new.unit := p.unit;
+    if tg_table_name = 'shipment_items' and new.weight_kg is null and p.kg_per_unit is not null and new.quantity is not null then
+      new.weight_kg := round(new.quantity * p.kg_per_unit, 3);
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_order_items_product on public.transport_order_items;
+create trigger trg_order_items_product before insert or update of product_id, item_code, unit, quantity on public.transport_order_items
+  for each row execute function private.fill_item_from_product();
+drop trigger if exists trg_shipment_items_product on public.shipment_items;
+create trigger trg_shipment_items_product before insert or update of product_id, item_code, unit, quantity on public.shipment_items
+  for each row execute function private.fill_item_from_product();
+
+-- Gắn mã hàng cho các dòng nhập tay trước đây (không đụng dòng đã gắn)
+update public.transport_order_items set item_code = item_code
+where product_id is null and exists (select 1 from public.products p where upper(p.code) = upper(trim(item_code)));
+update public.shipment_items set item_code = item_code
+where product_id is null and exists (select 1 from public.products p where upper(p.code) = upper(trim(item_code)));
+
+-- >>> 20261113009007_loi_lo_tai_xe_xe.sql
+-- =============================================================================
+-- 9007: Lời/lỗ chuyến không tính phí bốc xếp đã thu lại của khách theo kiểu CHI HỘ
+--  Ví dụ: trả đơn vị bốc xếp 720,000; khách trả lại 720,000 dưới dạng "Phí bốc xếp (chi hộ)"
+--  (chi hộ không nằm trong doanh thu) -> trước đây vẫn trừ 720,000 vào lời/lỗ nên chuyến bị lỗ oan.
+--  Nay: chi phí 3PL tính lời/lỗ = khoản không phải chi hộ − phần bốc xếp đã thu lại của khách (chi hộ),
+--  phần trừ tối đa bằng chi phí bốc xếp 3PL của chuyến.
+-- =============================================================================
+create or replace function private.shipment_carrier_profit_cost(p_shipment_id uuid)
+returns numeric
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with k as (
+    select coalesce(sum(c.amount), 0) as cost,
+           coalesce(sum(c.amount) filter (where ft.is_loading), 0) as loading
+    from public.shipment_carrier_costs c
+    left join public.fee_types ft on ft.id = c.fee_type_id
+    where c.shipment_id = p_shipment_id and c.cost_kind <> 'pass_through'
+  ), f as (
+    select coalesce(sum(sf.amount), 0) as recovered
+    from public.shipment_fees sf
+    join public.fee_types ft on ft.id = sf.fee_type_id
+    where sf.shipment_id = p_shipment_id and ft.is_loading and sf.fee_kind = 'pass_through'
+  )
+  select k.cost - least(k.loading, f.recovered) from k, f;
+$$;
+revoke all on function private.shipment_carrier_profit_cost(uuid) from public, anon;
+grant execute on function private.shipment_carrier_profit_cost(uuid) to authenticated;
+
+create or replace view public.shipment_profit as
+with trips as (
+  select s.id, s.vehicle_id,
+         date_trunc('month', coalesce(s.completed_at, s.pickup_at) at time zone 'Asia/Ho_Chi_Minh')::date as trip_month,
+         s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount as revenue,
+         private.shipment_carrier_profit_cost(s.id) as carrier_cost
+  from public.shipments s
+  where s.status in ('in_transit', 'driver_completed', 'closed')
+),
+vm_trips as (
+  select vehicle_id, trip_month, count(*) as trip_count from trips where vehicle_id is not null group by 1, 2
+),
+vm_cost as (
+  select m.vehicle_id, date_trunc('month', m.performed_at)::date as cost_month, sum(m.amount) as amount
+  from public.maintenance_records m
+  where m.status = 'recorded' and m.amount > 0
+  group by 1, 2
+)
+select t.id as shipment_id, t.trip_month, t.revenue,
+       coalesce(e.approved, 0) as trip_cost,
+       coalesce(e.pending, 0) as pending_cost,
+       coalesce(round(vc.amount / nullif(vt.trip_count, 0), 0), 0) as vehicle_cost,
+       coalesce(vc.amount, 0) as vehicle_month_cost,
+       coalesce(vt.trip_count, 0) as vehicle_month_trips,
+       t.revenue - coalesce(e.approved, 0) - t.carrier_cost as profit_before_vehicle,
+       t.revenue - coalesce(e.approved, 0) - t.carrier_cost - coalesce(round(vc.amount / nullif(vt.trip_count, 0), 0), 0) as profit,
+       case when t.revenue > 0 then round((t.revenue - coalesce(e.approved, 0) - t.carrier_cost
+              - coalesce(round(vc.amount / nullif(vt.trip_count, 0), 0), 0)) * 100 / t.revenue, 1) end as margin_percent,
+       t.carrier_cost
+from trips t
+left join vm_trips vt on vt.vehicle_id = t.vehicle_id and vt.trip_month = t.trip_month
+left join vm_cost vc on vc.vehicle_id = t.vehicle_id and vc.cost_month = t.trip_month
+left join lateral (
+  select sum(x.amount) filter (where x.status = 'approved') as approved,
+         sum(x.amount) filter (where x.status = 'pending') as pending
+  from public.shipment_expenses x where x.shipment_id = t.id
+) e on true
+where private.has_perm('expenses.view') or private.has_perm('reports.view');
+
+create or replace view public.report_shipment_profit as
+select s.id, s.shipment_code, o.order_code,
+       (coalesce(s.completed_at, s.pickup_at) at time zone 'Asia/Ho_Chi_Minh')::date as report_date,
+       date_trunc('month', coalesce(s.completed_at, s.pickup_at) at time zone 'Asia/Ho_Chi_Minh')::date as report_month,
+       o.payer_customer_id as customer_id, c.name as customer_name,
+       s.vehicle_id, v.plate_number, s.driver_id, d.full_name as driver_name,
+       pl.name as pickup_name, dl.name as delivery_name, s.status,
+       s.freight_amount, s.surcharge_amount, s.fuel_support_amount,
+       s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount as revenue,
+       coalesce(x.cost, 0) + coalesce(cc.cost, 0) as cost,
+       s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount - coalesce(x.cost, 0) - coalesce(cc.cost, 0) as profit,
+       case when s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount > 0
+            then round((s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount - coalesce(x.cost, 0) - coalesce(cc.cost, 0)) * 100
+                       / (s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount), 1) end as margin_percent,
+       (s.receivable_id is not null) as billed,
+       s.extra_fee_amount, s.pass_through_amount,
+       s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount + s.pass_through_amount as amount_due,
+       s.quantity, s.pricing_unit, s.unit_price,
+       s.freight_amount + s.surcharge_amount + s.fuel_support_amount + coalesce(ff.amount, 0) as freight_total,
+       vt.name as vehicle_type_name, to_char(date_trunc('month', coalesce(s.completed_at, s.pickup_at) at time zone 'Asia/Ho_Chi_Minh'), 'MM/YYYY') as month_label,
+       c.code as customer_code,
+       coalesce(ff.amount, 0) as freight_fee_amount,
+       coalesce(p.vehicle_cost, 0) as vehicle_cost,
+       coalesce(p.profit, s.freight_amount + s.surcharge_amount + s.fuel_support_amount + s.extra_fee_amount - coalesce(x.cost, 0) - coalesce(cc.cost, 0)) as net_profit,
+       coalesce(cc.cost, 0) as carrier_cost
+from public.shipments s
+join public.transport_orders o on o.id = s.order_id
+left join public.customers c on c.id = o.payer_customer_id
+left join public.vehicles v on v.id = s.vehicle_id
+left join public.drivers d on d.id = s.driver_id
+left join public.locations pl on pl.id = s.pickup_location_id
+left join public.locations dl on dl.id = s.delivery_location_id
+left join public.vehicle_types vt on vt.id = s.vehicle_type_id
+left join lateral (select sum(e.amount) as cost from public.shipment_expenses e where e.shipment_id = s.id and e.status = 'approved') x on true
+left join lateral (select private.shipment_carrier_profit_cost(s.id) as cost) cc on true
+left join lateral (
+  select sum(sf.amount) as amount
+  from public.shipment_fees sf
+  join public.fee_types ft on ft.id = sf.fee_type_id
+  join public.fee_groups g on g.id = ft.fee_group_id
+  where sf.shipment_id = s.id and g.report_role = 'freight'
+) ff on true
+left join public.shipment_profit p on p.shipment_id = s.id
+where s.status in ('in_transit', 'driver_completed', 'closed') and private.has_perm('reports.view');
+
+-- -----------------------------------------------------------------------------
+-- Xe chưa gắn tài xế (xe 3PL chuyển từ app cũ): gắn tài xế của chuyến gần nhất chạy xe đó,
+-- để khi chọn số xe thì tài xế tự điền. Không đụng xe đã có tài xế.
+-- -----------------------------------------------------------------------------
+-- Mỗi tài xế chỉ gắn được một xe: tài xế chạy nhiều xe thì gắn vào xe chạy gần nhất.
+update public.vehicles v
+set assigned_driver_id = t.driver_id
+from (
+  select distinct on (x.driver_id) x.vehicle_id, x.driver_id
+  from (
+    select distinct on (s.vehicle_id) s.vehicle_id, s.driver_id, s.pickup_at
+    from public.shipments s
+    where s.vehicle_id is not null and s.driver_id is not null and s.status <> 'cancelled'
+    order by s.vehicle_id, s.pickup_at desc
+  ) x
+  where not exists (select 1 from public.vehicles a where a.assigned_driver_id = x.driver_id)
+  order by x.driver_id, x.pickup_at desc
+) t
+where v.id = t.vehicle_id and v.assigned_driver_id is null;
+
+-- -----------------------------------------------------------------------------
+-- Điểm hạ rỗng chỉ là DEPOT
+--  - locations.is_depot: ô "Điểm hạ rỗng" khi tạo đơn chỉ hiện điểm có đánh dấu này
+--  - Tự đánh dấu depot theo tên (DEPOT, ICD, CẢNG, BÃI CONT, TERMINAL) và các điểm đã dùng làm điểm hạ rỗng
+--  - Điểm lấy từ Khánh Hà (mã HR-...) mà không phải depot và chưa dùng ở đâu: chuyển Ngừng hoạt động
+--    (không xóa hẳn; muốn dùng lại thì vào Danh mục địa điểm bật lại + tích Depot)
+-- -----------------------------------------------------------------------------
+alter table public.locations add column if not exists is_depot boolean not null default false;
+comment on column public.locations.is_depot is 'Depot / bãi hạ rỗng: hiện trong ô Điểm hạ rỗng';
+create index if not exists locations_depot_idx on public.locations (name) where is_depot;
+
+update public.locations l set is_depot = true
+where not l.is_depot and (
+  l.name ~* '(depot|depo\M|\micd\M|cảng|\mcang\M|bãi cont|bai cont|bãi container|terminal)'
+  or l.id in (select empty_return_location_id from public.shipments where empty_return_location_id is not null
+              union select offroute_return_location_id from public.shipments where offroute_return_location_id is not null)
+);
+
+update public.locations l set status = 'inactive'
+where l.code like 'HR-%' and not l.is_depot and l.status = 'active'
+  and not exists (select 1 from public.shipments s where l.id in (s.pickup_location_id, s.delivery_location_id, s.empty_return_location_id, s.offroute_return_location_id));
+
+-- Kết quả: danh sách depot đang hiện trong ô Điểm hạ rỗng
+select code as "Mã", name as "Tên depot", full_address as "Địa chỉ"
+from public.locations where is_depot and status = 'active' order by name;
+
+-- >>> 20261115009008_phieu_giao_hang.sql
+-- Phiếu giao hàng (in A4 / tải PDF) cho từng chuyến.
+-- Dữ liệu phiếu KHÔNG có cước, KHÔNG có tên nhà xe 3PL: xe nào cũng chỉ hiện biển số như xe của GHA.
+-- Hai cửa vào:
+--   public.delivery_note(shipment_id)                 : người dùng đăng nhập (cùng điều kiện xem chuyến như RLS shipments)
+--   public.driver_link_delivery_note(token, shipment_id): app tài xế (/tx), chỉ chuyến của xe đang đăng nhập
+
+-- Địa chỉ công ty GHA dùng trên chứng từ (LE chốt 15/11/2026); chỉ điền khi đang trống
+update public.company_entities
+   set address = 'Số nhà 67N2 KDC PTĐT Tân Bình, Tân Phước, Tân Đông Hiệp, TP. Hồ Chí Minh'
+ where (tax_code = '3703489735' or code = 'GHA') and coalesce(btrim(address), '') = '';
+
+create or replace function private.delivery_note_json(p_shipment_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'shipment_code', s.shipment_code,
+    'order_code', o.order_code,
+    'voucher_no', o.voucher_no,
+    'ref_no', o.ref_no,
+    'note_date', coalesce(o.delivery_date, (s.expected_delivery_at at time zone 'Asia/Ho_Chi_Minh')::date,
+                          (s.pickup_at at time zone 'Asia/Ho_Chi_Minh')::date),
+    'company', case when ce.id is null then null else jsonb_build_object(
+      'name', ce.name, 'tax_code', ce.tax_code, 'address', ce.address, 'phone', ce.phone) end,
+    'shipper_name', c.name,
+    'pickup_name', pl.name,
+    'pickup_address', pl.full_address,
+    'pickup_phone', coalesce(s.pickup_phone, pl.phone),
+    'delivery_name', dl.name,
+    'delivery_company', dl.company_name,
+    'delivery_address', dl.full_address,
+    'delivery_phone', coalesce(s.delivery_phone, dl.phone),
+    'plate_number', v.plate_number,
+    'trailer_plate', t.plate_number,
+    'container_no', s.container_no,
+    'driver_name', d.full_name,
+    'driver_phone', d.phone,
+    'quantity', s.quantity,
+    'items', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'line_no', i.line_no, 'item_code', i.item_code, 'item_name', i.item_name,
+               'unit', i.unit, 'quantity', i.quantity, 'note', i.note) order by i.line_no)
+      from public.shipment_items i where i.shipment_id = s.id), '[]'::jsonb)
+  )
+  from public.shipments s
+  join public.transport_orders o on o.id = s.order_id
+  left join public.company_entities ce on ce.id = o.company_entity_id
+  left join public.customers c on c.id = o.customer_id
+  left join public.locations pl on pl.id = s.pickup_location_id
+  left join public.locations dl on dl.id = s.delivery_location_id
+  left join public.vehicles v on v.id = s.vehicle_id
+  left join public.vehicles t on t.id = s.trailer_id
+  left join public.drivers d on d.id = s.driver_id
+  where s.id = p_shipment_id;
+$$;
+revoke all on function private.delivery_note_json(uuid) from public, anon, authenticated;
+
+create or replace function public.delivery_note(p_shipment_id uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select private.delivery_note_json(s.id)
+  from public.shipments s
+  where s.id = p_shipment_id
+    and (private.has_perm('shipments.view') or private.has_perm('dispatch.view')
+         or (s.driver_id is not null and s.driver_id = private.my_driver_id() and private.has_perm('driver_app.use')));
+$$;
+revoke all on function public.delivery_note(uuid) from public;
+grant execute on function public.delivery_note(uuid) to authenticated;
+
+create or replace function public.driver_link_delivery_note(p_token text, p_shipment_id uuid)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select private.delivery_note_json(s.id)
+  from private.driver_link_session(p_token) me
+  join public.shipments s on s.id = p_shipment_id and private.driver_link_visible(me.vehicle_id, s)
+  where s.status not in ('draft', 'cancelled');
+$$;
+revoke all on function public.driver_link_delivery_note(text, uuid) from public;
+grant execute on function public.driver_link_delivery_note(text, uuid) to anon, authenticated;
+
+-- >>> 20261115009008_tra_rong_cuoc_cont.sql
+-- =============================================================================
+-- GHA 9008: Trả rỗng và cược cont do tài xế nhập; chuỗi vỏ container (LE, 15/11/2026)
+--   * Tài xế chỉ nhập 4 ô: số tiền trả rỗng, số HĐ trả rỗng, số tiền cược cont, số HĐ cược cont.
+--     Lưu thành dòng phí chi hộ của chuyến: loại "Phí hạ" và "Phí cược cont", số HĐ ở cột Số hóa đơn.
+--   * Xe chạy xong chưa trả rỗng mà dùng vỏ cho chuyến sau (chuyển kho):
+--       - tài xế chọn "Giữ vỏ cho chuyến sau" (empty_return_state = 'kept') hoặc "Đã trả rỗng" ('returned');
+--       - điều phối nối chuyến sau vào chuyến trước (container_prev_id), các chuyến thành một chuỗi vỏ;
+--       - phí trả rỗng và cược cont của cả chuỗi GỘP VỀ CHUYẾN ĐẦU của chuỗi (chuyến lấy cont),
+--         nhập ở chuyến nào cũng ghi vào chuyến đầu, mỗi chuỗi chỉ một dòng trả rỗng, một dòng cược.
+--   * Tài xế xe 3PL cũng nhập được (LE 15/11): phí vẫn là chi hộ thu khách; văn phòng chép sang cước 3PL
+--     bằng nút chép chi hộ ở Chi phí trả 3PL khi cần trả lại nhà xe.
+--   * Danh sách "Vỏ chưa trả rỗng": chuyến giữ vỏ mà chưa có chuyến sau.
+-- Không xóa dữ liệu. Chạy lại nhiều lần không lỗi.
+-- =============================================================================
+
+alter table public.shipments
+  add column if not exists container_prev_id uuid references public.shipments (id) on delete set null,
+  add column if not exists empty_return_state text check (empty_return_state is null or empty_return_state in ('returned', 'kept')),
+  add column if not exists empty_return_state_at timestamptz;
+comment on column public.shipments.container_prev_id is 'Chuyến trước dùng cùng vỏ container (chuỗi vỏ). Phí trả rỗng, cược cont gộp về chuyến đầu chuỗi';
+comment on column public.shipments.empty_return_state is 'returned = đã trả rỗng, kept = giữ vỏ cho chuyến sau';
+create unique index if not exists shipments_container_prev_uidx on public.shipments (container_prev_id) where container_prev_id is not null;
+create index if not exists shipments_empty_kept_idx on public.shipments (empty_return_state) where empty_return_state = 'kept';
+
+-- Chuyến đầu của chuỗi vỏ
+create or replace function private.container_root(p_id uuid)
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid := p_id;
+  v_prev uuid;
+  n int := 0;
+begin
+  loop
+    select container_prev_id into v_prev from public.shipments where id = v_id;
+    exit when v_prev is null or n >= 100;
+    v_id := v_prev;
+    n := n + 1;
+  end loop;
+  return v_id;
+end;
+$$;
+revoke all on function private.container_root(uuid) from public, anon, authenticated;
+
+-- Các chuyến của chuỗi vỏ, theo thứ tự từ chuyến đầu
+create or replace function private.container_chain(p_id uuid)
+returns table (shipment_id uuid, pos int)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with recursive c as (
+    select s.id, 1 as pos from public.shipments s where s.id = private.container_root(p_id)
+    union all
+    select s.id, c.pos + 1 from public.shipments s join c on s.container_prev_id = c.id where c.pos < 100
+  )
+  select id, pos from c;
+$$;
+revoke all on function private.container_chain(uuid) from public, anon, authenticated;
+
+-- Loại phí: 'empty' = Phí hạ (trả rỗng), 'deposit' = Phí cược cont. Chưa có thì tạo (chi hộ).
+create or replace function private.container_fee_type(p_kind text)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_name text := case p_kind when 'empty' then 'Phí hạ' else 'Phí cược cont' end;
+  v_id uuid;
+begin
+  select id into v_id from public.fee_types where lower(name) = lower(v_name) order by (fee_kind = 'pass_through') desc, is_active desc, sort_order, created_at limit 1;
+  if v_id is null then
+    insert into public.fee_types (name, fee_kind, description, sort_order, fee_group_id)
+    values (v_name, 'pass_through',
+            case p_kind when 'empty' then 'Phí hạ container, chi hộ khách' else 'Tiền cược container, chi hộ khách' end,
+            case p_kind when 'empty' then 21 else 23 end,
+            (select id from public.fee_groups where legacy_code = 'CHIHO' or code = 'CHIHO' or lower(name) = 'phí chi hộ' order by (legacy_code = 'CHIHO') desc nulls last limit 1))
+    returning id into v_id;
+  end if;
+  return v_id;
+end;
+$$;
+revoke all on function private.container_fee_type(text) from public, anon, authenticated;
+
+-- Tính lại tổng phụ phí / chi hộ của chuyến từ các dòng phí (như set_shipment_fees)
+create or replace function private.recalc_shipment_fee_totals(p_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_extra numeric;
+  v_pass numeric;
+begin
+  select coalesce(sum(amount) filter (where fee_kind <> 'pass_through'), 0), coalesce(sum(amount) filter (where fee_kind = 'pass_through'), 0)
+    into v_extra, v_pass from public.shipment_fees where shipment_id = p_id;
+  update public.shipments set extra_fee_amount = v_extra, pass_through_amount = v_pass
+  where id = p_id and (extra_fee_amount, pass_through_amount) is distinct from (v_extra, v_pass);
+end;
+$$;
+revoke all on function private.recalc_shipment_fee_totals(uuid) from public, anon, authenticated;
+
+-- Ghi một dòng phí (trả rỗng hoặc cược) của chuỗi vào chuyến đầu. Trống cả số tiền và số HĐ = bỏ dòng.
+create or replace function private.put_container_fee(p_root uuid, p_kind text, p_amount numeric, p_ref text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_type uuid := private.container_fee_type(p_kind);
+  v_kind text;
+  v_line uuid;
+  v_no int;
+begin
+  select id into v_line from public.shipment_fees where shipment_id = p_root and fee_type_id = v_type order by line_no limit 1;
+  if p_amount is null and p_ref is null then
+    if v_line is not null then
+      delete from public.shipment_fees where id = v_line;
+    end if;
+    return;
+  end if;
+  if v_line is not null then
+    update public.shipment_fees set amount = round(coalesce(p_amount, 0), 0), ref_no = p_ref
+    where id = v_line and (amount, ref_no) is distinct from (round(coalesce(p_amount, 0), 0), p_ref);
+  else
+    select fee_kind into v_kind from public.fee_types where id = v_type;
+    select coalesce(max(line_no), 0) + 1 into v_no from public.shipment_fees where shipment_id = p_root;
+    if v_no > 100 then
+      raise exception 'Chuyến đã đủ 100 dòng phí, không thêm được' using errcode = '22023';
+    end if;
+    insert into public.shipment_fees (shipment_id, line_no, fee_type_id, fee_kind, amount, ref_no)
+    values (p_root, v_no, v_type, v_kind, round(coalesce(p_amount, 0), 0), p_ref);
+  end if;
+end;
+$$;
+revoke all on function private.put_container_fee(uuid, text, numeric, text) from public, anon, authenticated;
+
+-- Phí trả rỗng / cược đang ghi ở chuyến đầu của chuỗi
+create or replace function private.container_fees(p_root uuid)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'empty_amount', (select f.amount from public.shipment_fees f where f.shipment_id = p_root and f.fee_type_id = private.container_fee_type('empty') order by f.line_no limit 1),
+    'empty_ref', (select f.ref_no from public.shipment_fees f where f.shipment_id = p_root and f.fee_type_id = private.container_fee_type('empty') order by f.line_no limit 1),
+    'deposit_amount', (select f.amount from public.shipment_fees f where f.shipment_id = p_root and f.fee_type_id = private.container_fee_type('deposit') order by f.line_no limit 1),
+    'deposit_ref', (select f.ref_no from public.shipment_fees f where f.shipment_id = p_root and f.fee_type_id = private.container_fee_type('deposit') order by f.line_no limit 1));
+$$;
+revoke all on function private.container_fees(uuid) from public, anon, authenticated;
+
+-- Chuyến có dùng container (đầu kéo, có số cont, rơ moóc, điểm hạ rỗng hoặc đã nằm trong chuỗi vỏ)
+create or replace function private.shipment_uses_container(s public.shipments)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select s.container_no is not null or s.trailer_id is not null or s.empty_return_location_id is not null
+      or s.container_prev_id is not null or s.empty_return_state is not null
+      or exists (select 1 from public.shipments n where n.container_prev_id = s.id)
+      or coalesce((select v.vehicle_kind = 'tractor' from public.vehicles v where v.id = s.vehicle_id), false);
+$$;
+revoke all on function private.shipment_uses_container(public.shipments) from public, anon, authenticated;
+
+-- -----------------------------------------------------------------------------
+-- App tài xế
+-- -----------------------------------------------------------------------------
+create or replace function public.driver_link_containers(p_token text)
+returns table (
+  shipment_id uuid, container_no text, empty_return_state text, prev_code text, next_code text,
+  root_id uuid, root_code text, empty_amount numeric, empty_ref text, deposit_amount numeric, deposit_ref text, locked boolean
+)
+language sql
+security definer
+set search_path = ''
+as $$
+  select s.id, coalesce(s.container_no, r.container_no), s.empty_return_state,
+         p.shipment_code, n.shipment_code, r.id, r.shipment_code,
+         (fx ->> 'empty_amount')::numeric, fx ->> 'empty_ref', (fx ->> 'deposit_amount')::numeric, fx ->> 'deposit_ref',
+         r.receivable_id is not null or r.status = 'cancelled' or s.status not in ('accepted', 'in_transit', 'driver_completed')
+  from private.driver_link_session(p_token) me
+  join public.shipments s on private.driver_link_visible(me.vehicle_id, s)
+  join public.shipments r on r.id = private.container_root(s.id)
+  left join public.shipments p on p.id = s.container_prev_id
+  left join public.shipments n on n.container_prev_id = s.id
+  cross join lateral private.container_fees(r.id) fx
+  where (s.status in ('assigned', 'accepted', 'in_transit')
+         or (s.status in ('driver_completed', 'closed') and s.pickup_at > now() - interval '3 days'))
+    and private.shipment_uses_container(s);
+$$;
+revoke all on function public.driver_link_containers(text) from public;
+grant execute on function public.driver_link_containers(text) to anon, authenticated;
+
+create or replace function public.driver_link_set_container(
+  p_token text, p_shipment_id uuid,
+  p_empty_amount numeric, p_empty_ref text, p_deposit_amount numeric, p_deposit_ref text,
+  p_state text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_me record;
+  v_s public.shipments;
+  v_r public.shipments;
+  v_next text;
+  v_er text := nullif(trim(coalesce(p_empty_ref, '')), '');
+  v_dr text := nullif(trim(coalesce(p_deposit_ref, '')), '');
+begin
+  select * into v_me from private.driver_link_session(p_token);
+  if v_me.vehicle_id is null then
+    return jsonb_build_object('ok', false, 'error', 'Phiên đã hết hạn. Vui lòng nhập lại số xe.', 'expired', true);
+  end if;
+  select * into v_s from public.shipments where id = p_shipment_id for update;
+  if v_s.id is null or not private.driver_link_visible(v_me.vehicle_id, v_s) then
+    return jsonb_build_object('ok', false, 'error', 'Chọn chuyến của xe bạn.');
+  end if;
+  if v_s.status = 'closed' then
+    return jsonb_build_object('ok', false, 'error', 'Chuyến đã được văn phòng đóng, không sửa được. Vui lòng gọi điều phối.');
+  end if;
+  if v_s.status not in ('accepted', 'in_transit', 'driver_completed') then
+    return jsonb_build_object('ok', false, 'error', 'Nhận chuyến trước rồi mới nhập trả rỗng, cược cont.');
+  end if;
+  if p_state is not null and p_state not in ('returned', 'kept') then
+    return jsonb_build_object('ok', false, 'error', 'Chọn "Đã trả rỗng" hoặc "Giữ vỏ cho chuyến sau".');
+  end if;
+  if (p_empty_amount is not null and (p_empty_amount < 0 or p_empty_amount > 1000000000))
+     or (p_deposit_amount is not null and (p_deposit_amount < 0 or p_deposit_amount > 1000000000)) then
+    return jsonb_build_object('ok', false, 'error', 'Số tiền không hợp lệ.');
+  end if;
+  if length(v_er) > 100 or length(v_dr) > 100 then
+    return jsonb_build_object('ok', false, 'error', 'Số hóa đơn tối đa 100 ký tự.');
+  end if;
+  if v_er is not null and p_empty_amount is null then
+    return jsonb_build_object('ok', false, 'error', 'Nhập số tiền trả rỗng của hóa đơn ' || v_er || '.');
+  end if;
+  if v_dr is not null and p_deposit_amount is null then
+    return jsonb_build_object('ok', false, 'error', 'Nhập số tiền cược cont của hóa đơn ' || v_dr || '.');
+  end if;
+  select shipment_code into v_next from public.shipments where container_prev_id = v_s.id and status <> 'cancelled';
+  if p_state = 'returned' and v_next is not null then
+    return jsonb_build_object('ok', false, 'error', 'Vỏ cont đã chuyển sang chuyến ' || v_next || ', trả rỗng nhập ở chuyến đó.');
+  end if;
+  if p_state = 'returned' and p_empty_amount is null then
+    return jsonb_build_object('ok', false, 'error', 'Đã trả rỗng: nhập số tiền trả rỗng.');
+  end if;
+
+  select * into v_r from public.shipments where id = private.container_root(v_s.id) for update;
+  if v_r.receivable_id is not null then
+    return jsonb_build_object('ok', false, 'error', 'Chuyến ' || v_r.shipment_code || ' đã lập công nợ, không sửa được phí. Vui lòng gọi kế toán.');
+  end if;
+  if v_r.status = 'cancelled' then
+    return jsonb_build_object('ok', false, 'error', 'Chuyến đầu ' || v_r.shipment_code || ' của vỏ cont đã hủy. Vui lòng gọi điều phối.');
+  end if;
+
+  perform private.put_container_fee(v_r.id, 'empty', p_empty_amount, v_er);
+  perform private.put_container_fee(v_r.id, 'deposit', p_deposit_amount, v_dr);
+  perform private.recalc_shipment_fee_totals(v_r.id);
+  if p_state is not null and v_s.empty_return_state is distinct from p_state then
+    update public.shipments set empty_return_state = p_state, empty_return_state_at = now() where id = v_s.id;
+  end if;
+  return jsonb_build_object('ok', true, 'root_code', v_r.shipment_code);
+exception when sqlstate '22023' then
+  return jsonb_build_object('ok', false, 'error', sqlerrm);
+end;
+$$;
+revoke all on function public.driver_link_set_container(text, uuid, numeric, text, numeric, text, text) from public;
+grant execute on function public.driver_link_set_container(text, uuid, numeric, text, numeric, text, text) to anon, authenticated;
+
+-- -----------------------------------------------------------------------------
+-- Điều phối: xem chuỗi vỏ, nối chuyến vào vỏ của chuyến trước, danh sách vỏ chưa trả rỗng
+-- -----------------------------------------------------------------------------
+create or replace function public.container_kept_list()
+returns table (
+  shipment_id uuid, shipment_code text, container_no text, plate_number text, driver_name text, customer_name text,
+  pickup_at timestamptz, kept_at timestamptz, days_kept int, root_id uuid, root_code text, deposit_amount numeric
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not (private.has_perm('shipments.view') or private.has_perm('dispatch.view')) then
+    raise exception 'Bạn không có quyền xem chuyến' using errcode = '42501';
+  end if;
+  return query
+  select s.id, s.shipment_code, coalesce(s.container_no, r.container_no), v.plate_number, d.full_name, c.name,
+         s.pickup_at, coalesce(s.empty_return_state_at, s.completed_at),
+         greatest(0, (now()::date - coalesce(s.empty_return_state_at, s.completed_at, s.pickup_at)::date))::int,
+         r.id, r.shipment_code, (private.container_fees(r.id) ->> 'deposit_amount')::numeric
+  from public.shipments s
+  join public.shipments r on r.id = private.container_root(s.id)
+  left join public.vehicles v on v.id = s.vehicle_id
+  left join public.drivers d on d.id = s.driver_id
+  left join public.transport_orders o on o.id = s.order_id
+  left join public.customers c on c.id = o.customer_id
+  where s.empty_return_state = 'kept' and s.status <> 'cancelled'
+    and not exists (select 1 from public.shipments n where n.container_prev_id = s.id and n.status <> 'cancelled')
+  order by coalesce(s.empty_return_state_at, s.completed_at, s.pickup_at);
+end;
+$$;
+revoke all on function public.container_kept_list() from public, anon;
+grant execute on function public.container_kept_list() to authenticated;
+
+create or replace function public.shipment_container_chain(p_shipment_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_s public.shipments;
+  v_root uuid;
+begin
+  if not (private.has_perm('shipments.view') or private.has_perm('dispatch.view')) then
+    raise exception 'Bạn không có quyền xem chuyến' using errcode = '42501';
+  end if;
+  select * into v_s from public.shipments where id = p_shipment_id;
+  if v_s.id is null then
+    return null;
+  end if;
+  v_root := private.container_root(v_s.id);
+  return jsonb_build_object(
+    'uses_container', private.shipment_uses_container(v_s),
+    'state', v_s.empty_return_state,
+    'prev_id', v_s.container_prev_id,
+    'root_id', v_root,
+    'fees', private.container_fees(v_root),
+    'chain', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', s.id, 'code', s.shipment_code, 'status', s.status, 'container_no', s.container_no,
+        'plate', v.plate_number, 'state', s.empty_return_state, 'pickup_at', s.pickup_at) order by c.pos), '[]'::jsonb)
+      from private.container_chain(v_s.id) c
+      join public.shipments s on s.id = c.shipment_id
+      left join public.vehicles v on v.id = s.vehicle_id),
+    'candidates', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', k.shipment_id, 'code', k.shipment_code, 'container_no', k.container_no, 'plate', k.plate_number,
+        'days_kept', k.days_kept) order by (k.plate_number is not distinct from (select plate_number from public.vehicles where id = v_s.vehicle_id)) desc, k.kept_at desc), '[]'::jsonb)
+      from public.container_kept_list() k
+      where k.shipment_id <> v_s.id
+        and k.shipment_id not in (select shipment_id from private.container_chain(v_s.id))));
+end;
+$$;
+revoke all on function public.shipment_container_chain(uuid) from public, anon;
+grant execute on function public.shipment_container_chain(uuid) to authenticated;
+
+-- Nối chuyến vào vỏ cont của chuyến trước (p_prev_id null = gỡ nối)
+create or replace function public.set_container_prev(p_shipment_id uuid, p_prev_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_s public.shipments;
+  v_p public.shipments;
+  v_root uuid;
+  v_kind text;
+  v_line public.shipment_fees;
+  v_no int;
+  v_moved boolean := false;
+begin
+  if not (private.has_perm('dispatch.update') or private.has_perm('shipments.update')) then
+    raise exception 'Bạn không có quyền sửa chuyến' using errcode = '42501';
+  end if;
+  select * into v_s from public.shipments where id = p_shipment_id for update;
+  if v_s.id is null then
+    raise exception 'Không tìm thấy chuyến' using errcode = '22023';
+  end if;
+  if v_s.status = 'cancelled' then
+    raise exception 'Chuyến đã hủy' using errcode = '22023';
+  end if;
+
+  if p_prev_id is null then
+    if v_s.container_prev_id is not null then
+      update public.shipments set container_prev_id = null where id = v_s.id;
+    end if;
+    return jsonb_build_object('ok', true);
+  end if;
+
+  select * into v_p from public.shipments where id = p_prev_id for update;
+  if v_p.id is null or v_p.id = v_s.id then
+    raise exception 'Chọn chuyến trước hợp lệ' using errcode = '22023';
+  end if;
+  if v_p.status = 'cancelled' then
+    raise exception 'Chuyến % đã hủy', v_p.shipment_code using errcode = '22023';
+  end if;
+  if v_p.empty_return_state = 'returned' then
+    raise exception 'Chuyến % đã trả rỗng, không dùng lại vỏ được', v_p.shipment_code using errcode = '22023';
+  end if;
+  if exists (select 1 from public.shipments n where n.container_prev_id = v_p.id and n.id <> v_s.id and n.status <> 'cancelled') then
+    raise exception 'Vỏ của chuyến % đã nối sang chuyến khác', v_p.shipment_code using errcode = '22023';
+  end if;
+  if exists (select 1 from private.container_chain(v_s.id) c where c.shipment_id = v_p.id) then
+    raise exception 'Chuyến % đã nằm trong chuỗi vỏ này', v_p.shipment_code using errcode = '22023';
+  end if;
+  -- Chuyến nối vào còn là chuyến đầu của chuỗi riêng: chuyển dòng trả rỗng / cược sang chuyến đầu mới
+  v_root := private.container_root(v_p.id);
+  if exists (select 1 from public.shipments where id = v_root and receivable_id is not null)
+     and exists (select 1 from public.shipment_fees f where f.shipment_id = v_s.id
+                 and f.fee_type_id in (private.container_fee_type('empty'), private.container_fee_type('deposit'))) then
+    raise exception 'Chuyến đầu của vỏ đã lập công nợ, không chuyển được phí trả rỗng / cược sang' using errcode = '22023';
+  end if;
+  foreach v_kind in array array['empty', 'deposit'] loop
+    select * into v_line from public.shipment_fees where shipment_id = v_s.id and fee_type_id = private.container_fee_type(v_kind) order by line_no limit 1;
+    continue when v_line.id is null;
+    if exists (select 1 from public.shipment_fees where shipment_id = v_root and fee_type_id = v_line.fee_type_id) then
+      raise exception 'Chuyến % và chuyến đầu của vỏ đều đã có phí %. Bỏ một dòng rồi nối lại.',
+        v_s.shipment_code, case v_kind when 'empty' then 'trả rỗng' else 'cược cont' end using errcode = '22023';
+    end if;
+    if v_s.receivable_id is not null then
+      raise exception 'Chuyến % đã lập công nợ, không chuyển được phí trả rỗng / cược', v_s.shipment_code using errcode = '22023';
+    end if;
+    select coalesce(max(line_no), 0) + 1 into v_no from public.shipment_fees where shipment_id = v_root;
+    delete from public.shipment_fees where id = v_line.id;
+    insert into public.shipment_fees (shipment_id, line_no, fee_type_id, fee_kind, amount, note, ref_no)
+    values (v_root, v_no, v_line.fee_type_id, v_line.fee_kind, v_line.amount, v_line.note, v_line.ref_no);
+    v_moved := true;
+  end loop;
+  if v_moved then
+    perform private.recalc_shipment_fee_totals(v_s.id);
+    perform private.recalc_shipment_fee_totals(v_root);
+  end if;
+
+  update public.shipments
+     set container_prev_id = v_p.id,
+         container_no = coalesce(container_no, v_p.container_no, (select container_no from public.shipments where id = v_root))
+   where id = v_s.id;
+  if v_p.empty_return_state is distinct from 'kept' then
+    update public.shipments set empty_return_state = 'kept', empty_return_state_at = coalesce(empty_return_state_at, now()) where id = v_p.id;
+  end if;
+  return jsonb_build_object('ok', true, 'moved_fees', v_moved);
+end;
+$$;
+revoke all on function public.set_container_prev(uuid, uuid) from public, anon;
+grant execute on function public.set_container_prev(uuid, uuid) to authenticated;
+
 commit;

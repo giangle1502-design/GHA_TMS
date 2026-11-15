@@ -8,6 +8,7 @@ import { parseDriverAppSettings, type DriverAppSettings } from "@/lib/driver-lin
 import { PlateForm } from "./plate-form";
 import { AcceptButton, ChangeVehicleButton, CompleteButton, FindNextButton, StartButton } from "./trip-actions";
 import { AddExpenseButton, AddSheetButton, type ExpenseCategory } from "./expense-forms";
+import { ContainerCard, type ContainerInfo } from "./container-card";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,8 @@ type Trip = {
   empty_return_address?: string | null;
   offroute_return_name?: string | null;
   offroute_return_address?: string | null;
+  /** Trả rỗng & cược cont (chuyến chở container, xe nội bộ) */
+  container?: ContainerInfo | null;
 };
 
 const RESULT_LABEL: Record<string, string> = { full: "Giao đủ", partial: "Giao thiếu", failed: "Không giao được" };
@@ -77,12 +80,15 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
   const me = token ? ((await supabase.rpc("driver_link_me", { p_token: token })).data as { plate: string; driver_name: string | null } | null) : null;
   if (!me) return <PlateForm />;
 
-  const [{ data, error }, fin, cfg, flagRes] = await Promise.all([
+  const [{ data, error }, fin, cfg, flagRes, contRes] = await Promise.all([
     supabase.rpc("driver_link_trips", { p_token: token }),
     supabase.rpc("driver_link_categories", { p_token: token }),
     supabase.rpc("driver_app_settings"),
     supabase.rpc("driver_link_trip_flags", { p_token: token }),
+    supabase.rpc("driver_link_containers", { p_token: token }),
   ]);
+  // Trả rỗng & cược cont theo chuyến (CSDL chưa nâng cấp 9008 thì không hiện)
+  const containers = new Map(((contRes.data ?? []) as ContainerInfo[]).map((c) => [c.shipment_id, c]));
   if (error) throw error;
   // Cờ từng chuyến (CSDL chưa nâng cấp 0054 thì như trước: bắt buộc ảnh)
   const flags = new Map(((flagRes.data ?? []) as { shipment_id: string; pod_photo_required: boolean; sheet_count: number }[]).map((f) => [f.shipment_id, f]));
@@ -90,6 +96,7 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
     ...t,
     pod_photo_required: flags.get(t.shipment_id)?.pod_photo_required ?? true,
     sheet_count: Number(flags.get(t.shipment_id)?.sheet_count ?? 0),
+    container: containers.get(t.shipment_id) ?? null,
   }));
   const settings = parseDriverAppSettings(cfg.data);
   const categories = ((fin.data as { categories?: ExpenseCategory[] } | null)?.categories ?? []) as ExpenseCategory[];
@@ -194,6 +201,10 @@ function TripCard({ t, categories, settings }: { t: Trip; categories: ExpenseCat
         </Link>
       ) : null}
 
+      {t.container && t.status !== "assigned" ? (
+        <ContainerCard key={`${t.container.empty_amount}-${t.container.empty_ref}-${t.container.deposit_amount}-${t.container.deposit_ref}-${t.container.empty_return_state}`} c={t.container} code={t.shipment_code} completed={t.status === "driver_completed"} />
+      ) : null}
+
       {t.status === "assigned" && t.wait_for_code ? (
         <p data-wait-for={t.wait_for_code} className="mt-4 rounded-xl border border-warning bg-warning/10 p-3 text-center text-sm font-medium">
           Nhận chuyến thứ {t.wait_for_rank} ({t.wait_for_code}) trước, rồi mới nhận được chuyến này.
@@ -212,12 +223,14 @@ function TripCard({ t, categories, settings }: { t: Trip; categories: ExpenseCat
             <p className="mt-2 rounded-lg bg-warning/10 p-2 text-center text-sm font-medium">Đơn này yêu cầu chụp chứng từ giao hàng</p>
           ) : null}
           <CompleteButton
+            key={t.container ? `${t.container.empty_amount}-${t.container.empty_ref}-${t.container.deposit_amount}-${t.container.deposit_ref}` : "no-cont"}
             shipmentId={t.shipment_id}
             code={t.shipment_code}
             categories={categories}
             outsourced={t.outsourced}
             settings={settings}
             podPhotoRequired={t.pod_photo_required ?? true}
+            container={t.container}
           />
         </>
       ) : t.completed_at ? (

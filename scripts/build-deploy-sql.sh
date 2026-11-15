@@ -187,3 +187,5 @@ upgrade nang-cap-ly-do-ngay-cong.sql "Danh mục lý do ngày công (thai sản,
   supabase/migrations/20261111000072_attendance_reasons.sql
 upgrade nang-cap-dien-gia-tuyen.sql "Lấy tuyến từ các chuyến để điền giá lương chuyến, cột lương chuyến, sửa tay lương chuyến" "to_regprocedure('public.route_pay_gaps(integer)') is not null" \
   supabase/migrations/20261111000073_route_pay_fill.sql
+upgrade nang-cap-tra-rong-cuoc-cont.sql "Tài xế nhập trả rỗng, cược cont; chuỗi vỏ container gộp phí về chuyến đầu" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'shipments' and column_name = 'container_prev_id')" \
+  supabase/migrations/20261115009008_tra_rong_cuoc_cont.sql
