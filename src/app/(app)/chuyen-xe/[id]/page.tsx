@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { notFound } from "next/navigation";
-import { ArrowRight, ChevronLeft, Copy } from "lucide-react";
+import { ArrowRight, ChevronLeft, Copy, Printer } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { missingColumn } from "@/lib/supabase/missing-column";
@@ -300,6 +300,13 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
         }
         actions={
           <>
+            {s.status !== "cancelled" ? (
+              <Button asChild variant="outline">
+                <Link href={`/phieu-giao-hang/${s.id}`} data-delivery-note-link>
+                  <Printer /> Phiếu giao hàng
+                </Link>
+              </Button>
+            ) : null}
             {s.driver_id && s.status !== "cancelled" ? (
               <DriverInfoButton
                 variant="outline"

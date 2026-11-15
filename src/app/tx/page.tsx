@@ -1,4 +1,5 @@
-import { Clock, MapPin, Navigation, Phone, Receipt, Truck } from "lucide-react";
+import Link from "next/link";
+import { Clock, FileText, MapPin, Navigation, Phone, Receipt, Truck } from "lucide-react";
 import { anonClient, driverLinkToken } from "@/lib/driver-link/server";
 import { formatDate, formatDateTime, formatNumber, formatVND } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -182,6 +183,15 @@ function TripCard({ t, categories, settings }: { t: Trip; categories: ExpenseCat
         {t.quantity ? <span>Số lượng: {formatNumber(t.quantity)}</span> : null}
       </div>
       {t.notes ? <p className="mt-2 rounded-lg bg-warning/10 p-2 text-sm">Ghi chú: {t.notes}</p> : null}
+      {t.status !== "assigned" ? (
+        <Link
+          href={`/tx/phieu/${t.shipment_id}`}
+          data-delivery-note-link
+          className="mt-3 flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium text-primary"
+        >
+          <FileText className="size-4" /> Phiếu giao hàng (In / Tải PDF)
+        </Link>
+      ) : null}
 
       {t.status === "assigned" && t.wait_for_code ? (
         <p data-wait-for={t.wait_for_code} className="mt-4 rounded-xl border border-warning bg-warning/10 p-3 text-center text-sm font-medium">
