@@ -32,6 +32,7 @@ import { ItemsCard, type ShipmentItem } from "./items-card";
 import { FeesDialog, type ShipmentFee } from "./fees-dialog";
 import { ProfitCard, type ShipmentProfit } from "./profit-card";
 import { CarrierCard, type CarrierPayable } from "./carrier-card";
+import { ContainerChainCard } from "./container-chain-card";
 import type { CarrierCost } from "@/components/finance/carrier-dialogs";
 import { DocumentsButton } from "@/components/finance/documents-button";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
@@ -580,6 +581,14 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
             canEdit={
               (me.permissions.has("dispatch.update") || me.permissions.has("shipments.update") || me.permissions.has("receivables.create")) && s.status !== "cancelled"
             }
+          />
+        ) : null}
+
+        {me.permissions.has("dispatch.view") || me.permissions.has("shipments.update") ? (
+          <ContainerChainCard
+            shipmentId={s.id}
+            code={s.shipment_code}
+            canEdit={(me.permissions.has("dispatch.update") || me.permissions.has("shipments.update")) && s.status !== "cancelled"}
           />
         ) : null}
 

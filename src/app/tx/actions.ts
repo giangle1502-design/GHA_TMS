@@ -124,3 +124,34 @@ export async function addExpenseSheet(input: { shipmentId: string; ticket: strin
   const r = await callRpc("driver_link_add_sheet", { p_shipment_id: input.shipmentId, p_ticket: input.ticket }, "Không gửi được phiếu chi phí.");
   return r.ok ? { ok: true } : { ok: false, error: r.error! };
 }
+
+const money = z.number().min(0).max(1_000_000_000).nullable();
+const ref = z.string().trim().max(100).nullable();
+const containerSchema = z.object({
+  shipmentId: z.uuid(),
+  emptyAmount: money,
+  emptyRef: ref,
+  depositAmount: money,
+  depositRef: ref,
+  state: z.enum(["returned", "kept"]).nullable(),
+});
+
+/** Trả rỗng / cược cont (4 ô). Phí của cả chuỗi vỏ ghi về chuyến đầu của chuỗi. */
+export async function saveContainer(input: z.input<typeof containerSchema>): Promise<Result & { rootCode?: string }> {
+  const p = containerSchema.safeParse(input);
+  if (!p.success) return { ok: false, error: "Số tiền hoặc số hóa đơn không hợp lệ." };
+  const d = p.data;
+  const r = await callRpc(
+    "driver_link_set_container",
+    {
+      p_shipment_id: d.shipmentId,
+      p_empty_amount: d.emptyAmount,
+      p_empty_ref: d.emptyRef || null,
+      p_deposit_amount: d.depositAmount,
+      p_deposit_ref: d.depositRef || null,
+      p_state: d.state,
+    },
+    "Không lưu được trả rỗng / cược cont.",
+  );
+  return r.ok ? { ok: true, rootCode: (r as { root_code?: string }).root_code } : { ok: false, error: r.error! };
+}
