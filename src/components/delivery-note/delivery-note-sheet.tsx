@@ -38,13 +38,12 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
 
       <div className="dn-grid2">
         <div className="dn-box">
-          <h3>Bên giao hàng (điểm nhận)</h3>
-          {d.shipper_name ? <Row k="Đơn vị:" v={<b>{d.shipper_name}</b>} /> : null}
-          <Row k="Kho nhận:" v={[d.pickup_name, d.pickup_address].filter(Boolean).join(" – ")} />
-          {d.pickup_phone ? <Row k="Liên hệ:" v={d.pickup_phone} /> : null}
+          <h3>Bên giao hàng</h3>
+          <Row k="Công ty:" v={<b>{d.shipper_name}</b>} />
+          {d.shipper_address ? <Row k="Địa chỉ:" v={d.shipper_address} /> : null}
         </div>
         <div className="dn-box">
-          <h3>Bên nhận hàng (điểm giao)</h3>
+          <h3>Bên nhận hàng</h3>
           <Row k="Khách hàng:" v={<b>{customer}</b>} />
           {d.delivery_address ? <Row k="Địa chỉ:" v={d.delivery_address} /> : null}
           {d.delivery_phone ? <Row k="SĐT nhận:" v={d.delivery_phone} /> : null}

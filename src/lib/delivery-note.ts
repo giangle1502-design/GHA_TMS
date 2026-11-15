@@ -16,9 +16,8 @@ export type DeliveryNoteData = {
   note_date: string | null;
   company: { name: string | null; tax_code: string | null; address: string | null; phone: string | null } | null;
   shipper_name: string | null;
-  pickup_name: string | null;
-  pickup_address: string | null;
-  pickup_phone: string | null;
+  /** Địa chỉ công ty khách (VAP/PLA...). Phiếu không ghi kho/điểm nhận để không lộ thông tin khách. */
+  shipper_address?: string | null;
   delivery_name: string | null;
   delivery_company: string | null;
   delivery_address: string | null;
