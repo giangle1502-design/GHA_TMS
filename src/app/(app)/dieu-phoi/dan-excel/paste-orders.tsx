@@ -51,6 +51,8 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
   const [remember, setRemember] = useState<Set<string>>(new Set());
   const [skip, setSkip] = useState<Set<number>>(new Set());
   const [merge, setMerge] = useState(true);
+  /** Số đơn gõ tay theo dòng: cùng số = một đơn, khác số = đơn riêng */
+  const [orderNos, setOrderNos] = useState<Map<number, string>>(new Map());
   const [existing, setExisting] = useState<Map<string, string>>(new Map());
   const [aliases, setAliases] = useState<SavedAlias[]>(catalog.aliases);
   const [outcome, setOutcome] = useState<PasteOutcome | null>(null);
@@ -83,6 +85,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     setOutcome(null);
     const rows = parseTSV(t);
     const d = detectColumns(rows);
+    if (rows.length !== grid.length) setOrderNos(new Map());
     setGrid(rows);
     setMap(d.map);
     setHeaderRow(d.headerRow);
@@ -195,17 +198,26 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
       if (looksScientific(r.so_to_khai)) warnings.push("Số tờ khai bị Excel đổi dạng 1.08E+11: định dạng cột là Text rồi copy lại");
       return { i, r, customer, pickup, delivery, product, date, cont, qty, errors, warnings, group: "" };
     });
-    // Đánh số đơn theo nhóm
+    // Đánh số đơn: tự gợi ý theo nhóm, người dùng sửa được ô "Đơn" (cùng số = một đơn)
     const nums = new Map<string, number>();
+    const no = new Map<number, string>();
     for (const x of out) {
       if (x.errors.length || skip.has(x.i)) continue;
-      x.group = orderGroupKey({ customerId: x.customer.id!, toKhai: x.r.so_to_khai ?? "", deliveryId: x.delivery.id!, date: x.date! }, x.i, merge);
-      if (!nums.has(x.group)) nums.set(x.group, nums.size + 1);
+      const auto = orderGroupKey({ customerId: x.customer.id!, toKhai: x.r.so_to_khai ?? "", deliveryId: x.delivery.id!, date: x.date! }, x.i, merge);
+      if (!nums.has(auto)) nums.set(auto, nums.size + 1);
+      const n = (orderNos.get(x.i) ?? "").trim() || String(nums.get(auto));
+      no.set(x.i, n);
+      // Một đơn chỉ thuộc một khách hàng: cùng số mà khác khách thì vẫn tách
+      x.group = `${n.toUpperCase()}|${x.customer.id}`;
     }
-    return out.map((x) => ({ ...x, orderNo: x.group ? nums.get(x.group)! : null }));
+    const customersOf = new Map<string, Set<string>>();
+    for (const x of out) if (x.group) customersOf.set(no.get(x.i)!, (customersOf.get(no.get(x.i)!) ?? new Set()).add(x.customer.id!));
+    for (const x of out)
+      if (x.group && customersOf.get(no.get(x.i)!)!.size > 1) x.warnings.push(`Đơn ${no.get(x.i)} có dòng khác khách hàng: sẽ tách thành đơn riêng theo khách`);
+    return out.map((x) => ({ ...x, orderNo: no.get(x.i) ?? null }));
     // pick đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map]);
+  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos]);
 
   const errorCount = rows.filter((x) => x.errors.length).length;
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
@@ -485,9 +497,17 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
               </Badge>
               <label className="ml-2 flex items-center gap-1.5">
                 <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
-                Gộp các cont cùng tờ khai, cùng điểm giao, cùng ngày thành một đơn
+                Tự gợi ý gộp cont cùng tờ khai, cùng điểm giao, cùng ngày
               </label>
+              {orderNos.size ? (
+                <Button size="sm" variant="ghost" onClick={() => setOrderNos(new Map())}>
+                  Đặt lại số đơn
+                </Button>
+              ) : null}
             </div>
+            <p className="text-xs text-muted-foreground">
+              Sửa số ở cột &quot;Đơn&quot; để chia đơn: các dòng cùng số gộp thành một đơn, khác số thành đơn riêng (VD 1, 2, 3 = 3 đơn; 1, 1, 2 = 2 đơn).
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="max-h-[60vh] overflow-auto rounded-md border">
@@ -529,7 +549,31 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
                         />
                       </td>
                       <td className="px-2 py-1 tabular-nums">{x.i + 1}</td>
-                      <td className="px-2 py-1 whitespace-nowrap">{x.orderNo ? `Đơn ${x.orderNo}` : ""}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {x.orderNo ? (
+                          <input
+                            aria-label={`Số đơn dòng ${x.i + 1}`}
+                            value={orderNos.get(x.i) ?? x.orderNo}
+                            maxLength={10}
+                            onChange={(e) =>
+                              setOrderNos((m) => {
+                                const n = new Map(m);
+                                n.set(x.i, e.target.value);
+                                return n;
+                              })
+                            }
+                            onBlur={(e) => {
+                              if (!e.target.value.trim())
+                                setOrderNos((m) => {
+                                  const n = new Map(m);
+                                  n.delete(x.i);
+                                  return n;
+                                });
+                            }}
+                            className={cn("h-7 w-12 rounded border bg-background px-1 text-center tabular-nums", orderNos.has(x.i) && "border-primary font-medium")}
+                          />
+                        ) : null}
+                      </td>
                       <Cell raw={x.r.phap_nhan} id={x.customer.id} byId={byId} />
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{x.r.so_to_khai}</td>
                       <Cell raw={x.r.ma_hang} id={x.product.id} byId={byId} codeOnly />
