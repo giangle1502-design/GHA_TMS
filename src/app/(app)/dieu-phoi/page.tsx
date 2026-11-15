@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { attachDriverPay } from "@/lib/driver-pay";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Ban, Plus, Truck, ListChecks, ListOrdered, FileSpreadsheet } from "lucide-react";
+import { Ban, Plus, Truck, ListChecks, ListOrdered, FileSpreadsheet, ClipboardPaste } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { addDaysYMD, formatDate, startOfDayVN, todayVN } from "@/lib/format";
@@ -188,6 +188,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
               <Button variant="outline" asChild>
                 <Link href="/dieu-phoi/nhap-excel">
                   <FileSpreadsheet /> Nhập từ Excel
+                </Link>
+              </Button>
+            ) : null}
+            {canCreate ? (
+              <Button variant="outline" asChild>
+                <Link href="/dieu-phoi/dan-excel">
+                  <ClipboardPaste /> Dán từ Excel
                 </Link>
               </Button>
             ) : null}
