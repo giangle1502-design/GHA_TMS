@@ -1611,6 +1611,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     label: "Chi phí ngoài chuyến",
     singular: "khoản chi ngoài chuyến",
     perm: "overhead",
+    imageFill: "invoice",
     hasExport: true,
     autoCode: true,
     search: ["code", "description", "invoice_no", "seller_name", "spender_name", "notes"],
