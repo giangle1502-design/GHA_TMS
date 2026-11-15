@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { attachDriverPay } from "@/lib/driver-pay";
 import Link from "next/link";
-import { Ban, FileSpreadsheet, ReceiptText } from "lucide-react";
+import { Ban, ClipboardPaste, FileSpreadsheet, ReceiptText } from "lucide-react";
 import { redirect } from "next/navigation";
 import { requirePagePermission } from "@/lib/auth/session";
 import { loadTableView } from "@/lib/entities/server";
@@ -142,6 +142,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
               <Button variant="outline" asChild>
                 <Link href="/dieu-phoi/nhap-excel?tu=chuyen-xe">
                   <FileSpreadsheet /> Nhập từ Excel
+                </Link>
+              </Button>
+            ) : null}
+            {me.permissions.has("dispatch.create") ? (
+              <Button variant="outline" asChild>
+                <Link href="/dieu-phoi/dan-excel?tu=chuyen-xe">
+                  <ClipboardPaste /> Dán từ Excel
                 </Link>
               </Button>
             ) : null}
