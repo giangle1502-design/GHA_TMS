@@ -10,7 +10,15 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { SearchSelect } from "@/components/ui/search-select";
 import { cn } from "@/lib/utils";
 import {
-  PASTE_COLUMNS,
+  FIELD_LABELS,
+  TEMPLATES,
+  containerOf,
+  deliveryDisplay,
+  deliveryNames,
+  groupRef,
+  pickupNames,
+  templateOf,
+  type PasteTemplate,
   buildMatcher,
   containerCheckOk,
   detectColumns,
@@ -18,7 +26,6 @@ import {
   looksDelivered,
   looksScientific,
   matchKey,
-  normalizeContainer,
   orderGroupKey,
   parseQty,
   parseTSV,
@@ -59,6 +66,9 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
   const [pending, start] = useTransition();
   /** Đọc từ ảnh: ô đọc chưa chắc theo [dòng][cột] của phần dán; null = dán chữ */
   const [unsure, setUnsure] = useState<boolean[][] | null>(null);
+  /** Mẫu dữ liệu: "auto" = tự nhận ra theo dòng tiêu đề */
+  const [tplChoice, setTplChoice] = useState<PasteTemplate | "auto">("auto");
+  const [template, setTemplate] = useState<PasteTemplate>("theo_doi");
   const [ocr, setOcr] = useState<{ busy: boolean; progress: number; error: string }>({ busy: false, progress: 0, error: "" });
 
   const byId = useMemo(() => {
@@ -73,18 +83,19 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
   const matchers = useMemo(() => {
     const al = (k: AliasKind) => aliases.filter((a) => a.kind === k);
     return {
-      customer: buildMatcher(catalog.customers, al("customer")),
+      customer: buildMatcher(catalog.customers, al("customer"), { core: true }),
       location: buildMatcher(catalog.locations, al("location"), { core: true }),
       product: buildMatcher(catalog.products, al("product")),
     };
   }, [catalog, aliases]);
 
-  const read = (t: string, fromImage: boolean[][] | null = null) => {
+  const read = (t: string, fromImage: boolean[][] | null = null, tpl: PasteTemplate | "auto" = tplChoice) => {
     setText(t);
     setUnsure(t ? fromImage : null);
     setOutcome(null);
     const rows = parseTSV(t);
-    const d = detectColumns(rows);
+    const d = detectColumns(rows, tpl === "auto" ? undefined : tpl);
+    setTemplate(d.template);
     if (rows.length !== grid.length) setOrderNos(new Map());
     setGrid(rows);
     setMap(d.map);
@@ -117,6 +128,15 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     if (r.status === "empty") return { id: null, how: "empty", candidates: [] };
     return { id: null, how: r.status, candidates: r.candidates };
   };
+  /** Nhiều cột có thể là cùng một điểm (Điểm đi / Kho xuất…): lấy cột đầu tiên ghép được, chưa được thì cột dễ đọc nhất */
+  const pickFrom = (kind: AliasKind, raws: string[], display?: string): Pick & { raw: string } => {
+    for (const raw of raws) {
+      const p = pick(kind, raw);
+      if (p.id) return { ...p, raw };
+    }
+    const raw = display || raws.find((x) => x.trim()) || "";
+    return { ...pick(kind, raw), raw };
+  };
 
   // Danh sách tên khác nhau trong phần dán, để xem và chọn lại một lần cho mọi dòng
   const names: Name[] = useMemo(() => {
@@ -131,16 +151,18 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     };
     for (const r of records) {
       add("customer", r.phap_nhan);
-      add("location", r.diem_lay_cont);
-      add("location", r.diem_giao);
+      add("location", pickFrom("location", pickupNames(r)).raw);
+      add("location", pickFrom("location", deliveryNames(r), deliveryDisplay(r)).raw);
       add("product", r.ma_hang);
     }
     const rank = (n: Name) => (n.auto.status === "ok" ? 2 : n.auto.status === "ambiguous" ? 1 : 0);
     return [...m.values()].sort((a, b) => rank(a) - rank(b) || a.kind.localeCompare(b.kind) || a.raw.localeCompare(b.raw));
-  }, [records, matchers]);
+    // pickFrom đọc manual + matchers
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, matchers, manual]);
 
   // Cảnh báo cont đã có trong phần mềm
-  const containers = useMemo(() => [...new Set(records.map((r) => normalizeContainer(r.so_cont)).filter(Boolean))], [records]);
+  const containers = useMemo(() => [...new Set(records.map((r) => containerOf(r)).filter(Boolean))], [records]);
   useEffect(() => {
     if (!containers.length) return;
     let alive = true;
@@ -151,7 +173,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
       setSkip((s) => {
         const n = new Set(s);
         records.forEach((rec, i) => {
-          if (m.has(normalizeContainer(rec.so_cont))) n.add(i);
+          if (m.has(containerOf(rec))) n.add(i);
         });
         return n;
       });
@@ -168,31 +190,31 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
       const errors: string[] = [];
       const warnings: string[] = [];
       const customer = pick("customer", r.phap_nhan);
-      const pickup = pick("location", r.diem_lay_cont);
-      const delivery = pick("location", r.diem_giao);
+      const pickup = pickFrom("location", pickupNames(r));
+      const delivery = pickFrom("location", deliveryNames(r), deliveryDisplay(r));
       const product = pick("product", r.ma_hang);
       const date = isoDate(r.ngay_giao);
-      const cont = normalizeContainer(r.so_cont);
+      const cont = containerOf(r);
       const qty = parseQty(r.so_luong);
-      if (!r.phap_nhan) errors.push("Thiếu Pháp nhân");
+      if (!r.phap_nhan) errors.push(template === "theo_doi" ? "Thiếu Pháp nhân" : "Thiếu Công ty");
       else if (!customer.id) errors.push(`Chưa ghép khách hàng "${r.phap_nhan}"`);
-      if (!r.diem_lay_cont) errors.push("Thiếu Điểm lấy cont");
-      else if (!pickup.id) errors.push(`Chưa ghép điểm lấy cont "${r.diem_lay_cont}"`);
-      if (!r.diem_giao) errors.push("Thiếu Điểm giao");
-      else if (!delivery.id) errors.push(`Chưa ghép điểm giao "${r.diem_giao}"`);
+      if (!pickup.raw) errors.push(template === "theo_doi" ? "Thiếu Điểm lấy cont" : "Thiếu Điểm đi / Kho xuất");
+      else if (!pickup.id) errors.push(`Chưa ghép điểm nhận "${pickup.raw}"`);
+      if (!delivery.raw) errors.push(template === "theo_doi" ? "Thiếu Điểm giao" : template === "ecount_ck" ? "Thiếu Điểm đến / Kho nhập" : "Thiếu khách hàng nhận");
+      else if (!delivery.id) errors.push(`Chưa ghép điểm giao "${delivery.raw}"`);
       if (pickup.id && pickup.id === delivery.id) errors.push("Điểm lấy cont và điểm giao trùng nhau");
       if (r.ma_hang && !product.id) errors.push(`Chưa ghép mã hàng "${r.ma_hang}"`);
-      if (!r.ngay_giao) errors.push("Thiếu Ngày giao");
+      if (!r.ngay_giao) errors.push(template === "theo_doi" ? "Thiếu Ngày giao" : "Thiếu Ngày");
       else if (!date) errors.push(`Ngày giao "${r.ngay_giao}" không đúng dạng dd/mm/yyyy`);
       if (r.so_luong && qty === null) errors.push(`Số lượng "${r.so_luong}" không phải số`);
       if (cont.length > 30) errors.push("Số cont quá 30 ký tự");
       else if (cont && !containerCheckOk(cont)) warnings.push(`Số cont ${cont} sai chữ số kiểm tra, xem lại`);
-      if (!cont) warnings.push("Không có số cont");
+      if (!cont && template === "theo_doi") warnings.push("Không có số cont");
       if (existing.has(cont)) warnings.push(`Cont ${cont} đã có ở chuyến ${existing.get(cont)}`);
       if (looksDelivered(r.tinh_trang)) warnings.push(`Tình trạng "${r.tinh_trang}"`);
       if (unsure) {
         const src = recordRows[i]?.src;
-        const cols = map.flatMap((f, c) => (f && unsure[src]?.[c] ? [PASTE_COLUMNS.find((x) => x.key === f)!.label] : []));
+        const cols = map.flatMap((f, c) => (f && unsure[src]?.[c] ? [FIELD_LABELS[f]] : []));
         if (cols.length) warnings.push(`Ảnh đọc chưa chắc: ${cols.join(", ")}. Đối chiếu với ảnh, sửa trong ô dán nếu sai`);
       }
       if (looksScientific(r.so_to_khai)) warnings.push("Số tờ khai bị Excel đổi dạng 1.08E+11: định dạng cột là Text rồi copy lại");
@@ -203,7 +225,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     const no = new Map<number, string>();
     for (const x of out) {
       if (x.errors.length || skip.has(x.i)) continue;
-      const auto = orderGroupKey({ customerId: x.customer.id!, toKhai: x.r.so_to_khai ?? "", deliveryId: x.delivery.id!, date: x.date! }, x.i, merge);
+      const auto = orderGroupKey({ customerId: x.customer.id!, toKhai: groupRef(x.r), deliveryId: x.delivery.id!, date: x.date! }, x.i, merge);
       if (!nums.has(auto)) nums.set(auto, nums.size + 1);
       const n = (orderNos.get(x.i) ?? "").trim() || String(nums.get(auto));
       no.set(x.i, n);
@@ -217,7 +239,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     return out.map((x) => ({ ...x, orderNo: no.get(x.i) ?? null }));
     // pick đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos]);
+  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template]);
 
   const errorCount = rows.filter((x) => x.errors.length).length;
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
@@ -266,7 +288,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
     const orders = [...groups.values()].map((list) => ({
       customerId: list[0].customer.id!,
       date: list[0].date!,
-      refNo: (list[0].r.so_to_khai ?? "").slice(0, 100),
+      refNo: (list[0].r.so_to_khai || list[0].r.so_phieu || "").slice(0, 100),
       voucherNo: [...new Set(list.map((x) => x.r.pxk).filter(Boolean))].join(", ").slice(0, 100),
       trips: list.map((x) => {
         const p = x.product.id && x.product.id !== RAW_KEEP ? byId.get(x.product.id) : undefined;
@@ -314,8 +336,13 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
             <ClipboardPaste className="size-4" /> 1. Dán dữ liệu
           </CardTitle>
           <CardDescription>
-            Trong Excel: bôi đen các dòng cần tạo (có thể kèm dòng tiêu đề), Ctrl+C. Ở đây: bấm vào ô, Ctrl+V. Không kèm tiêu đề thì hiểu theo thứ tự cột của bảng theo dõi:{" "}
-            {PASTE_COLUMNS.filter((c) => c.key !== "ghi_chu").map((c) => c.label).join(", ")}.
+            Bôi đen các dòng cần tạo (nên kèm dòng tiêu đề), Ctrl+C rồi bấm vào ô dưới, Ctrl+V; hoặc dán ảnh chụp. Nhận 3 mẫu: bảng theo dõi hàng (Excel), phiếu chuyển kho và
+            phiếu giao hàng của Ecount; có dòng tiêu đề thì phần mềm tự nhận ra mẫu. Không kèm tiêu đề thì chọn mẫu bên dưới, cột hiểu theo thứ tự:{" "}
+            {templateOf(tplChoice === "auto" ? template : tplChoice)
+              .columns.filter((c) => c.key !== "ghi_chu")
+              .map((c) => c.label)
+              .join(", ")}
+            .
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -374,6 +401,23 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
           {grid.length ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Badge variant="muted">{records.length} dòng</Badge>
+              <select
+                aria-label="Mẫu dữ liệu"
+                value={tplChoice}
+                onChange={(e) => {
+                  const v = e.target.value as PasteTemplate | "auto";
+                  setTplChoice(v);
+                  read(text, unsure, v);
+                }}
+                className="h-7 rounded border bg-background px-1 text-xs"
+              >
+                <option value="auto">Tự nhận mẫu ({templateOf(template).label})</option>
+                {TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
               <Badge variant={headerRow === null ? "warning" : "success"}>
                 {headerRow === null ? "Không có dòng tiêu đề: hiểu theo thứ tự cột mặc định" : "Đã nhận ra dòng tiêu đề"}
               </Badge>
@@ -382,7 +426,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
               </Button>
             </div>
           ) : null}
-          {grid.length ? <ColumnMapper grid={grid} map={map} headerRow={headerRow} onChange={setMap} /> : null}
+          {grid.length ? <ColumnMapper grid={grid} map={map} headerRow={headerRow} columns={templateOf(template).columns} onChange={setMap} /> : null}
         </CardContent>
       </Card>
 
@@ -497,7 +541,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
               </Badge>
               <label className="ml-2 flex items-center gap-1.5">
                 <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
-                Tự gợi ý gộp cont cùng tờ khai, cùng điểm giao, cùng ngày
+                Tự gợi ý gộp cont cùng tờ khai (hoặc cùng số phiếu Ecount), cùng điểm giao, cùng ngày
               </label>
               {orderNos.size ? (
                 <Button size="sm" variant="ghost" onClick={() => setOrderNos(new Map())}>
@@ -522,7 +566,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
                         onChange={(e) => setSkip(e.target.checked ? new Set() : new Set(rows.map((x) => x.i)))}
                       />
                     </th>
-                    {["Dòng", "Đơn", "Khách hàng", "Số tờ khai", "Mã hàng", "Số lượng", "Số cont", "Ngày giao", "Điểm lấy cont", "Điểm giao", "Kiểm tra"].map((h) => (
+                    {["Dòng", "Đơn", "Khách hàng", template === "theo_doi" ? "Số tờ khai" : "Số phiếu", "Mã hàng", "Số lượng", "Số cont", "Ngày giao", template === "theo_doi" ? "Điểm lấy cont" : "Điểm đi", template === "theo_doi" ? "Điểm giao" : "Điểm đến", "Kiểm tra"].map((h) => (
                       <th key={h} className="px-2 py-1.5 whitespace-nowrap">
                         {h}
                       </th>
@@ -575,13 +619,13 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
                         ) : null}
                       </td>
                       <Cell raw={x.r.phap_nhan} id={x.customer.id} byId={byId} />
-                      <td className="px-2 py-1 font-mono whitespace-nowrap">{x.r.so_to_khai}</td>
+                      <td className="px-2 py-1 font-mono whitespace-nowrap">{groupRef(x.r)}</td>
                       <Cell raw={x.r.ma_hang} id={x.product.id} byId={byId} codeOnly />
                       <td className="px-2 py-1 text-right tabular-nums">{x.qty !== null ? x.qty.toLocaleString("en-US") : x.r.so_luong}</td>
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{x.cont}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{x.date ? dmy(x.date) : x.r.ngay_giao}</td>
-                      <Cell raw={x.r.diem_lay_cont} id={x.pickup.id} byId={byId} />
-                      <Cell raw={x.r.diem_giao} id={x.delivery.id} byId={byId} />
+                      <Cell raw={x.pickup.raw} id={x.pickup.id} byId={byId} />
+                      <Cell raw={x.delivery.raw} id={x.delivery.id} byId={byId} />
                       <td className="min-w-56 px-2 py-1 text-xs">
                         {x.errors.map((e) => (
                           <p key={e} className="text-destructive">
@@ -602,7 +646,7 @@ export function PasteOrders({ catalog }: { catalog: PasteCatalog }) {
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">
-                Chuyến tạo ra ở trạng thái Chờ phân công, giá lấy theo bảng giá. Số tờ khai, PXK ghi vào đơn; BCT, NCC, loại cont, lưu bãi, gia hạn, lưu cont ghi vào ghi
+                Chuyến tạo ra ở trạng thái Chờ phân công, giá lấy theo bảng giá. Số tờ khai / số phiếu Ecount, PXK ghi vào đơn; BCT, NCC, loại cont, lưu bãi, gia hạn, lưu cont ghi vào ghi
                 chú chuyến. Dòng có cont đã có trong phần mềm được bỏ chọn sẵn.
               </p>
               <Button disabled={pending || !chosen.length} onClick={commit}>
@@ -644,7 +688,19 @@ function Cell({ raw, id, byId, codeOnly }: { raw?: string; id: string | null; by
   );
 }
 
-function ColumnMapper({ grid, map, headerRow, onChange }: { grid: string[][]; map: ColumnMap; headerRow: number | null; onChange: (m: ColumnMap) => void }) {
+function ColumnMapper({
+  grid,
+  map,
+  headerRow,
+  columns,
+  onChange,
+}: {
+  grid: string[][];
+  map: ColumnMap;
+  headerRow: number | null;
+  columns: { key: PasteField; label: string }[];
+  onChange: (m: ColumnMap) => void;
+}) {
   const sample = grid[headerRow === null ? 0 : headerRow + 1] ?? [];
   const head = headerRow === null ? null : grid[headerRow];
   return (
@@ -669,7 +725,7 @@ function ColumnMapper({ grid, map, headerRow, onChange }: { grid: string[][]; ma
               className="h-7 w-full rounded border bg-background text-xs"
             >
               <option value="">(bỏ qua)</option>
-              {PASTE_COLUMNS.map((c) => (
+              {columns.map((c) => (
                 <option key={c.key} value={c.key}>
                   {c.label}
                 </option>

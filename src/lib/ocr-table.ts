@@ -38,8 +38,9 @@ export function findGridLines(gray: Uint8Array | Uint8ClampedArray | number[], w
     if (prev >= 0) out.push(Math.round((start + prev) / 2));
     return out;
   };
-  const xs = scan(w, h, (x, y) => darker(at(x, y), at(x - 2, y), at(x + 2, y)));
-  const ys = scan(h, w, (y, x) => darker(at(x, y), at(x, y - 2), at(x, y + 2)));
+  // Ảnh phóng to làm đường kẻ 1 điểm ảnh nhòe sang 2 cột điểm ảnh: xét cả cặp (x, x+1)
+  const xs = scan(w - 1, h, (x, y) => darker(Math.min(at(x, y), at(x + 1, y)), at(x - 2, y), at(x + 3 < w ? x + 3 : x + 2, y)));
+  const ys = scan(h - 1, w, (y, x) => darker(Math.min(at(x, y), at(x, y + 1)), at(x, y - 2), at(x, y + 3 < h ? y + 3 : y + 2)));
   return { xs, ys };
 }
 

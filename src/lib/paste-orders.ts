@@ -27,7 +27,19 @@ export type PasteField =
   | "phi_gia_han"
   | "hd_gia_han"
   | "diem_lay_cont"
-  | "ghi_chu";
+  | "ghi_chu"
+  // Ecount: phiếu chuyển kho / phiếu giao hàng
+  | "so_sto"
+  | "so_phieu"
+  | "diem_di"
+  | "kho_xuat"
+  | "diem_den"
+  | "kho_nhap"
+  | "ma_kh_nhan"
+  | "ten_kh_nhan"
+  | "don_vi_vt"
+  | "so_xe"
+  | "kien_xa";
 
 export type PasteColumn = { key: PasteField; label: string; aliases: string[] };
 
@@ -55,7 +67,54 @@ export const PASTE_COLUMNS: PasteColumn[] = [
   { key: "diem_lay_cont", label: "Điểm lấy cont", aliases: ["diem lay cont", "lay cont", "noi lay cont", "diem nhan", "cang"] },
   { key: "ghi_chu", label: "Ghi chú", aliases: ["ghi chu", "note"] },
 ];
-const DEFAULT_ORDER = PASTE_COLUMNS.filter((c) => c.key !== "ghi_chu").map((c) => c.key);
+
+const C = (key: PasteField, label: string, aliases: string[]): PasteColumn => ({ key, label, aliases });
+
+/** Mẫu phiếu chuyển kho chụp/copy từ Ecount */
+export const ECOUNT_TRANSFER_COLUMNS: PasteColumn[] = [
+  C("ngay_giao", "Ngày", ["ngay", "ngay chuyen"]),
+  C("phap_nhan", "Công ty", ["cong ty", "cong ty ten"]),
+  C("so_sto", "Số STO", ["so sto", "sto"]),
+  C("so_phieu", "Số phiếu chuyển kho", ["so phieu chuyen kho", "phieu chuyen kho", "so phieu"]),
+  C("diem_di", "Điểm đi", ["diem di"]),
+  C("kho_xuat", "Tên kho xuất", ["ten kho xuat", "kho xuat"]),
+  C("diem_den", "Điểm đến", ["diem den"]),
+  C("kho_nhap", "Tên kho nhập", ["ten kho nhap", "kho nhap"]),
+  C("ma_hang", "Mã hàng", ["ma hang"]),
+  C("so_luong", "Số lượng", ["so luong"]),
+  C("don_vi_vt", "Đơn vị vận tải", ["don vi van tai", "don vi van tai ten", "don vi van taiten"]),
+  C("so_xe", "Số xe / cont", ["so xe", "so cont"]),
+  C("kien_xa", "Nhập kiện/xá", ["nhap kien xa", "kien xa"]),
+];
+
+/** Mẫu phiếu giao hàng (xuất kho) chụp/copy từ Ecount */
+export const ECOUNT_DELIVERY_COLUMNS: PasteColumn[] = [
+  C("ngay_giao", "Ngày", ["ngay"]),
+  C("pxk", "Số phiếu giao hàng", ["so phieu giao hang", "phieu giao hang", "so phieu"]),
+  C("phap_nhan", "Công ty", ["cong ty ten", "cong ty"]),
+  C("kho_xuat", "Kho xuất", ["kho xuat", "ten kho xuat"]),
+  C("diem_di", "Điểm đi", ["diem di"]),
+  C("ma_kh_nhan", "Mã KH/NCC nhận", ["ma khach hang nha cung cap", "ma khach hang", "ma kh"]),
+  C("ten_kh_nhan", "Tên KH/NCC nhận", ["khach hang nha cung cap ten", "ten khach hang", "khach hang nha cung cap"]),
+  C("don_vi_vt", "Đơn vị vận tải", ["don vi van tai ten", "don vi van tai"]),
+  C("so_xe", "Số xe / cont", ["so xe"]),
+  C("ma_hang", "Mã hàng", ["ma hang"]),
+  C("so_luong", "Số lượng", ["so luong"]),
+  C("kien_xa", "Xuất kiện", ["xuat kien"]),
+];
+
+export type PasteTemplate = "theo_doi" | "ecount_ck" | "ecount_gh";
+export const TEMPLATES: { id: PasteTemplate; label: string; columns: PasteColumn[]; /** cột chỉ mẫu này có, để nhận ra mẫu */ marks: PasteField[] }[] = [
+  { id: "theo_doi", label: "Bảng theo dõi hàng (Excel)", columns: PASTE_COLUMNS, marks: ["so_to_khai", "diem_lay_cont", "bct"] },
+  { id: "ecount_ck", label: "Ecount: phiếu chuyển kho", columns: ECOUNT_TRANSFER_COLUMNS, marks: ["so_sto", "so_phieu", "kho_nhap"] },
+  { id: "ecount_gh", label: "Ecount: phiếu giao hàng", columns: ECOUNT_DELIVERY_COLUMNS, marks: ["pxk", "ma_kh_nhan", "ten_kh_nhan", "kien_xa"] },
+];
+export const templateOf = (id: PasteTemplate) => TEMPLATES.find((t) => t.id === id)!;
+
+/** Tên hiển thị của mọi trường (cho ô chọn cột) */
+export const FIELD_LABELS: Record<PasteField, string> = Object.fromEntries(
+  [...ECOUNT_DELIVERY_COLUMNS, ...ECOUNT_TRANSFER_COLUMNS, ...PASTE_COLUMNS].map((c) => [c.key, c.label]),
+) as Record<PasteField, string>;
 
 /** Bỏ dấu tiếng Việt, chữ thường */
 export function plain(s: string): string {
@@ -71,10 +130,10 @@ export function plain(s: string): string {
 export const matchKey = (s: string) => plain(s).replace(/[^a-z0-9]/g, "");
 
 /** Bỏ chữ chung chung ở đầu tên địa điểm: "KHO LINH PHÁT" ~ "LINHPHAT", "Cảng Cát Lái" ~ "CATLAI" */
-const GENERIC = /^(kho|cang|bai|ben|cty|congty|cong ty|nha may|depot|icd)\s+/;
+const GENERIC = /^(kho|cang|bai|ben|cty|congty|cong ty|nha may|depot|icd|tnhh|mtv|co phan|cp)\s+/;
 export function coreKey(s: string): string {
   let p = plain(s).replace(/[^a-z0-9]+/g, " ").trim();
-  for (let i = 0; i < 2; i++) p = p.replace(GENERIC, "");
+  for (let i = 0; i < 4; i++) p = p.replace(GENERIC, "");
   return p.replace(/ /g, "");
 }
 
@@ -127,7 +186,7 @@ export function parseTSV(text: string): string[][] {
 }
 
 /** Ghép một tiêu đề cột với trường; không nhận ra thì null. Chịu được chữ thừa do ảnh (nút lọc "v", "JY"…) */
-export function headerField(h: string): PasteField | null {
+export function headerField(h: string, columns: PasteColumn[] = PASTE_COLUMNS): PasteField | null {
   const keys = (c: PasteColumn) => [c.label, ...c.aliases].map(matchKey);
   const tokens = plain(h).split(/[^a-z0-9]+/).filter(Boolean);
   // Bỏ dần các mẩu ngắn (≤ 2 ký tự, không phải số) ở cuối: "BCT SN" → "BCT", "NGÀY GIAO JY" → "NGÀY GIAO"
@@ -138,12 +197,12 @@ export function headerField(h: string): PasteField | null {
   }
   for (const k of tries) {
     if (!k) continue;
-    for (const c of PASTE_COLUMNS) if (keys(c).includes(k)) return c.key;
+    for (const c of columns) if (keys(c).includes(k)) return c.key;
   }
   // Tiêu đề bị cắt cuối ("Tình trạng gia") hoặc thừa chữ: ghép theo phần đầu, lấy khớp dài nhất
   const k = tries[tries.length - 1];
   let best: { key: PasteField; len: number } | null = null;
-  for (const c of PASTE_COLUMNS)
+  for (const c of columns)
     for (const a of keys(c)) {
       const len = k.startsWith(a) && a.length >= 4 ? a.length : a.startsWith(k) && k.length >= 6 ? k.length : 0;
       if (len && (!best || len > best.len)) best = { key: c.key, len };
@@ -157,19 +216,29 @@ export type ColumnMap = (PasteField | null)[];
  * Tìm dòng tiêu đề trong phần dán (dòng nhận ra từ 3 cột trở lên). Có tiêu đề: ghép theo tên cột.
  * Không có: hiểu theo thứ tự cột của bảng theo dõi GHA.
  */
-export function detectColumns(rows: string[][]): { map: ColumnMap; headerRow: number | null } {
-  for (let r = 0; r < Math.min(rows.length, 3); r++) {
-    const used = new Set<PasteField>();
-    const map: ColumnMap = rows[r].map((h) => {
-      const f = headerField(h);
-      if (!f || used.has(f)) return null;
-      used.add(f);
-      return f;
-    });
-    if (used.size >= 3) return { map, headerRow: r };
-  }
+export function detectColumns(
+  rows: string[][],
+  force?: PasteTemplate,
+): { map: ColumnMap; headerRow: number | null; template: PasteTemplate } {
+  let best: { map: ColumnMap; headerRow: number; template: PasteTemplate; score: number } | null = null;
+  for (const t of force ? [templateOf(force)] : TEMPLATES)
+    for (let r = 0; r < Math.min(rows.length, 3); r++) {
+      const used = new Set<PasteField>();
+      const map: ColumnMap = rows[r].map((h) => {
+        const f = headerField(h, t.columns);
+        if (!f || used.has(f)) return null;
+        used.add(f);
+        return f;
+      });
+      // Ưu tiên mẫu có cột đặc trưng (Số STO, Số phiếu giao hàng, Số tờ khai…)
+      const score = used.size + 3 * t.marks.filter((m) => used.has(m)).length;
+      if (used.size >= 3 && (!best || score > best.score)) best = { map, headerRow: r, template: t.id, score };
+    }
+  if (best) return { map: best.map, headerRow: best.headerRow, template: best.template };
+  const t = templateOf(force ?? "theo_doi");
+  const order = t.columns.filter((c) => c.key !== "ghi_chu").map((c) => c.key);
   const width = Math.max(0, ...rows.map((r) => r.length));
-  return { map: Array.from({ length: width }, (_, i) => DEFAULT_ORDER[i] ?? null), headerRow: null };
+  return { map: Array.from({ length: width }, (_, i) => order[i] ?? null), headerRow: null, template: t.id };
 }
 
 export type PasteRecord = Partial<Record<PasteField, string>>;
@@ -183,12 +252,39 @@ export function toRecordRows(rows: string[][], map: ColumnMap, headerRow: number
     map.forEach((f, i) => {
       if (f && r[i]) rec[f] = r[i];
     });
-    if (Object.keys(rec).length) out.push({ src, rec });
+    // bỏ mảnh dòng thừa (ảnh chụp cắt ngang dòng trên: chỉ còn đuôi chữ của ô xuống dòng)
+    if (rec.ma_hang || rec.so_luong || rec.so_cont || rec.so_xe || rec.ngay_giao) out.push({ src, rec });
   });
   return out;
 }
 
 export const toRecords = (rows: string[][], map: ColumnMap, headerRow: number | null): PasteRecord[] => toRecordRows(rows, map, headerRow).map((x) => x.rec);
+
+// ---------------------------------------------------------------------------
+// Đọc một dòng theo nghĩa (dùng chung cho mọi mẫu)
+// ---------------------------------------------------------------------------
+
+const nonEmpty = (xs: (string | undefined)[]) => xs.map((x) => (x ?? "").trim()).filter(Boolean);
+
+/** Tên điểm nhận có thể có, theo thứ tự ưu tiên ghép */
+export const pickupNames = (r: PasteRecord) => nonEmpty([r.diem_lay_cont, r.diem_di, r.kho_xuat]);
+/** Tên điểm giao có thể có: theo dõi hàng → Điểm giao; chuyển kho → Điểm đến / Kho nhập; giao hàng → Mã / Tên KH nhận */
+export const deliveryNames = (r: PasteRecord) => nonEmpty([r.diem_giao, r.diem_den, r.ma_kh_nhan, r.ten_kh_nhan, r.kho_nhap]);
+/** Khi chưa ghép được: tên dễ đọc nhất để người dùng chọn tay */
+export const deliveryDisplay = (r: PasteRecord) => nonEmpty([r.diem_giao, r.diem_den, r.ten_kh_nhan, r.kho_nhap, r.ma_kh_nhan])[0] ?? "";
+
+/** Số cont: cột Số cont, hoặc cột Số xe khi giá trị có dạng số cont (Ecount ghi số cont vào Số xe) */
+export function containerOf(r: PasteRecord): string {
+  const c = normalizeContainer(r.so_cont);
+  if (c) return c;
+  const x = normalizeContainer(r.so_xe);
+  // biển số xe bắt đầu bằng số (51C12345); số cont bắt đầu bằng chữ. Đọc ảnh có thể sai vài ký tự
+  // (TEMU8427340 → TEXIU8427340) nên vẫn coi là số cont để báo lỗi số kiểm tra cho người dùng sửa
+  return /^[A-Z]{4,6}\d{5,7}$/.test(x) && x.length >= 10 && x.length <= 12 ? x : "";
+}
+
+/** Số tham chiếu để gộp đơn: số tờ khai / số phiếu chuyển kho / số phiếu giao hàng */
+export const groupRef = (r: PasteRecord) => (r.so_to_khai || r.so_phieu || r.pxk || "").trim();
 
 // ---------------------------------------------------------------------------
 // Ghép tên với danh mục
@@ -262,7 +358,9 @@ export function buildMatcher(list: CatalogEntry[], aliases: AliasEntry[] = [], o
 // ---------------------------------------------------------------------------
 
 export const isoDate = (v: string | undefined): string | null => {
-  const d = parseDateVN(v ?? null);
+  // ảnh chụp đôi khi mất dấu "/" (03/11/2026 → 03112026)
+  const t = (v ?? "").trim();
+  const d = parseDateVN(/^\d{8}$/.test(t) ? `${t.slice(0, 2)}/${t.slice(2, 4)}/${t.slice(4)}` : t || null);
   return d && d !== "invalid" ? d : null;
 };
 
@@ -302,12 +400,21 @@ export const looksDelivered = (v: string | undefined) => {
 export function tripNote(r: PasteRecord): string {
   const d = (k: PasteField, label: string) => (r[k] ? `${label} ${r[k]}` : "");
   const tk = r.so_to_khai ? `Tờ khai ${r.so_to_khai}${r.ngay_khai ? ` ngày ${r.ngay_khai}` : ""}${r.luong_khai ? ` (luồng ${r.luong_khai})` : ""}` : "";
+  const xe = r.so_xe && !containerOf({ so_xe: r.so_xe }) ? r.so_xe : "";
   return [
     tk,
+    d("so_phieu", "Phiếu chuyển kho"),
+    d("so_sto", "STO"),
     d("bct", "BCT"),
     d("ncc", "NCC"),
+    r.ten_kh_nhan ? `Giao cho ${r.ten_kh_nhan}${r.ma_kh_nhan ? ` (${r.ma_kh_nhan})` : ""}` : "",
+    d("kho_xuat", "Kho xuất"),
+    d("kho_nhap", "Kho nhập"),
     r.loai_cont ? `Cont ${r.loai_cont}${/^\d+$/.test(r.loai_cont) ? "'" : ""}` : "",
     d("pxk", "PXK"),
+    d("don_vi_vt", "ĐVVT"),
+    xe ? `Số xe ${xe}` : "",
+    d("kien_xa", "Kiện/xá"),
     d("luu_bai", "Lưu bãi đến"),
     d("ngay_gia_han", "Gia hạn đến"),
     d("luu_cont", "Lưu cont đến"),
