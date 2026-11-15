@@ -543,7 +543,7 @@ export const ENTITIES: Record<string, EntityDef> = {
       { key: "phone", label: "Số điện thoại", type: "phone", list: true },
       { key: "email", label: "Email", type: "email" },
       { key: "tax_code", label: "Mã số thuế", type: "text", maxLength: 20 },
-      { key: "billing_address", label: "Địa chỉ xuất hóa đơn", type: "text", wide: true, maxLength: 500 },
+      { key: "billing_address", label: "Thông tin xuất hóa đơn", type: "text", wide: true, maxLength: 500, help: "Như app QLVT cũ. Bảng kê ghi: Cước vận chuyển hạt nhựa từ <thông tin điểm nhận> đến <thông tin điểm giao>. Để trống nếu là điểm phổ biến." },
       { key: "google_maps_url", label: "Link Google Maps", type: "url", wide: true, placeholder: "https://maps.google.com/..." },
       { key: "latitude", label: "Vĩ độ", type: "number", min: -90, max: 90 },
       { key: "longitude", label: "Kinh độ", type: "number", min: -180, max: 180 },
