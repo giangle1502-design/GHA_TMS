@@ -173,7 +173,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
             <Ban className="size-4 text-destructive" /> Chuyến hủy ({cancelledCount})
           </Link>
         </div>
-        <ShipmentGrid rows={rows} canEdit={canEdit} view={view} adv={f.adv} advLabels={advLabels} customDefs={custom.defs} customAdv={custom.adv} canAddField={me.permissions.has("fields.configure")} canSeeProfit={canSeeProfit} canFillDriver={canFillDriver} />
+        <ShipmentGrid rows={rows} canEdit={canEdit} view={view} adv={f.adv} advLabels={advLabels} customDefs={custom.defs} customAdv={custom.adv} canAddField={me.permissions.has("fields.configure")} canSeeProfit={canSeeProfit} canFillDriver={canFillDriver} canSetOrder={me.permissions.has("dispatch.update") || me.permissions.has("dispatch.create")} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-sm text-muted-foreground">
           <span>
             {total === 0 ? "Không có chuyến phù hợp" : `Dòng ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} / ${total} chuyến`}
