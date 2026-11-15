@@ -14,12 +14,16 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
     <div className="dn-sheet" data-delivery-note={d.shipment_code}>
       <style>{CSS}</style>
       <div className="dn-head">
-        <div>
-          <div className="dn-co-name">{co.name}</div>
-          <div className="dn-small">Địa chỉ: {co.address}</div>
-          <div className="dn-small">
-            MST: {co.tax_code}
-            {co.phone ? <> · ĐT: {co.phone}</> : null}
+        <div className="dn-brand">
+          {/* eslint-disable-next-line @next/next/no-img-element -- ảnh tĩnh cùng nguồn, cần thẻ img thường để in và xuất PDF */}
+          <img src="/logo-gha.png" alt="GHA Logistics & Services" className="dn-logo" />
+          <div>
+            <div className="dn-co-name">{co.name}</div>
+            <div className="dn-small">Địa chỉ: {co.address}</div>
+            <div className="dn-small">
+              MST: {co.tax_code}
+              {co.phone ? <> · ĐT: {co.phone}</> : null}
+            </div>
           </div>
         </div>
         <div className="dn-no">
@@ -119,6 +123,8 @@ const CSS = `
   font-family:"Times New Roman", Times, serif; font-size:13pt; line-height:1.3; box-shadow:0 2px 12px rgba(0,0,0,.15); }
 .dn-sheet * { box-sizing:border-box; border-color:#333; }
 .dn-head { display:flex; justify-content:space-between; gap:12px; border-bottom:2px solid #0b3d6e; padding-bottom:8px; }
+.dn-brand { display:flex; align-items:center; gap:10px; min-width:0; }
+.dn-logo { width:34mm; height:auto; flex:none; }
 .dn-co-name { font-weight:bold; font-size:12.5pt; color:#0b3d6e; text-transform:uppercase; }
 .dn-small { font-size:11pt; }
 .dn-no { text-align:right; font-size:12.5pt; white-space:nowrap; }
