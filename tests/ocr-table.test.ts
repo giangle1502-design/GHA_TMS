@@ -58,3 +58,17 @@ describe("đọc bảng từ ảnh", () => {
     expect(headerField("xyz")).toBeNull();
   });
 });
+
+describe("đường kẻ nhòe", () => {
+  it("đường kẻ 1 điểm ảnh bị phóng to nhòe sang 2 cột vẫn được nhận", async () => {
+    const { findGridLines } = await import("@/lib/ocr-table");
+    const w = 40;
+    const h = 30;
+    const g = new Array(w * h).fill(255);
+    for (let y = 0; y < h; y++) {
+      g[y * w + 20] = 238;
+      g[y * w + 21] = 238;
+    }
+    expect(findGridLines(g, w, h).xs).toEqual([20]);
+  });
+});
