@@ -6,7 +6,10 @@ import {
   BASE_STATEMENT_COLUMNS,
   defaultStatementConfig,
   formatStatementCell,
+  invoiceText,
   monthRange,
+  parseStatementConfig,
+  statementRouteLabel,
   resolveColumns,
   statementHeading,
   statementTotals,
@@ -106,5 +109,24 @@ describe("Excel bảng kê", () => {
     expect(head.value).toBe("STT");
     expect((head.fill as { fgColor: { argb: string } }).fgColor.argb).toBe("FF000000");
     expect(ws.pageSetup.orientation).toBe("landscape");
+  });
+});
+
+describe("bảng kê: tuyến có điểm hạ rỗng và thông tin xuất hóa đơn", () => {
+  it("cont lấy từ cảng nối Điểm nhận → Điểm giao → Điểm hạ rỗng", () => {
+    expect(statementRouteLabel({ route_label: "Cát Lái → VAP", empty_return_name: "Depot Phước Long" })).toBe("Cát Lái → VAP → Depot Phước Long");
+    expect(statementRouteLabel({ route_label: null, pickup_name: "Kho A", delivery_name: "Kho B", empty_return_name: null })).toBe("Kho A → Kho B");
+  });
+  it("thông tin xuất hóa đơn giống app QLVT", () => {
+    expect(invoiceText("Cảng Cát Lái", "KCN Bàu Bàng")).toBe("Cước vận chuyển hạt nhựa từ Cảng Cát Lái đến KCN Bàu Bàng");
+    expect(invoiceText("", "KCN Bàu Bàng")).toBe("Cước vận chuyển hạt nhựa đến KCN Bàu Bàng");
+    expect(invoiceText(null, " ")).toBe("");
+  });
+  it("mẫu cũ tự thêm 2 cột mới sau Tuyến đường, mẫu mới giữ nguyên", () => {
+    const old = parseStatementConfig({ columns: ["stt", "route_label", "plate_number"] }, BASE_STATEMENT_COLUMNS);
+    expect(old.columns).toEqual(["stt", "route_label", "empty_return_name", "invoice_info", "plate_number"]);
+    const kept = parseStatementConfig({ columns: ["stt", "route_label"], v: 2 }, BASE_STATEMENT_COLUMNS);
+    expect(kept.columns).toEqual(["stt", "route_label"]);
+    expect(defaultStatementConfig(BASE_STATEMENT_COLUMNS).columns).toContain("invoice_info");
   });
 });

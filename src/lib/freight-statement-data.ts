@@ -7,6 +7,8 @@ import type { ShipmentListRow } from "@/lib/shipments";
 import {
   BASE_STATEMENT_COLUMNS,
   STATEMENT_STATUS_OPTIONS,
+  invoiceText,
+  statementRouteLabel,
   type StatementColumn,
   type StatementCustomer,
   type StatementRow,
@@ -102,6 +104,15 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
     }
   }
 
+  // Thông tin xuất hóa đơn của điểm nhận / điểm giao (ô "Địa chỉ xuất hóa đơn" của địa điểm)
+  const billing = new Map<string, string | null>();
+  const locIds = [...new Set(rowsIn.flatMap((r) => [r.pickup_location_id, r.delivery_location_id]).filter((x): x is string => Boolean(x)))];
+  for (let i = 0; i < locIds.length; i += 200) {
+    const { data, error } = await supabase.from("locations").select("id, billing_address").in("id", locIds.slice(i, i + 200));
+    if (error) throw error;
+    for (const l of (data ?? []) as { id: string; billing_address: string | null }[]) billing.set(l.id, l.billing_address);
+  }
+
   const extra = await dispatchExtraColumns(supabase, perms, rowsIn);
   const catalog = buildCatalog(extra.columns, feeTypes);
   const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
@@ -112,7 +123,9 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
       expected_delivery_at: formatDate(r.expected_delivery_at),
       shipment_code: r.shipment_code,
       order_code: r.order_code,
-      route_label: r.route_label ?? [r.pickup_name, r.delivery_name].filter(Boolean).join(" → "),
+      route_label: statementRouteLabel(r),
+      invoice_info:
+        invoiceText(r.pickup_location_id ? billing.get(r.pickup_location_id) : null, r.delivery_location_id ? billing.get(r.delivery_location_id) : null) || null,
       pickup_name: r.pickup_name,
       delivery_name: r.delivery_name,
       empty_return_name: r.empty_return_name ?? null,

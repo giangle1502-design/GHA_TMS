@@ -45,6 +45,7 @@ export const BASE_STATEMENT_COLUMNS: StatementColumn[] = [
   { key: "shipment_code", label: "Mã chuyến", kind: "text", group: "Chung", width: 14 },
   { key: "order_code", label: "Mã đơn hàng", kind: "text", group: "Chung", width: 14 },
   { key: "route_label", label: "Tuyến đường", kind: "text", group: "Tuyến", width: 32 },
+  { key: "invoice_info", label: "Thông tin xuất hóa đơn", kind: "text", group: "Tuyến", width: 34 },
   { key: "pickup_name", label: "Điểm nhận", kind: "text", group: "Tuyến", width: 22 },
   { key: "delivery_name", label: "Điểm giao", kind: "text", group: "Tuyến", width: 22 },
   { key: "empty_return_name", label: "Điểm hạ rỗng", kind: "text", group: "Tuyến", width: 20 },
@@ -74,6 +75,8 @@ export const DEFAULT_STATEMENT_COLUMNS = [
   "stt",
   "pickup_at",
   "route_label",
+  "empty_return_name",
+  "invoice_info",
   "plate_number",
   "quantity",
   "unit_price",
@@ -87,6 +90,28 @@ export const DEFAULT_STATEMENT_COLUMNS = [
 ];
 
 /** Trường bổ sung có tên "Số cont" được đưa vào mẫu mặc định ngay sau Ngày */
+/**
+ * Tuyến đường trên bảng kê. Chuyến container lấy từ cảng (có Điểm hạ rỗng) nối thêm điểm hạ rỗng:
+ * "Điểm nhận → Điểm giao → Điểm hạ rỗng". Chuyến không có điểm hạ rỗng giữ tuyến như cũ.
+ */
+export function statementRouteLabel(r: { route_label?: string | null; pickup_name?: string | null; delivery_name?: string | null; empty_return_name?: string | null }): string {
+  const base = r.route_label?.trim() || [r.pickup_name, r.delivery_name].filter(Boolean).join(" → ");
+  const er = r.empty_return_name?.trim();
+  if (!er) return base;
+  return base ? `${base} → ${er}` : er;
+}
+
+/**
+ * "Thông tin xuất hóa đơn" giống app QLVT cũ: Cước vận chuyển hạt nhựa từ <TT HĐ điểm nhận> đến <TT HĐ điểm giao>.
+ * Thông tin lấy ở ô "Địa chỉ xuất hóa đơn" của địa điểm. Điểm phổ biến (để trống) thì bỏ qua phần đó.
+ */
+export function invoiceText(fromInfo: string | null | undefined, toInfo: string | null | undefined): string {
+  const f = String(fromInfo ?? "").trim();
+  const t = String(toInfo ?? "").trim();
+  if (!f && !t) return "";
+  return `Cước vận chuyển hạt nhựa${f ? ` từ ${f}` : ""}${t ? ` đến ${t}` : ""}`;
+}
+
 export const CONT_NO_RE = /s[oố]\s*cont/i;
 
 export const statementConfigSchema = z.object({
@@ -108,6 +133,8 @@ export const statementConfigSchema = z.object({
   payColumns: z.array(z.string().max(80)).max(30).default(["transport_fee", "pass_through_fee", "declaration_fee", "loading_fee", "other_fee"]),
   /** Mẫu tự chọn khi chọn khách hàng này */
   customerId: z.string().uuid().nullable().default(null),
+  /** Phiên bản mẫu: mẫu lưu trước bản 2 được tự thêm cột Điểm hạ rỗng + Thông tin xuất hóa đơn một lần */
+  v: z.number().int().min(1).max(99).default(1),
 });
 export type StatementConfig = z.infer<typeof statementConfigSchema>;
 
@@ -115,13 +142,25 @@ export function defaultStatementConfig(catalog: StatementColumn[]): StatementCon
   const cont = catalog.find((c) => c.key.startsWith("cf_") && CONT_NO_RE.test(c.label)) ?? catalog.find((c) => c.key.startsWith("ocf_") && CONT_NO_RE.test(c.label));
   const cols = [...DEFAULT_STATEMENT_COLUMNS];
   if (cont) cols.splice(2, 0, cont.key);
-  return statementConfigSchema.parse({ columns: cols.filter((k) => catalog.some((c) => c.key === k)) });
+  return statementConfigSchema.parse({ columns: cols.filter((k) => catalog.some((c) => c.key === k)), v: STATEMENT_CONFIG_VERSION });
+}
+
+export const STATEMENT_CONFIG_VERSION = 2;
+
+/** Nâng mẫu cũ: thêm cột Điểm hạ rỗng và Thông tin xuất hóa đơn ngay sau Tuyến đường (nếu chưa có) */
+function upgradeConfig(c: StatementConfig): StatementConfig {
+  if (c.v >= STATEMENT_CONFIG_VERSION) return c;
+  const cols = [...c.columns];
+  const add = ["empty_return_name", "invoice_info"].filter((k) => !cols.includes(k));
+  const at = cols.indexOf("route_label");
+  cols.splice(at >= 0 ? at + 1 : cols.length, 0, ...add);
+  return { ...c, columns: cols.slice(0, 60), v: STATEMENT_CONFIG_VERSION };
 }
 
 /** Đọc mẫu đã lưu (bỏ qua giá trị hỏng, giữ phần dùng được) */
 export function parseStatementConfig(raw: unknown, catalog: StatementColumn[]): StatementConfig {
   const r = statementConfigSchema.safeParse(raw);
-  return r.success ? r.data : defaultStatementConfig(catalog);
+  return r.success ? upgradeConfig(r.data) : defaultStatementConfig(catalog);
 }
 
 export type ResolvedColumn = StatementColumn & { title: string; w: number };
