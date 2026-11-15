@@ -1,7 +1,7 @@
 // Chuẩn hóa + kiểm tra dữ liệu bản ghi dùng chung cho trình duyệt (biểu mẫu) và máy chủ (server action, nhập Excel).
 // Cùng một hàm chạy hai phía nên quy tắc kiểm tra không bị lệch nhau.
 import { computeFormula } from "@/lib/formula";
-import { formatDate, formatDateTime, formatNumber, formatVND } from "@/lib/format";
+import { formatDate, formatDateTime, formatNumber, formatVND, todayVN } from "@/lib/format";
 import type { AdvField, AdvFieldKind } from "@/lib/advanced-filter";
 import type { CustomFieldRow, EntityDef, FieldDef, Option, SystemFieldSetting, SystemFieldSettings } from "./types";
 
@@ -345,7 +345,9 @@ export function flattenRow(fields: FieldDef[], row: Record<string, unknown>): Re
 export function toFormValues(fields: FieldDef[], row: Record<string, unknown> | null): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
-    const v = row ? row[f.key] : f.defaultValue;
+    // defaultValue "today" cho ô ngày: hôm nay theo giờ Việt Nam
+    const raw = row ? row[f.key] : f.defaultValue;
+    const v = f.type === "date" && raw === "today" ? todayVN() : raw;
     if (f.type === "boolean") out[f.key] = Boolean(v ?? false);
     else if (f.type === "multiselect") out[f.key] = Array.isArray(v) ? v : [];
     else if (v === null || v === undefined) out[f.key] = "";

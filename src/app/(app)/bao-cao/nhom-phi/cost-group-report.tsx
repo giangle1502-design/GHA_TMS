@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { ReportGrid, type ReportColumn } from "@/components/grid/report-grid";
-import { bucketOf, isoWeek, type BucketBy, type Period, type PeriodKind } from "@/lib/report-period";
+import { bucketOf, isoWeek, quarterOf, type BucketBy, type Period, type PeriodKind } from "@/lib/report-period";
 import { formatDate, formatVND, todayVN } from "@/lib/format";
 import type { TableViewConfig } from "@/lib/entities/types";
 import { cn } from "@/lib/utils";
@@ -57,6 +57,7 @@ const KIND_OPTIONS: { value: PeriodKind; label: string }[] = [
   { value: "ngay", label: "Từ ngày – đến ngày" },
   { value: "tuan", label: "Tuần" },
   { value: "thang", label: "Tháng" },
+  { value: "quy", label: "Quý" },
   { value: "nam", label: "Năm" },
 ];
 const BY_OPTIONS: { value: BucketBy; label: string }[] = [
@@ -408,6 +409,9 @@ export function PeriodBar({ period }: { period: Period }) {
   const [week, setWeek] = useState(period.value.tuan ?? isoWeek(today));
   const [month, setMonth] = useState(period.value.thang ?? today.slice(0, 7));
   const [year, setYear] = useState(period.value.nam ?? today.slice(0, 4));
+  const q0 = period.value.quy ?? quarterOf(today);
+  const [qYear, setQYear] = useState(q0.slice(0, 4));
+  const [qNum, setQNum] = useState(q0.slice(5));
   const [by, setBy] = useState<BucketBy>(period.by);
 
   function apply(e?: React.FormEvent) {
@@ -418,6 +422,7 @@ export function PeriodBar({ period }: { period: Period }) {
       q.set("den", to);
     } else if (kind === "tuan") q.set("tuan", week);
     else if (kind === "thang") q.set("thang", month);
+    else if (kind === "quy") q.set("quy", `${qYear}-${qNum}`);
     else q.set("nam", year);
     q.set("chia", by);
     router.push(`${path}?${q.toString()}`);
@@ -451,6 +456,31 @@ export function PeriodBar({ period }: { period: Period }) {
           <Label htmlFor="tuan">Tuần</Label>
           <Input id="tuan" type="week" className="h-8 w-44" value={week} onChange={(e) => setWeek(e.target.value)} />
         </div>
+      ) : kind === "quy" ? (
+        <>
+          <div className="space-y-1">
+            <Label htmlFor="quy">Quý</Label>
+            <select id="quy" className={sel} value={qNum} onChange={(e) => setQNum(e.target.value)}>
+              {["Q1", "Q2", "Q3", "Q4"].map((x) => (
+                <option key={x} value={x}>
+                  Quý {x.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="quy-nam">Năm</Label>
+            <Input
+              id="quy-nam"
+              type="number"
+              min="2020"
+              max="2100"
+              className="h-8 w-28"
+              value={qYear}
+              onChange={(e) => setQYear(e.target.value)}
+            />
+          </div>
+        </>
       ) : kind === "thang" ? (
         <div className="space-y-1">
           <Label htmlFor="thang">Tháng</Label>

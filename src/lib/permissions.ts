@@ -1,4 +1,4 @@
-// Danh mục quyền – phải khớp với supabase/migrations/20261016000002_rbac.sql và các migration thêm quyền sau (0040, 0044, 0068, GHA 9001)
+// Danh mục quyền – phải khớp với supabase/migrations/20261016000002_rbac.sql và các migration thêm quyền sau (0040, 0044, 0068, GHA 9001, 9011)
 // (kiểm thử tests/permissions.test.ts đối chiếu tự động).
 
 export const MODULE_ACTIONS = {
@@ -31,6 +31,7 @@ export const MODULE_ACTIONS = {
   fuel: ["view", "update", "approve", "export"],
   products: ["view", "create", "update", "delete", "export"],
   carriers: ["view"],
+  overhead: ["view", "create", "update", "delete", "export"],
 } as const;
 
 type ModuleActions = typeof MODULE_ACTIONS;
@@ -73,6 +74,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   fuel: "Dầu theo xe",
   products: "Mã hàng",
   carriers: "Nhà xe 3-PL",
+  overhead: "Chi phí ngoài chuyến, báo cáo thuế",
 };
 
 export const ACTION_LABELS: Record<string, string> = {
