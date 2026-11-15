@@ -126,12 +126,29 @@ export function parseTSV(text: string): string[][] {
   return rows.map((r) => r.map((c) => c.replace(/\s+/g, " ").trim())).filter((r) => r.some((c) => c !== ""));
 }
 
-/** Ghép một tiêu đề cột với trường; không nhận ra thì null */
+/** Ghép một tiêu đề cột với trường; không nhận ra thì null. Chịu được chữ thừa do ảnh (nút lọc "v", "JY"…) */
 export function headerField(h: string): PasteField | null {
-  const k = matchKey(h);
-  if (!k) return null;
-  for (const c of PASTE_COLUMNS) if (matchKey(c.label) === k || c.aliases.some((a) => matchKey(a) === k)) return c.key;
-  return null;
+  const keys = (c: PasteColumn) => [c.label, ...c.aliases].map(matchKey);
+  const tokens = plain(h).split(/[^a-z0-9]+/).filter(Boolean);
+  // Bỏ dần các mẩu ngắn (≤ 2 ký tự, không phải số) ở cuối: "BCT SN" → "BCT", "NGÀY GIAO JY" → "NGÀY GIAO"
+  const tries = [tokens.join("")];
+  for (let t = tokens.slice(); t.length > 1 && t[t.length - 1].length <= 2 && !/^\d+$/.test(t[t.length - 1]); ) {
+    t = t.slice(0, -1);
+    tries.push(t.join(""));
+  }
+  for (const k of tries) {
+    if (!k) continue;
+    for (const c of PASTE_COLUMNS) if (keys(c).includes(k)) return c.key;
+  }
+  // Tiêu đề bị cắt cuối ("Tình trạng gia") hoặc thừa chữ: ghép theo phần đầu, lấy khớp dài nhất
+  const k = tries[tries.length - 1];
+  let best: { key: PasteField; len: number } | null = null;
+  for (const c of PASTE_COLUMNS)
+    for (const a of keys(c)) {
+      const len = k.startsWith(a) && a.length >= 4 ? a.length : a.startsWith(k) && k.length >= 6 ? k.length : 0;
+      if (len && (!best || len > best.len)) best = { key: c.key, len };
+    }
+  return best?.key ?? null;
 }
 
 export type ColumnMap = (PasteField | null)[];
@@ -157,18 +174,21 @@ export function detectColumns(rows: string[][]): { map: ColumnMap; headerRow: nu
 
 export type PasteRecord = Partial<Record<PasteField, string>>;
 
-export function toRecords(rows: string[][], map: ColumnMap, headerRow: number | null): PasteRecord[] {
-  return rows
-    .filter((_, i) => headerRow === null || i > headerRow)
-    .map((r) => {
-      const rec: PasteRecord = {};
-      map.forEach((f, i) => {
-        if (f && r[i]) rec[f] = r[i];
-      });
-      return rec;
-    })
-    .filter((rec) => Object.keys(rec).length > 0);
+/** Dòng dữ liệu kèm vị trí dòng trong phần dán (để đối chiếu ô đọc từ ảnh chưa chắc) */
+export function toRecordRows(rows: string[][], map: ColumnMap, headerRow: number | null): { src: number; rec: PasteRecord }[] {
+  const out: { src: number; rec: PasteRecord }[] = [];
+  rows.forEach((r, src) => {
+    if (headerRow !== null && src <= headerRow) return;
+    const rec: PasteRecord = {};
+    map.forEach((f, i) => {
+      if (f && r[i]) rec[f] = r[i];
+    });
+    if (Object.keys(rec).length) out.push({ src, rec });
+  });
+  return out;
 }
+
+export const toRecords = (rows: string[][], map: ColumnMap, headerRow: number | null): PasteRecord[] => toRecordRows(rows, map, headerRow).map((x) => x.rec);
 
 // ---------------------------------------------------------------------------
 // Ghép tên với danh mục
