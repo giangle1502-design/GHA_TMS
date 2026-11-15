@@ -1,7 +1,7 @@
 import { addDaysYMD, todayVN } from "@/lib/format";
 
-/** Kỳ báo cáo: từ ngày – đến ngày, tuần (ISO, thứ Hai đầu tuần), tháng, năm */
-export type PeriodKind = "ngay" | "tuan" | "thang" | "nam";
+/** Kỳ báo cáo: từ ngày – đến ngày, tuần (ISO, thứ Hai đầu tuần), tháng, quý, năm */
+export type PeriodKind = "ngay" | "tuan" | "thang" | "quy" | "nam";
 export type BucketBy = "ngay" | "tuan" | "thang";
 export type Period = { kind: PeriodKind; from: string; to: string; label: string; by: BucketBy; value: Record<string, string> };
 
@@ -34,7 +34,7 @@ const lastDayOfMonth = (ym: string) => {
 
 export function resolvePeriod(sp: Record<string, string | string[] | undefined>, now = todayVN()): Period {
   const one = (k: string) => (Array.isArray(sp[k]) ? sp[k]![0] : (sp[k] as string | undefined))?.trim();
-  const kind = (["ngay", "tuan", "thang", "nam"].includes(one("ky") ?? "") ? one("ky") : "thang") as PeriodKind;
+  const kind = (["ngay", "tuan", "thang", "quy", "nam"].includes(one("ky") ?? "") ? one("ky") : "thang") as PeriodKind;
   const byParam = one("chia");
   let p: Omit<Period, "by">;
   if (kind === "ngay") {
@@ -49,6 +49,13 @@ export function resolvePeriod(sp: Record<string, string | string[] | undefined>,
     const from = weekStart(w)!;
     const to = addDaysYMD(from, 6);
     p = { kind, from, to, label: `Tuần ${Number(w.slice(6))}/${w.slice(0, 4)} (${dmy(from)} – ${dmy(to)})`, value: { tuan: w } };
+  } else if (kind === "quy") {
+    const q = /^\d{4}-Q[1-4]$/.test(one("quy") ?? "") ? one("quy")! : quarterOf(now);
+    const y = q.slice(0, 4);
+    const n = Number(q.slice(6));
+    const from = `${y}-${String(n * 3 - 2).padStart(2, "0")}-01`;
+    const to = lastDayOfMonth(`${y}-${String(n * 3).padStart(2, "0")}`);
+    p = { kind, from, to, label: `Quý ${n}/${y} (${dmy(from)} – ${dmy(to)})`, value: { quy: q } };
   } else if (kind === "nam") {
     const y = /^\d{4}$/.test(one("nam") ?? "") ? one("nam")! : now.slice(0, 4);
     p = { kind, from: `${y}-01-01`, to: `${y}-12-31`, label: `Năm ${y}`, value: { nam: y } };
@@ -56,9 +63,14 @@ export function resolvePeriod(sp: Record<string, string | string[] | undefined>,
     const ym = /^\d{4}-\d{2}$/.test(one("thang") ?? "") ? one("thang")! : now.slice(0, 7);
     p = { kind, from: `${ym}-01`, to: lastDayOfMonth(ym), label: `Tháng ${ym.slice(5)}/${ym.slice(0, 4)}`, value: { thang: ym } };
   }
-  const defBy: BucketBy = kind === "nam" ? "thang" : "ngay";
+  const defBy: BucketBy = kind === "nam" || kind === "quy" ? "thang" : "ngay";
   const by = (["ngay", "tuan", "thang"].includes(byParam ?? "") ? byParam : defBy) as BucketBy;
   return { ...p, by };
+}
+
+/** Quý chứa ngày ymd, dạng 2026-Q4 */
+export function quarterOf(ymd: string): string {
+  return `${ymd.slice(0, 4)}-Q${Math.floor((Number(ymd.slice(5, 7)) - 1) / 3) + 1}`;
 }
 
 /** Khóa và nhãn của kỳ con (ngày / tuần / tháng) chứa ngày ymd */

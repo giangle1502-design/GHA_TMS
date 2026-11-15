@@ -189,3 +189,5 @@ upgrade nang-cap-dien-gia-tuyen.sql "Lấy tuyến từ các chuyến để đi�
   supabase/migrations/20261111000073_route_pay_fill.sql
 upgrade nang-cap-tra-rong-cuoc-cont.sql "Tài xế nhập trả rỗng, cược cont; chuỗi vỏ container gộp phí về chuyến đầu" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'shipments' and column_name = 'container_prev_id')" \
   supabase/migrations/20261115009008_tra_rong_cuoc_cont.sql
+upgrade nang-cap-chi-phi-ngoai-chuyen.sql "Chi phí ngoài chuyến, cân đối thu chi thuế, phiếu đề nghị thanh toán / tạm ứng" "to_regclass('public.overhead_expenses') is not null" \
+  supabase/migrations/20261115009011_chi_phi_ngoai_chuyen.sql

@@ -1,6 +1,6 @@
 /** Báo cáo tổng chi theo nhóm phí (0067, view report_spending_lines). Không đặt trong tệp "use client". */
 
-export type SpendingSource = "trip" | "vehicle" | "carrier" | "purchase";
+export type SpendingSource = "trip" | "vehicle" | "carrier" | "purchase" | "overhead";
 
 export const SPENDING_SOURCES: {
   value: SpendingSource;
@@ -26,6 +26,11 @@ export const SPENDING_SOURCES: {
     value: "purchase",
     label: "Đề nghị chi, mua sắm",
     hint: "Phiếu chi đã chi của Đề nghị chi",
+  },
+  {
+    value: "overhead",
+    label: "Chi phí ngoài chuyến",
+    hint: "Thuê kế toán, dầu theo xe, xăng đi lại, sửa chữa… (tiền trước thuế VAT)",
   },
 ];
 export const sourceLabel = (s: string) =>
@@ -103,7 +108,7 @@ export function summarizeByGroup(
         group: l.group_name,
         sort: idx >= 0 ? idx : 100000 + l.group_sort,
         count: 0,
-        bySource: { trip: 0, vehicle: 0, carrier: 0, purchase: 0 },
+        bySource: { trip: 0, vehicle: 0, carrier: 0, purchase: 0, overhead: 0 },
         total: 0,
         pending: 0,
         passThrough: 0,
