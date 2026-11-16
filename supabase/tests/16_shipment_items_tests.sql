@@ -20,6 +20,19 @@ select public.set_shipment_items((select id from t_si), '[{"item_code":"MH003","
 select tests.assert((select count(*) from public.shipment_items where shipment_id = (select id from t_si)) = 1, 'Lưu lại thay toàn bộ danh sách');
 select tests.assert_fails($$select public.set_shipment_items((select id from t_si), '[{"item_code":"X","quantity":"abc"}]')$$, 'Số lượng không phải số bị chặn');
 select tests.assert_fails($$insert into public.shipment_items (shipment_id, line_no) values ((select id from t_si), 9)$$, 'Không ghi thẳng vào bảng được');
+-- 9014: số bao nhập tay, ĐVT bao, và tự tính theo quy cách đóng gói của mã hàng
+reset role;
+insert into public.products (code, name, unit, packing_id) select 'TSB25', 'Phân bón bao 25', 'KG', id from public.catalog_items where code = 'BAO25';
+set role authenticated;
+select tests.assert(public.set_shipment_items((select id from t_si),
+  '[{"item_code":"MH001","quantity":"10","unit":"tấn","bag_count":"7"},{"item_code":"MH002","quantity":40,"unit":"Bao"},{"item_code":"tsb25","quantity":1000,"unit":"KG"},{"item_code":"MH004","quantity":5,"unit":"KG"}]') = 4,
+  'Lưu dòng hàng có số bao');
+select tests.assert((select bag_count from public.shipment_items where shipment_id = (select id from t_si) and line_no = 1) = 7, 'Lưu số bao nhập tay');
+select tests.assert_fails($$select public.set_shipment_items((select id from t_si), '[{"item_code":"X","bag_count":"-1"}]')$$, 'Số bao âm bị chặn');
+select tests.assert_fails($$select public.set_shipment_items((select id from t_si), '[{"item_code":"X","bag_count":"abc"}]')$$, 'Số bao không phải số bị chặn');
+select tests.assert((select string_agg(coalesce((i ->> 'bag_count')::numeric::text, '-'), ',' order by (i ->> 'line_no')::int)
+                     from jsonb_array_elements(public.delivery_note((select id from t_si)) -> 'items') i) = '7.00,40.000,40.00,-',
+  'Phiếu giao hàng: số bao nhập tay, theo ĐVT bao, tự tính theo quy cách, để trống khi không tính được');
 reset role;
 
 insert into public.field_definitions (module, field_key, label, data_type) values ('shipment_items', 'so_seal', 'Số seal', 'short_text');

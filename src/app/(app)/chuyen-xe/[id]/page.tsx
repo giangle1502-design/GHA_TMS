@@ -167,7 +167,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
       ? supabase.from("expense_list").select("id, code, category_name, group_name, group_sort, amount, status, paid_by, incurred_at, file_count, note, ref_no, approval_request_id, payroll_id").eq("shipment_id", id).order("incurred_at").order("code")
       : Promise.resolve({ data: [], error: null }),
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("entity_type", "shipment").eq("entity_id", id).is("archived_at", null),
-    supabase.from("shipment_items").select("line_no, item_code, item_name, quantity, unit, note, custom_fields").eq("shipment_id", id).order("line_no"),
+    supabase.from("shipment_items").select("line_no, item_code, item_name, quantity, unit, bag_count, note, custom_fields").eq("shipment_id", id).order("line_no"),
     loadCustomFields(supabase, "shipment_items"),
     supabase.from("shipment_fees").select("line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, fee_group:fee_groups(id, name, report_role, sort_order))").eq("shipment_id", id).order("line_no"),
     canExpenses ? supabase.from("shipment_profit").select("*").eq("shipment_id", id).maybeSingle() : Promise.resolve({ data: null, error: null }),

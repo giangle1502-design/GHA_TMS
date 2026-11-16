@@ -5,6 +5,8 @@ export type DeliveryNoteItem = {
   item_name: string | null;
   unit: string | null;
   quantity: number | string | null;
+  /** Số bao: nhập tay ở dòng hàng, hoặc tự tính theo quy cách đóng gói của mã hàng (null khi không tính được) */
+  bag_count?: number | string | null;
   note: string | null;
 };
 

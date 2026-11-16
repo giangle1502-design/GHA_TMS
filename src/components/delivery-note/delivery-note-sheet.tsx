@@ -6,7 +6,10 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
   const co = noteCompany(d);
   const items = d.items.length
     ? d.items
-    : [{ line_no: 1, item_code: null, item_name: null, unit: null, quantity: d.quantity, note: null }];
+    : [{ line_no: 1, item_code: null, item_name: null, unit: null, quantity: d.quantity, bag_count: null, note: null }];
+  const bagOf = (v: number | string | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
+  const hasBags = items.some((i) => bagOf(i.bag_count) !== null);
+  const totalBags = items.reduce((s, i) => s + (bagOf(i.bag_count) ?? 0), 0);
   const total = d.items.reduce((s, i) => s + (Number(i.quantity) || 0), 0) || Number(d.quantity) || 0;
   const plate = [d.plate_number, d.trailer_plate].filter(Boolean).join(" / ");
   const customer = d.delivery_company?.trim() || d.delivery_name;
@@ -63,12 +66,13 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
       <table className="dn-table">
         <thead>
           <tr>
-            <th style={{ width: "8%" }}>STT</th>
-            <th style={{ width: "19%" }}>Mã hàng</th>
+            <th style={{ width: "7%" }}>STT</th>
+            <th style={{ width: "16%" }}>Mã hàng</th>
             <th>Tên hàng</th>
-            <th style={{ width: "10%" }}>ĐVT</th>
-            <th style={{ width: "15%" }}>Số lượng</th>
-            <th style={{ width: "16%" }}>Ghi chú</th>
+            <th style={{ width: "9%" }}>ĐVT</th>
+            <th style={{ width: "13%" }}>Số lượng</th>
+            <th style={{ width: "11%" }}>Số bao</th>
+            <th style={{ width: "14%" }}>Ghi chú</th>
           </tr>
         </thead>
         <tbody>
@@ -79,6 +83,7 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
               <td>{i.item_name}</td>
               <td className="dn-c">{i.unit}</td>
               <td className="dn-r">{formatNumber(i.quantity)}</td>
+              <td className="dn-r">{formatNumber(bagOf(i.bag_count))}</td>
               <td>{i.note}</td>
             </tr>
           ))}
@@ -89,6 +94,7 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
               TỔNG CỘNG
             </td>
             <td className="dn-r">{formatNumber(total)}</td>
+            <td className="dn-r">{hasBags ? formatNumber(totalBags) : ""}</td>
             <td />
           </tr>
         </tfoot>
