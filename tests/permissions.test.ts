@@ -30,8 +30,8 @@ describe("Danh mục quyền", () => {
   it("khớp giữa mã TypeScript và migration SQL", () => {
     expect([...ALL_PERMISSIONS].sort()).toEqual(permissionsFromSql());
   });
-  it("có 117 quyền", () => {
-    expect(ALL_PERMISSIONS).toHaveLength(117);
+  it("có 119 quyền", () => {
+    expect(ALL_PERMISSIONS).toHaveLength(119);
   });
   it("mọi quyền dùng trong menu đều tồn tại", () => {
     const all = new Set<string>(ALL_PERMISSIONS);

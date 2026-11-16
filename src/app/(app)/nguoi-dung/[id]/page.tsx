@@ -13,6 +13,7 @@ import { ALL_PERMISSIONS, MODULE_LABELS, ACTION_LABELS, type ModuleKey, permissi
 import { formatDateTime } from "@/lib/format";
 import { UserRolesForm } from "./user-roles-form";
 import { OverrideForm, RemoveOverrideButton } from "./override-form";
+import { UserCustomersForm } from "./user-customers-form";
 
 export const metadata: Metadata = { title: "Phân quyền người dùng" };
 
@@ -22,17 +23,21 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   if (!z.uuid().safeParse(id).success) notFound();
   const supabase = await createClient();
 
-  const [{ data: profile }, { data: roles }, { data: userRoles }, { data: overrides }, { data: rolePerms }] = await Promise.all([
+  const [{ data: profile }, { data: roles }, { data: userRoles }, { data: overrides }, { data: rolePerms }, { data: links }, { data: customers }] = await Promise.all([
     supabase.from("profiles").select("id, email, full_name, phone, status, created_at").eq("id", id).maybeSingle(),
     supabase.from("roles").select("id, code, name").order("sort_order"),
     supabase.from("user_roles").select("role_id, granted_at").eq("user_id", id),
     supabase.from("user_permission_overrides").select("permission_code, effect, reason, created_at").eq("user_id", id).order("permission_code"),
     supabase.from("role_permissions").select("role_id, permission_code"),
+    supabase.from("user_customers").select("customer_id").eq("user_id", id),
+    supabase.from("customers").select("id, code, name").eq("status", "active").order("code").limit(3000),
   ]);
   if (!profile) notFound();
 
   const roleIds = new Set((userRoles ?? []).map((r) => r.role_id as string));
   const isTargetSuper = (roles ?? []).some((r) => r.code === "super_admin" && roleIds.has(r.id));
+  const isTargetCustomer = (roles ?? []).some((r) => (r.code === "customer_statement" || r.code === "customer_admin") && roleIds.has(r.id));
+  const linkedIds = (links ?? []).map((l) => l.customer_id as string);
   const meSuper = me.roles.some((r) => r.code === "super_admin");
   const isSelf = me.id === profile.id;
   const canConfigure = me.permissions.has("users.configure") && !isSelf && (!isTargetSuper || meSuper);
@@ -118,6 +123,24 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
             {canConfigure ? <OverrideForm userId={profile.id} permissions={ALL_PERMISSIONS} /> : null}
           </CardContent>
         </Card>
+        {isTargetCustomer || linkedIds.length ? (
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Khách hàng được xem</CardTitle>
+              <CardDescription>
+                Tài khoản bên khách hàng chỉ thấy dữ liệu (bảng kê, đơn, chuyến) của các khách hàng được tích. Chủ chung nhiều công ty (VD VAP, PLA, DAM) thì tích cả các công ty đó: khi lập bảng kê họ chọn được Tất cả hoặc từng công ty.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <UserCustomersForm
+                userId={profile.id}
+                customers={(customers ?? []) as { id: string; code: string; name: string }[]}
+                selected={linkedIds}
+                canConfigure={canConfigure && !isTargetSuper}
+              />
+            </CardContent>
+          </Card>
+        ) : null}
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Quyền hiệu lực</CardTitle>

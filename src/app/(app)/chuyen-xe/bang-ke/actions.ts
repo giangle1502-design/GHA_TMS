@@ -4,14 +4,14 @@ import { revalidatePath } from "next/cache";
 import { ActionError, requirePermission, runAction, type ActionResult } from "@/lib/auth/action";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/entities/record";
-import { loadStatement } from "@/lib/freight-statement-data";
-import { STATEMENT_STATUS_OPTIONS, STATEMENT_TABLE_KEY, resolveColumns, statementConfigSchema, statementFileName } from "@/lib/freight-statement";
+import { isStatementPortal, loadStatement } from "@/lib/freight-statement-data";
+import { STATEMENT_ALL_CUSTOMERS, STATEMENT_STATUS_OPTIONS, STATEMENT_TABLE_KEY, resolveColumns, statementConfigSchema, statementFileName } from "@/lib/freight-statement";
 import { buildStatementWorkbook } from "@/lib/freight-statement-excel";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 const exportSchema = z.object({
-  kh: z.string().uuid({ message: "Chọn khách hàng." }),
+  kh: z.union([z.string().uuid({ message: "Chọn khách hàng." }), z.literal(STATEMENT_ALL_CUSTOMERS)]),
   tu: z.string().regex(YMD),
   den: z.string().regex(YMD),
   tt: z.enum(STATEMENT_STATUS_OPTIONS.map((o) => o.value) as [string, ...string[]]),
@@ -23,8 +23,11 @@ const exportSchema = z.object({
 /** Xuất bảng kê cước ra Excel: thông tin khách (trái), tiêu đề (giữa), công ty Khánh Hà (phải), bảng chuyến, tổng, ký nhận */
 export async function exportStatementExcel(input: z.input<typeof exportSchema>): Promise<ActionResult<{ base64: string; filename: string; count: number }>> {
   return runAction(async () => {
-    const me = await requirePermission("shipments.export");
+    const me = await requirePermission("shipments.export", "statements.export");
+    const portal = isStatementPortal(me.permissions);
+    if (!me.permissions.has("shipments.export") && !portal) throw new ActionError("Bạn không có quyền thực hiện thao tác này.");
     const d = exportSchema.parse(input);
+    if (d.kh === STATEMENT_ALL_CUSTOMERS && !portal) throw new ActionError("Chọn khách hàng.");
     const supabase = await createClient();
     const data = await loadStatement(supabase, me.permissions, { kh: d.kh, tu: d.tu, den: d.den, tt: d.tt as "giao" });
     if (!data.customer) throw new ActionError("Không tìm thấy khách hàng.");

@@ -97,6 +97,31 @@ export async function setUserRoles(userId: string, roleIds: string[]): Promise<A
   }, "Đã cập nhật vai trò.");
 }
 
+/** Gắn tài khoản với các khách hàng được xem (tài khoản khách: VD chủ chung VAP, PLA, DAM) */
+export async function setUserCustomers(userId: string, customerIds: string[]): Promise<ActionResult> {
+  return runAction(async () => {
+    const me = await requirePermission("users.configure");
+    const id = uuid.parse(userId);
+    if (id === me.id) throw new ActionError("Không được tự thay đổi khách hàng được xem của chính mình.");
+    const wanted = new Set(z.array(uuid).max(500).parse(customerIds));
+    const supabase = await createClient();
+    const { data: current, error: e1 } = await supabase.from("user_customers").select("customer_id").eq("user_id", id);
+    if (e1) throw e1;
+    const have = new Set((current ?? []).map((r) => r.customer_id as string));
+    const toAdd = [...wanted].filter((c) => !have.has(c));
+    const toRemove = [...have].filter((c) => !wanted.has(c));
+    if (toAdd.length) {
+      const { error } = await supabase.from("user_customers").insert(toAdd.map((customer_id) => ({ user_id: id, customer_id })));
+      if (error) throw error;
+    }
+    if (toRemove.length) {
+      const { error } = await supabase.from("user_customers").delete().eq("user_id", id).in("customer_id", toRemove);
+      if (error) throw error;
+    }
+    revalidatePath(`/nguoi-dung/${id}`);
+  }, "Đã lưu khách hàng được xem.");
+}
+
 const overrideSchema = z.object({
   userId: uuid,
   permission: z.enum(ALL_PERMISSIONS as [string, ...string[]]),
