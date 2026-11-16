@@ -71,10 +71,13 @@ const blank = (l: FeeLine) =>
 /** Số từ CSDL (numeric) sang chuỗi hiển thị có dấu phẩy ngăn cách nghìn */
 export const numText = (v: number | string | null | undefined) => (v === null || v === undefined || v === "" ? "" : formatNumber(Number(v)));
 
-/** Dữ liệu gửi lên máy chủ: dòng chưa nhập gì bị bỏ qua */
+/** Không có số tiền, số lượng, đơn giá, loại tờ khai: dòng bị xóa trắng số tiền (chỉ còn số hóa đơn / ghi chú) */
+const noMoney = (l: FeeLine) => !l.amount.trim() && !l.quantity.trim() && !l.unit_price.trim() && !l.declaration_type_id;
+
+/** Dữ liệu gửi lên máy chủ: dòng chưa nhập gì, hoặc đã xóa số tiền, bị bỏ qua (xóa khỏi chuyến) */
 export const feesPayload = (lines: FeeLine[]) =>
   lines
-    .filter((l) => !(blank(l) && !l.fee_type_id))
+    .filter((l) => !(blank(l) && !l.fee_type_id) && !noMoney(l))
     .map((l) => ({
       fee_type_id: l.fee_type_id,
       amount: l.amount,
@@ -388,9 +391,24 @@ export function FeesEditor({
                   );
                   return (
                     <div key={t.id} className={cn("grid grid-cols-2 items-center gap-1.5", cols)}>
-                      <label htmlFor={fid} className="col-span-full truncate text-sm sm:col-span-1" title={t.description ?? t.name}>
-                        {t.name}
-                      </label>
+                      <div className="col-span-full flex min-w-0 items-center gap-0.5 sm:col-span-1">
+                        <label htmlFor={fid} className="truncate text-sm" title={t.description ?? t.name}>
+                          {t.name}
+                        </label>
+                        {l ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="ml-auto size-6 shrink-0 text-destructive"
+                            title={`Xóa ${t.name} khỏi chuyến`}
+                            aria-label={`Xóa ${t.name}`}
+                            onClick={() => emit(latest.current.filter((x) => x.key !== l.key))}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        ) : null}
+                      </div>
                       {role === "declaration" ? (
                         <>
                           <ReferenceSelect

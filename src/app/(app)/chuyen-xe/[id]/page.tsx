@@ -170,7 +170,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("entity_type", "shipment").eq("entity_id", id).is("archived_at", null),
     supabase.from("shipment_items").select("line_no, item_code, item_name, quantity, unit, bag_count, note, custom_fields").eq("shipment_id", id).order("line_no"),
     loadCustomFields(supabase, "shipment_items"),
-    supabase.from("shipment_fees").select("line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, fee_group:fee_groups(id, name, report_role, sort_order))").eq("shipment_id", id).order("line_no"),
+    supabase.from("shipment_fees").select("line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, is_loading, fee_group:fee_groups(id, name, report_role, sort_order))").eq("shipment_id", id).order("line_no"),
     canExpenses ? supabase.from("shipment_profit").select("*").eq("shipment_id", id).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   const [carrierRes, payableRes, feeDocRes, sheetRes, lockRes] = await Promise.all([
@@ -263,6 +263,15 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   const approvedCost = expenses.filter((e) => e.status === "approved").reduce((a, e) => a + Number(e.amount), 0);
   const pendingCost = expenses.filter((e) => e.status === "pending").reduce((a, e) => a + Number(e.amount), 0);
   const profit = (profitRes.data ?? null) as ShipmentProfit | null;
+  // Chi phí trả 3PL tính lời/lỗ (như private.shipment_carrier_profit_cost): khoản không phải chi hộ,
+  // trừ phần bốc xếp đã thu lại khách bằng phí chi hộ. Dùng khi chuyến chưa chạy (CSDL chưa tính lời/lỗ).
+  const carrierProfitCost = (() => {
+    const own = carrierCosts.filter((c) => c.cost_kind !== "pass_through");
+    const cost = own.reduce((a, c) => a + Number(c.amount), 0);
+    const loading = own.filter((c) => c.fee_type?.is_loading).reduce((a, c) => a + Number(c.amount), 0);
+    const recovered = fees.filter((f) => f.fee_kind === "pass_through" && f.fee_type?.is_loading).reduce((a, f) => a + Number(f.amount), 0);
+    return cost - Math.min(loading, recovered);
+  })();
   // Chi phí chuyến đã duyệt cộng theo hạng mục
   const costLines = [...expenses.filter((e) => e.status === "approved").reduce((m, e) => m.set(e.category_name, (m.get(e.category_name) ?? 0) + Number(e.amount)), new Map<string, number>())]
     .map(([name, amount]) => ({ name, amount }));
@@ -542,7 +551,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                   label="Lời/lỗ (xem chi tiết bên dưới)"
                   value={
                     <a href="#loi-lo" className="font-semibold hover:underline">
-                      {formatVND(profit ? Number(profit.profit) : Number(s.total_revenue) - approvedCost)}
+                      {formatVND(profit ? Number(profit.profit) : Number(s.total_revenue) - approvedCost - carrierProfitCost)}
                     </a>
                   }
                 />
@@ -559,6 +568,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
             plate={s.plate_number}
             vehicleId={s.vehicle_id}
             outsourced={is3pl}
+            carrierCost={carrierProfitCost}
             addExpense={
               me.permissions.has("expenses.create") && s.status !== "cancelled" ? (
                 <a href="#chi-phi-dau-ra" className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-card px-3 text-sm font-medium hover:bg-muted">

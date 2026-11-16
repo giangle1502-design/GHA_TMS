@@ -29,13 +29,15 @@ export function ProfitCard(props: {
   plate: string | null;
   vehicleId: string | null;
   outsourced: boolean;
+  /** Cước + chi phí khác trả 3PL tính từ các khoản 3PL của chuyến, dùng khi chuyến chưa chạy (chưa có số lời/lỗ từ CSDL) */
+  carrierCost?: number;
   addExpense?: ReactNode;
 }) {
   const p = props.profit;
   const tripCost = props.costLines.reduce((a, l) => a + l.amount, 0);
   const vehicleCost = Number(p?.vehicle_cost ?? 0);
-  const carrierCost = Number(p?.carrier_cost ?? 0);
-  const result = p ? Number(p.profit) : props.revenue - tripCost;
+  const carrierCost = p ? Number(p.carrier_cost ?? 0) : Number(props.carrierCost ?? 0);
+  const result = p ? Number(p.profit) : props.revenue - tripCost - carrierCost;
   const month = p?.trip_month ? `${p.trip_month.slice(5, 7)}/${p.trip_month.slice(0, 4)}` : null;
   return (
     <Card className="lg:col-span-3" id="loi-lo">
@@ -114,6 +116,9 @@ export function ProfitCard(props: {
             ) : null}
           </div>
         </div>
+        {!p ? (
+          <p className="text-xs text-muted-foreground">Chuyến chưa chạy: lời/lỗ đang tạm tính (doanh thu − chi phí đã duyệt − chi phí trả 3PL), chưa chia chi phí xe.</p>
+        ) : null}
         {p && vehicleCost > 0 ? (
           <p className="text-xs text-muted-foreground">Lời/lỗ trước khi chia chi phí xe: {formatVND(p.profit_before_vehicle)}</p>
         ) : null}

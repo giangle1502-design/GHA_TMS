@@ -20,7 +20,7 @@ export type ShipmentFee = {
   quantity: number | null;
   unit_price: number | null;
   declaration: { name: string } | null;
-  fee_type: { name: string; sort_order: number; fee_group: { id: string; name: string; report_role: string; sort_order: number } | null } | null;
+  fee_type: { name: string; sort_order: number; is_loading?: boolean; fee_group: { id: string; name: string; report_role: string; sort_order: number } | null } | null;
 };
 
 /** Nhập, sửa các khoản phí thu khách của chuyến (bốc xếp, chi hộ…) */
