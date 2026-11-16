@@ -430,3 +430,15 @@ export function advancedFields(fields: FieldDef[]): AdvField[] {
 export function moduleCustomFields(module: string, customRows: CustomFieldRow[], permissions?: Set<string>): FieldDef[] {
   return effectiveFields({ fields: [], customModule: module } as unknown as EntityDef, customRows, permissions);
 }
+
+/** Ô số, tiền đang là chuỗi "1,500,000" trên biểu mẫu: đổi sang số để tính công thức ngay khi gõ */
+export function numericValues(fields: FieldDef[], values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...values };
+  for (const f of fields) {
+    if ((f.type === "currency" || f.type === "number" || f.type === "percent") && typeof out[f.key] === "string") {
+      const n = parseNumberVN(out[f.key], f.type === "currency");
+      out[f.key] = n === null || Number.isNaN(n) ? null : n;
+    }
+  }
+  return out;
+}

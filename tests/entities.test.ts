@@ -121,3 +121,18 @@ describe("Nhập Excel/CSV", () => {
     expect(slugifyKey("123 abc")).toBe("f_123_abc");
   });
 });
+
+describe("sổ hóa đơn: tổng tự cộng trên biểu mẫu", () => {
+  it("Thành tiền + VAT dạng chuỗi 1,500,000 vẫn ra Tổng", async () => {
+    const { getEntity } = await import("@/lib/entities/definitions");
+    const { numericValues } = await import("@/lib/entities/record");
+    const { computeFormula } = await import("@/lib/formula");
+    const e = getEntity("tax_invoices");
+    const f = e.fields.find((x) => x.key === "total_preview")!;
+    expect(computeFormula(f.formula, numericValues(e.fields, { amount: "2,000,000", vat_amount: "160,000" }))).toBe(2160000);
+    expect(computeFormula(f.formula, numericValues(e.fields, { amount: "500,000", vat_amount: "" }))).toBe(500000);
+    expect(e.fields[0].key).toBe("direction");
+    expect(e.fields.find((x) => x.key === "category_id")?.refWhere).toEqual({ direction: "direction" });
+  });
+});
+
