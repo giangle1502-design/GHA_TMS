@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText } from "@/lib/invoice-parse";
+import { invoiceDirection, invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText } from "@/lib/invoice-parse";
 
 // Chữ đọc từ ảnh hóa đơn xăng (ảnh rõ, theo mẫu LE gửi 15/11/2026)
 const CLEAN = `Mẫu số 1
@@ -168,6 +168,7 @@ describe("điền sổ hóa đơn từ ảnh", () => {
       vat_amount: "800,000",
     });
     expect(invoiceDirectionHint(p, "sale")).toBeNull();
+    expect(invoiceDirection(p)).toBe("sale");
     expect(invoiceDirectionHint(p, "purchase")).toMatch(/bán ra/);
   });
   it("mua vào: hóa đơn xăng KKKNT, đối tác là người bán", () => {
@@ -187,6 +188,7 @@ describe("điền sổ hóa đơn từ ảnh", () => {
     expect(String(v.description)).toMatch(/^Xăng E10 RON 95.*23,33 lít$/);
     expect(v.notes).toBe("Đơn giá 21,430 đ/lít");
     expect(invoiceDirectionHint(p, "purchase")).toBeNull();
+    expect(invoiceDirection(p)).toBe("purchase");
     expect(invoiceDirectionHint(p, "sale")).toMatch(/mua vào/);
   });
 });

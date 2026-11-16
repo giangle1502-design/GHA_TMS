@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getEntity } from "@/lib/entities/definitions";
-import { effectiveFields, formatValue, isFieldShown, toFormValues, validateRecord } from "@/lib/entities/record";
+import { effectiveFields, formatValue, isFieldShown, numericValues, toFormValues, validateRecord } from "@/lib/entities/record";
 import { computeFormula } from "@/lib/formula";
 import { saveRecord } from "@/lib/entities/actions";
 import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
@@ -162,7 +162,8 @@ export function EntityFormDialog({
         >
           {entity.imageFill && !readOnly && !quick ? (
             <InvoiceImageFill
-              mode={entity.imageFill}
+              mode={entity.imageFill === "invoice" ? "invoice" : values.direction === "sale" ? "sale_invoice" : "purchase_invoice"}
+              autoDirection={entity.imageFill === "tax_invoice"}
               disabled={pending || !open}
               getNotes={() => String(form.getValues("notes") ?? "")}
               onFill={(vals) => {
@@ -177,12 +178,12 @@ export function EntityFormDialog({
               const err = form.formState.errors[f.key]?.message as string | undefined;
               const wide = f.wide || f.type === "multiselect" || f.type === "textarea";
               if (f.type === "formula" || (f.readOnly && f.custom)) {
-                const v = f.type === "formula" ? computeFormula(f.formula, values) : record?.[f.key];
+                const v = f.type === "formula" ? computeFormula(f.formula, numericValues(fields, values)) : record?.[f.key];
                 return (
                   <div key={f.key} className={cn("space-y-1.5", wide && "sm:col-span-2")}>
                     <Label>{f.label}</Label>
                     <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm">{formatValue(f, v) || "—"}</div>
-                    {f.type === "formula" ? <p className="text-xs text-muted-foreground">Tự tính: {f.formula}</p> : null}
+                    {f.type === "formula" ? <p className="text-xs text-muted-foreground">{f.help ?? `Tự tính: ${f.formula}`}</p> : null}
                   </div>
                 );
               }
@@ -235,3 +236,4 @@ export function EntityFormDialog({
     </Dialog>
   );
 }
+

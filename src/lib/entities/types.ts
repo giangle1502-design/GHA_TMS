@@ -32,6 +32,8 @@ export type FieldDef = {
   options?: Option[];
   /** Thực thể được tham chiếu (khóa trong ENTITIES) với type = reference */
   ref?: string;
+  /** Ô tham chiếu chỉ hiện mục khớp trường khác trên biểu mẫu: { cột của danh mục: khóa trường } (VD hạng mục theo Mua vào / Bán ra) */
+  refWhere?: Record<string, string>;
   /** Hiển thị mặc định trong bảng */
   list?: boolean;
   /** Có bộ lọc nhanh trên bảng (select/boolean/reference) */
@@ -143,8 +145,8 @@ export type EntityDef = {
   createPerm?: string;
   /** Quyền khác cũng được xem danh sách (RLS vẫn lọc dòng, ví dụ người lập chỉ thấy phiếu của mình) */
   viewAnyOf?: string[];
-  /** Biểu mẫu có ô dán ảnh để tự điền (invoice = chi phí ngoài chuyến; sale_invoice / purchase_invoice = sổ hóa đơn bán ra / mua vào) */
-  imageFill?: "invoice" | "sale_invoice" | "purchase_invoice";
+  /** Biểu mẫu có ô dán ảnh để tự điền (invoice = chi phí ngoài chuyến; tax_invoice = sổ hóa đơn (tự nhận Mua vào / Bán ra)) */
+  imageFill?: "invoice" | "tax_invoice";
   /** Quyền khác cũng được thêm mới (ví dụ người lập phiếu thêm nhanh loại đề nghị ngay ở ô chọn) */
   createAnyOf?: string[];
 };

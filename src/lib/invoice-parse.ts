@@ -300,3 +300,10 @@ export function invoiceDirectionHint(p: ParsedInvoice, dir: "sale" | "purchase")
   if (dir === "sale" && p.gha_is_buyer && !p.gha_is_seller) return "Hóa đơn này GHA là người mua: nên nhập ở Hóa đơn mua vào.";
   return null;
 }
+
+/** Hóa đơn thuộc sổ nào theo vị trí MST của GHA: người bán -> bán ra, người mua -> mua vào; không rõ -> null */
+export function invoiceDirection(p: ParsedInvoice): "sale" | "purchase" | null {
+  if (p.gha_is_seller && !p.gha_is_buyer) return "sale";
+  if (p.gha_is_buyer && !p.gha_is_seller) return "purchase";
+  return null;
+}
