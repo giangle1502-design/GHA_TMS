@@ -213,9 +213,9 @@ const TAX_INVOICE: EntityDef = {
   defaultSort: { key: "invoice_date", desc: true },
   labelCols: ["invoice_no", "partner_name"],
   importExamples: [
-    { direction: "Mua vào (chi phí)", invoice_date: "27/07/2026", category_id: "Xăng dầu", invoice_no: "422579", amount: "500,000", vat_amount: "0" },
-    { direction: "Mua vào (chi phí)", invoice_date: "10/11/2026", category_id: "Vé máy bay, tàu xe", invoice_no: "555", amount: "2,000,000", vat_amount: "160,000" },
-    { direction: "Bán ra (xuất cho khách)", invoice_date: "05/11/2026", category_id: "Cước vận chuyển", invoice_symbol: "C26TGH", invoice_no: "123", partner_name: "Công ty TNHH ABC", amount: "10,000,000", vat_amount: "800,000" },
+    { direction: "Mua vào (chi phí)", invoice_date: "27/07/2026", category_id: "Xăng dầu", invoice_no: "422579", amount: "500,000", vat_rate: "KKKNT (không kê khai, tính nộp)", vat_amount: "0" },
+    { direction: "Mua vào (chi phí)", invoice_date: "10/11/2026", category_id: "Vé máy bay, tàu xe", invoice_no: "555", amount: "2,000,000", vat_rate: "8%", vat_amount: "160,000" },
+    { direction: "Bán ra (xuất cho khách)", invoice_date: "05/11/2026", category_id: "Cước vận chuyển", invoice_symbol: "C26TGH", invoice_no: "123", partner_name: "Công ty TNHH ABC", amount: "10,000,000", vat_rate: "8%", vat_amount: "800,000" },
   ],
   fields: [
     {
@@ -234,7 +234,15 @@ const TAX_INVOICE: EntityDef = {
     { key: "partner_name", label: "Tên khách hàng / nhà cung cấp (trên hóa đơn)", type: "text", list: true, wide: true, maxLength: 300, placeholder: "Dán ảnh thì tự điền; để trống thì lấy theo danh mục", showIfRefLabel: { ...partnerCategory, orIf: { field: "direction", in: ["sale"] } } },
     { key: "partner_tax_code", label: "MST", type: "text", maxLength: 20, showIfRefLabel: { ...partnerCategory, orIf: { field: "direction", in: ["sale"] } } },
     { key: "amount", label: "Thành tiền", type: "currency", required: true, min: 0, list: true, defaultValue: 0, help: "Tiền chưa thuế GTGT." },
-    { key: "vat_amount", label: "VAT", type: "currency", min: 0, list: true, help: "Tiền thuế GTGT trên hóa đơn. Để trống thì tự tính theo thuế suất mặc định của hạng mục." },
+    {
+      key: "vat_rate", label: "Thuế suất VAT", type: "select", required: true, list: true, options: VAT_RATE_OPTIONS,
+      help: "Chọn đúng thuế suất ghi trên hóa đơn (0%, 5%, 8%, 10%, KCT, KKKNT).",
+    },
+    {
+      key: "vat_amount", label: "Tiền VAT", type: "currency", min: 0, list: true,
+      autoCalc: { formula: "ROUND(N(amount) * N(vat_rate) / 100, 0)", from: ["amount", "vat_rate"] },
+      help: "Tự tính = Thành tiền × Thuế suất. Hóa đơn ghi số khác (làm tròn) thì sửa lại đúng số trên hóa đơn.",
+    },
     { key: "total_preview", label: "Tổng", type: "formula", formula: "N(amount) + N(vat_amount)", help: "Tự cộng Thành tiền + VAT." },
     { key: "total_amount", label: "Tổng", type: "currency", list: true, readOnly: true, hideInForm: true },
     {
@@ -251,7 +259,6 @@ const TAX_INVOICE: EntityDef = {
     },
     { key: "code", label: "Mã", type: "text", hideInForm: true },
 
-    { key: "vat_rate", label: "Thuế suất", type: "select", options: VAT_RATE_OPTIONS, hideInForm: true },
     { key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", hideInForm: true },
     { key: "paid_date", label: "Ngày thanh toán", type: "date", hideInForm: true },
   ],

@@ -60,6 +60,11 @@ export type FieldDef = {
    * hoặc khi orIf thỏa. VD ô Nhà cung cấp chỉ hiện khi Hạng mục là "Thuê xe ngoài 3PL". Máy chủ không xét điều kiện này.
    */
   showIfRefLabel?: { field: string; pattern: string; orIf?: { field: string; in: string[] } };
+  /**
+   * Biểu mẫu tự điền ô này bằng công thức khi người dùng đổi một trong các ô "from" (VD tiền VAT = Thành tiền × Thuế suất);
+   * vẫn sửa tay được, và không ghi đè khi ô này được điền cùng lúc (dán ảnh hóa đơn lấy đúng số trên hóa đơn).
+   */
+  autoCalc?: { formula: string; from: string[] };
   /** Chiếm cả hàng trên biểu mẫu */
   wide?: boolean;
   /** Mặc định khi tạo mới */
