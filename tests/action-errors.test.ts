@@ -50,3 +50,17 @@ describe("requirePermission phía máy chủ", () => {
     await expect(requirePermission("shipments.view", "dispatch.view")).resolves.toMatchObject({ id: "u1" });
   });
 });
+
+describe("lỗi rõ ràng thay cho 'Đã có lỗi xảy ra'", () => {
+  it("CSDL chưa nâng cấp: nói thiếu cột nào", () => {
+    expect(toUserMessage({ code: "PGRST204", message: "Could not find the 'invoice_ids' column of 'payment_request_forms' in the schema cache" })).toMatch(
+      /chưa được nâng cấp \(thiếu invoice_ids\)/,
+    );
+    expect(toUserMessage({ code: "42P01", message: 'relation "public.tax_invoices" does not exist' })).toMatch(/thiếu public\.tax_invoices/);
+  });
+  it("lỗi nhập liệu (zod): nói rõ lý do", async () => {
+    const { z } = await import("zod");
+    const r = z.object({ requester_name: z.string().trim().min(1, "Nhập họ tên người đề nghị") }).safeParse({ requester_name: " " });
+    expect(toUserMessage(r.error)).toBe("Nhập họ tên người đề nghị");
+  });
+});
