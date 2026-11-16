@@ -31,8 +31,6 @@ export type DeliveryNoteData = {
   driver_phone: string | null;
   quantity: number | string | null;
   items: DeliveryNoteItem[];
-  /** Tên điểm nhận, CHỈ dùng đặt tên file PDF (không in lên phiếu). Trang in tự điền, không có trong hàm CSDL. */
-  pickup_name?: string | null;
 };
 
 /** Thông tin công ty in trên phiếu khi Danh mục công ty còn trống (LE chốt 15/11/2026). */
@@ -69,9 +67,9 @@ export function safeFilePart(text: string | null | undefined): string {
     .replace(/^[.\s]+|[.\s]+$/g, "");
 }
 
-/** Tên phiếu (không đuôi): "<Điểm nhận> - <Mã chuyến>", ví dụ "SP-ITC - SNOV-0004". Dùng làm tên file PDF và tiêu đề trang khi in. */
-export function noteBaseName(pickup: string | null | undefined, code: string): string {
-  const name = [safeFilePart(pickup), safeFilePart(code)].filter(Boolean).join(" - ");
+/** Tên phiếu (không đuôi): "<Điểm giao> - <Mã chuyến>", ví dụ "SP-ITC - SNOV-0004". Dùng làm tên file PDF và tiêu đề trang khi in. */
+export function noteBaseName(place: string | null | undefined, code: string): string {
+  const name = [safeFilePart(place), safeFilePart(code)].filter(Boolean).join(" - ");
   return (name || "Phieu giao hang").slice(0, 150).trim();
 }
 
@@ -81,18 +79,18 @@ export const NOTE_BATCH_MAX = 200;
 /**
  * Tên file khi in nhiều phiếu một lần (không đuôi):
  * - 1 phiếu: như in lẻ, "SP-ITC - SNOV-0004"
- * - cùng điểm nhận, tối đa 3 chuyến: "SP-ITC - SNOV-0004, SNOV-0005"
+ * - cùng điểm giao, tối đa 3 chuyến: "SP-ITC - SNOV-0004, SNOV-0005"
  * - nhiều hơn: "SP-ITC - SNOV-0004 đến SNOV-0020 (17 chuyến)"
- * - khác điểm nhận: "Nhiều điểm nhận - ..."
+ * - khác điểm giao: "Nhiều điểm giao - ..."
  */
-export function noteBatchBaseName(notes: { pickup_name?: string | null; shipment_code: string }[]): string {
+export function noteBatchBaseName(notes: { delivery_name?: string | null; shipment_code: string }[]): string {
   if (notes.length === 0) return "Phieu giao hang";
-  if (notes.length === 1) return noteBaseName(notes[0].pickup_name, notes[0].shipment_code);
-  const pickups = new Set(notes.map((n) => safeFilePart(n.pickup_name)));
-  const pickup = pickups.size === 1 ? [...pickups][0] : "Nhiều điểm nhận";
+  if (notes.length === 1) return noteBaseName(notes[0].delivery_name, notes[0].shipment_code);
+  const places = new Set(notes.map((n) => safeFilePart(n.delivery_name)));
+  const place = places.size === 1 ? [...places][0] : "Nhiều điểm giao";
   const codes = notes.map((n) => safeFilePart(n.shipment_code));
   const codePart = codes.length <= 3 ? codes.join(", ") : `${codes[0]} đến ${codes[codes.length - 1]} (${codes.length} chuyến)`;
-  return [pickup, codePart].filter(Boolean).join(" - ").slice(0, 150).trim();
+  return [place, codePart].filter(Boolean).join(" - ").slice(0, 150).trim();
 }
 
 /** Danh sách mã chuyến từ tham số ?ids=a,b,c: chỉ giữ UUID hợp lệ, bỏ trùng, tối đa NOTE_BATCH_MAX */
