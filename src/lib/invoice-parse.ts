@@ -107,7 +107,7 @@ export function parseInvoiceText(text: string): ParsedInvoice {
 
   // Ngày lập: "Ngày 27 tháng 07 năm 2026" (OCR có thể đọc sai chữ: chỉ cần 3 số)
   for (const l of fl) {
-    const m = /ngay\D{0,4}(\d{1,2})\D{1,12}?(\d{1,2})\D{1,12}?(20\d{2})/.exec(l) ?? /\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b/.exec(l);
+    const m = /ngay\D{0,12}(\d{1,2})\D{1,20}?(\d{1,2})\D{1,20}?(20\d{2})/.exec(l) ?? /\b(\d{1,2})[/.-](\d{1,2})[/.-](20\d{2})\b/.exec(l);
     if (m) {
       const d = Number(m[1]);
       const mo = Number(m[2]);
@@ -127,10 +127,13 @@ export function parseInvoiceText(text: string): ParsedInvoice {
   }
 
   // Người bán và MST người bán (trước phần người mua)
-  const iSeller = find(/(ten )?(nguoi ban|don vi ban)( hang)?\s*:/);
-  const iBuyer = find(/(ten )?(nguoi mua|don vi mua)( hang)?\s*:/);
+  const iSeller = find(/(ten )?(nguoi ban|don vi ban)( hang)?\s*(?:\([^)]*\)?\s*)?:/);
+  const iBuyer = find(/(ten )?(nguoi mua|don vi mua)( hang)?\s*(?:\([^)]*\)?\s*)?:/);
   if (iSeller >= 0) {
-    const v = lines[iSeller].split(/:/).slice(1).join(":").trim().replace(/[.:;,]+$/, "");
+    let v = lines[iSeller].split(/:/).slice(1).join(":").trim().replace(/[.:;,]+$/, "");
+    // Tên dài xuống dòng: dòng sau không có nhãn (không có dấu :) và viết hoa thì nối vào
+    const next = lines[iSeller + 1] ?? "";
+    if (v && next && !next.includes(":") && next === next.toUpperCase() && /[A-ZÀ-Ỹ]/.test(next)) v = `${v} ${next.replace(/[.:;,]+$/, "")}`;
     if (v) out.seller_name = v;
   }
   const taxIn = (from: number, to: number) => {
@@ -150,7 +153,7 @@ export function parseInvoiceText(text: string): ParsedInvoice {
     // Tên đơn vị mua: "Tên đơn vị: …" (ưu tiên) hoặc "Đơn vị mua hàng: …" / "Họ tên người mua hàng: …"
     const valueOf = (i: number) => lines[i].split(/:/).slice(1).join(":").trim().replace(/[.:;,]+$/, "");
     const win = fl.slice(iBuyer, iBuyer + 6);
-    const iUnit = win.findIndex((l) => /(ten don vi|don vi mua( hang)?|ten cong ty)\s*:/.test(l));
+    const iUnit = win.findIndex((l) => /(ten don vi|don vi mua( hang)?|ten cong ty)\s*(?:\([^)]*\)?\s*)?:/.test(l));
     const name = iUnit >= 0 ? valueOf(iBuyer + iUnit) : valueOf(iBuyer);
     if (name) out.buyer_name = name;
     for (let i = iBuyer; i < Math.min(lines.length, iBuyer + 8); i++) {
@@ -168,6 +171,21 @@ export function parseInvoiceText(text: string): ParsedInvoice {
   out.total = labelAmount(lines, fl, /tong (cong )?(tien )?(thanh toan|cong tien thanh toan)(?! bang chu)/);
   out.amount = labelAmount(lines, fl, /(tong tien chua (co )?thue|cong tien hang|tong tien hang)( \([^)]*\))?/);
   out.vat_amount = labelAmount(lines, fl, /(tong )?tien thue( gtgt| vat)?( \([^)]*\))?(?! suat)/, true);
+  // Dòng tổng cộng dạng bảng: "Tổng cộng tiền thanh toán: 286.111  22.889  309.000" (chưa thuế + thuế = tổng)
+  for (let i = fl.length - 1; i >= 0; i--) {
+    if (!/tong cong|tong tien thanh toan|grand total/.test(fl[i])) continue;
+    const nums = (lines[i].match(/\d{1,3}(?:[.,]\d{3})+(?![.,]?\d)|\d+(?![.,]?\d)/g) ?? []).map(parseMoney);
+    let hit = false;
+    for (let k = 0; k + 2 < nums.length; k++) {
+      const [a, b, c] = [nums[k], nums[k + 1], nums[k + 2]];
+      if (c >= 1000 && Math.abs(a + b - c) <= 1 && a > 0) {
+        [out.amount, out.vat_amount, out.total] = [a, b, c];
+        hit = true;
+        break;
+      }
+    }
+    if (hit) break;
+  }
 
   // Thuế suất
   const all = fl.join("\n");
@@ -298,5 +316,12 @@ export function invoiceToTaxInvoiceValues(p: ParsedInvoice, dir: "sale" | "purch
 export function invoiceDirectionHint(p: ParsedInvoice, dir: "sale" | "purchase"): string | null {
   if (dir === "purchase" && p.gha_is_seller && !p.gha_is_buyer) return "Hóa đơn này do GHA xuất (GHA là người bán): nên nhập ở Hóa đơn bán ra.";
   if (dir === "sale" && p.gha_is_buyer && !p.gha_is_seller) return "Hóa đơn này GHA là người mua: nên nhập ở Hóa đơn mua vào.";
+  return null;
+}
+
+/** Hóa đơn thuộc sổ nào theo vị trí MST của GHA: người bán -> bán ra, người mua -> mua vào; không rõ -> null */
+export function invoiceDirection(p: ParsedInvoice): "sale" | "purchase" | null {
+  if (p.gha_is_seller && !p.gha_is_buyer) return "sale";
+  if (p.gha_is_buyer && !p.gha_is_seller) return "purchase";
   return null;
 }

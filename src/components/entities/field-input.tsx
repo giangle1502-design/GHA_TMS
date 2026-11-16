@@ -1,5 +1,6 @@
 "use client";
-import { Controller, type Control, type UseFormRegister } from "react-hook-form";
+import { useEffect, useRef } from "react";
+import { Controller, useWatch, type Control, type UseFormRegister } from "react-hook-form";
 import { Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { formatNumber } from "@/lib/format";
 import { compactUpper, parseNumberVN } from "@/lib/entities/record";
@@ -70,18 +71,23 @@ export function FieldInput({
           control={control}
           name={field.key}
           render={({ field: f }) => (
-            <ReferenceSelect
-              id={id}
-              refKey={field.ref!}
-              value={String(f.value ?? "")}
-              initialLabel={refLabel}
-              onChange={(v, label) => {
-                f.onChange(v);
-                onRefChange?.(label);
-              }}
-              disabled={disabled}
-              invalid={invalid}
-            />
+            <RefWhere control={control} map={field.refWhere} onWhereChange={() => f.value && f.onChange("")}>
+              {(where) => (
+                <ReferenceSelect
+                  id={id}
+                  refKey={field.ref!}
+                  value={String(f.value ?? "")}
+                  initialLabel={refLabel}
+                  where={where}
+                  onChange={(v, label) => {
+                    f.onChange(v);
+                    onRefChange?.(label);
+                  }}
+                  disabled={disabled}
+                  invalid={invalid}
+                />
+              )}
+            </RefWhere>
           )}
         />
       );
@@ -239,4 +245,35 @@ function OptionChecks({
       ) : null}
     </div>
   );
+}
+
+/** Điều kiện lọc ô tham chiếu lấy từ các trường khác trên biểu mẫu (field.refWhere) */
+function RefWhere({
+  control,
+  map,
+  onWhereChange,
+  children,
+}: {
+  control: Control<Values>;
+  map?: Record<string, string>;
+  /** Điều kiện đổi (VD chuyển Mua vào sang Bán ra): bỏ mục đã chọn vì không còn khớp */
+  onWhereChange?: () => void;
+  children: (where: Record<string, string> | undefined) => React.ReactNode;
+}) {
+  const entries = Object.entries(map ?? {});
+  const vals = useWatch({ control, name: entries.map(([, k]) => k) }) as unknown[];
+  const where: Record<string, string> = {};
+  entries.forEach(([col], i) => {
+    const v = vals?.[i];
+    if (v !== null && v !== undefined && v !== "") where[col] = String(v);
+  });
+  const sig = JSON.stringify(where);
+  const prev = useRef(sig);
+  useEffect(() => {
+    if (prev.current !== sig) {
+      prev.current = sig;
+      onWhereChange?.();
+    }
+  }, [sig, onWhereChange]);
+  return <>{children(entries.length ? where : undefined)}</>;
 }

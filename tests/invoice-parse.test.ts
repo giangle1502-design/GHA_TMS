@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText } from "@/lib/invoice-parse";
+import { invoiceDirection, invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText } from "@/lib/invoice-parse";
 
 // Chữ đọc từ ảnh hóa đơn xăng (ảnh rõ, theo mẫu LE gửi 15/11/2026)
 const CLEAN = `Mẫu số 1
@@ -168,6 +168,7 @@ describe("điền sổ hóa đơn từ ảnh", () => {
       vat_amount: "800,000",
     });
     expect(invoiceDirectionHint(p, "sale")).toBeNull();
+    expect(invoiceDirection(p)).toBe("sale");
     expect(invoiceDirectionHint(p, "purchase")).toMatch(/bán ra/);
   });
   it("mua vào: hóa đơn xăng KKKNT, đối tác là người bán", () => {
@@ -187,6 +188,47 @@ describe("điền sổ hóa đơn từ ảnh", () => {
     expect(String(v.description)).toMatch(/^Xăng E10 RON 95.*23,33 lít$/);
     expect(v.notes).toBe("Đơn giá 21,430 đ/lít");
     expect(invoiceDirectionHint(p, "purchase")).toBeNull();
+    expect(invoiceDirection(p)).toBe("purchase");
     expect(invoiceDirectionHint(p, "sale")).toMatch(/mua vào/);
+  });
+});
+
+// Hóa đơn taxi GSM (mẫu LE gửi 16/11/2026): nhãn song ngữ, dòng tổng dạng bảng, thuế 8% đã tính sẵn
+const TAXI = `HÓA ĐƠN GIÁ TRỊ GIA TĂNG
+(VAT INVOICE)
+Ký hiệu (Serial): 1C26MHC
+Ngày (Date) 31 tháng (month) 10 năm (year) 2026
+Số (No.): 96984952
+MCQT: M1-26-XC2ZN-00097299516
+Tên đơn vị bán hàng (Company's Name): CHI NHÁNH THÀNH PHỐ HỒ CHÍ MINH - CÔNG TY CỔ PHẦN DI
+CHUYỂN XANH VÀ THÔNG MINH GSM
+Mã số thuế (Tax code): 0110269067-001
+Địa chỉ (Address): Lầu 20A, Vincom Đồng Khởi, 72 Lê Thánh Tôn, Phường Sài Gòn, TP Hồ Chí Minh, Việt Nam
+Họ tên người mua hàng (Customer's name): Lê Văn Giang
+Tên đơn vị mua hàng (CusName): CÔNG TY GHA LOGISTICS & SERVICES
+Mã số thuế (Tax code): 3703489735
+STT Tên hàng hóa, dịch vụ Đơn vị tính Số lượng Đơn giá Thành tiền Thuế suất GTGT Tiền thuế GTGT Thành tiền sau thuế
+1 Cước phí vận chuyển mã 01M66WR9BMJX0XP40AY47E7YNB Chuyến 1 286.111 286.111 8% 22.889 309.000
+Tổng cộng tiền thanh toán (Grand total): 286.111 22.889 309.000
+Số tiền viết bằng chữ (Amount in words): Ba trăm lẻ chín nghìn đồng chẵn`;
+
+describe("hóa đơn taxi có thuế 8% tính sẵn", () => {
+  it("lấy đúng chưa thuế, tiền thuế, tổng trên hóa đơn", () => {
+    const p = parseInvoiceText(TAXI);
+    expect(p).toMatchObject({
+      invoice_date: "2026-10-31",
+      invoice_no: "96984952",
+      invoice_symbol: "1C26MHC",
+      seller_name: "CHI NHÁNH THÀNH PHỐ HỒ CHÍ MINH - CÔNG TY CỔ PHẦN DI CHUYỂN XANH VÀ THÔNG MINH GSM",
+      seller_tax_code: "0110269067-001",
+      buyer_name: "CÔNG TY GHA LOGISTICS & SERVICES",
+      amount: 286111,
+      vat_amount: 22889,
+      total: 309000,
+      vat_rate: 8,
+      gha_is_buyer: true,
+    });
+    const v = invoiceToTaxInvoiceValues(p, "purchase", "");
+    expect(v).toMatchObject({ amount: "286,111", vat_rate: "8", vat_amount: "22,889" });
   });
 });

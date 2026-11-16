@@ -32,6 +32,8 @@ export type FieldDef = {
   options?: Option[];
   /** Thực thể được tham chiếu (khóa trong ENTITIES) với type = reference */
   ref?: string;
+  /** Ô tham chiếu chỉ hiện mục khớp trường khác trên biểu mẫu: { cột của danh mục: khóa trường } (VD hạng mục theo Mua vào / Bán ra) */
+  refWhere?: Record<string, string>;
   /** Hiển thị mặc định trong bảng */
   list?: boolean;
   /** Có bộ lọc nhanh trên bảng (select/boolean/reference) */
@@ -53,6 +55,16 @@ export type FieldDef = {
   integer?: boolean;
   /** Chỉ hiện khi trường khác có một trong các giá trị */
   showIf?: { field: string; in: string[] };
+  /**
+   * Chỉ hiện trên biểu mẫu khi nhãn của ô tham chiếu khác khớp mẫu (không dấu, không phân biệt hoa thường),
+   * hoặc khi orIf thỏa. VD ô Nhà cung cấp chỉ hiện khi Hạng mục là "Thuê xe ngoài 3PL". Máy chủ không xét điều kiện này.
+   */
+  showIfRefLabel?: { field: string; pattern: string; orIf?: { field: string; in: string[] } };
+  /**
+   * Biểu mẫu tự điền ô này bằng công thức khi người dùng đổi một trong các ô "from" (VD tiền VAT = Thành tiền × Thuế suất);
+   * vẫn sửa tay được, và không ghi đè khi ô này được điền cùng lúc (dán ảnh hóa đơn lấy đúng số trên hóa đơn).
+   */
+  autoCalc?: { formula: string; from: string[] };
   /** Chiếm cả hàng trên biểu mẫu */
   wide?: boolean;
   /** Mặc định khi tạo mới */
@@ -143,8 +155,8 @@ export type EntityDef = {
   createPerm?: string;
   /** Quyền khác cũng được xem danh sách (RLS vẫn lọc dòng, ví dụ người lập chỉ thấy phiếu của mình) */
   viewAnyOf?: string[];
-  /** Biểu mẫu có ô dán ảnh để tự điền (invoice = chi phí ngoài chuyến; sale_invoice / purchase_invoice = sổ hóa đơn bán ra / mua vào) */
-  imageFill?: "invoice" | "sale_invoice" | "purchase_invoice";
+  /** Biểu mẫu có ô dán ảnh để tự điền (invoice = chi phí ngoài chuyến; tax_invoice = sổ hóa đơn (tự nhận Mua vào / Bán ra)) */
+  imageFill?: "invoice" | "tax_invoice";
   /** Quyền khác cũng được thêm mới (ví dụ người lập phiếu thêm nhanh loại đề nghị ngay ở ô chọn) */
   createAnyOf?: string[];
 };

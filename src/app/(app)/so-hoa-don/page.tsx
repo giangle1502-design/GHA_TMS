@@ -46,11 +46,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     basePath: "/so-hoa-don",
     searchParams: sp,
     tabs: [
-      { key: "sale_invoices", label: "Hóa đơn bán ra (xuất cho khách)" },
-      { key: "purchase_invoices", label: "Hóa đơn mua vào (chi phí)" },
-      { key: "report_tax_invoice_month", label: "Theo tháng, loại" },
-      { key: "sale_invoice_categories", label: "Loại hóa đơn bán ra" },
-      { key: "purchase_invoice_categories", label: "Hạng mục chi phí" },
+      { key: "tax_invoices", label: "Hóa đơn" },
+      { key: "report_tax_invoice_month", label: "Theo tháng, hạng mục" },
+      { key: "tax_invoice_categories", label: "Hạng mục" },
     ],
   });
   const label = `${month.slice(5)}/${month.slice(0, 4)}`;
@@ -59,7 +57,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       <CompactDensity />
       <PageHeader
         title="Sổ hóa đơn bán ra, mua vào"
-        description="Hóa đơn bán ra: hóa đơn GHA xuất cho khách hàng (doanh thu). Hóa đơn mua vào: hóa đơn nhà cung cấp xuất cho GHA (3PL, xăng dầu, điện, ăn uống, taxi, vé máy bay…). Dán ảnh hóa đơn (Ctrl+V) trong ô Thêm để tự điền. Cân đối thuế tính từ hai sổ này, tách riêng với chi phí chuyến."
+        description="Hóa đơn bán ra: hóa đơn GHA xuất cho khách hàng (doanh thu). Hóa đơn mua vào: hóa đơn nhà cung cấp xuất cho GHA (3PL, xăng dầu, điện, ăn uống, taxi, vé máy bay…). Bấm Thêm, chọn Mua vào / Bán ra ở ô đầu tiên (dán ảnh hóa đơn bằng Ctrl+V thì tự nhận ra và tự điền). Cân đối thuế tính từ hai sổ này, tách riêng với chi phí chuyến."
         actions={
           <>
             <Button asChild variant="outline">

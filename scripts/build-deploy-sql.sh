@@ -193,5 +193,7 @@ upgrade nang-cap-chi-phi-ngoai-chuyen.sql "Chi phí ngoài chuyến, cân đối
   supabase/migrations/20261115009011_chi_phi_ngoai_chuyen.sql
 upgrade nang-cap-so-hoa-don.sql "Sổ hóa đơn bán ra / mua vào, cân đối thuế từ hóa đơn, đề nghị thanh toán từ hóa đơn mua vào" "to_regclass('public.tax_invoices') is not null" \
   supabase/migrations/20261116009012_so_hoa_don.sql
+upgrade nang-cap-so-hoa-don-truong-them.sql "Sổ hóa đơn: trường bổ sung tự thêm" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tax_invoices' and column_name = 'custom_fields')" \
+  supabase/migrations/20261116009013_so_hoa_don_truong_them.sql
 upgrade nang-cap-so-bao-phieu-giao-hang.sql "Số bao trên phiếu giao hàng (nhập ở dòng hàng, tự tính theo quy cách đóng gói)" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'shipment_items' and column_name = 'bag_count')" \
   supabase/migrations/20261116009014_so_bao_phieu_giao_hang.sql

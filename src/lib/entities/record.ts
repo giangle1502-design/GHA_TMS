@@ -430,3 +430,29 @@ export function advancedFields(fields: FieldDef[]): AdvField[] {
 export function moduleCustomFields(module: string, customRows: CustomFieldRow[], permissions?: Set<string>): FieldDef[] {
   return effectiveFields({ fields: [], customModule: module } as unknown as EntityDef, customRows, permissions);
 }
+
+/** Ô số, tiền đang là chuỗi "1,500,000" trên biểu mẫu: đổi sang số để tính công thức ngay khi gõ */
+export function numericValues(fields: FieldDef[], values: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...values };
+  for (const f of fields) {
+    if ((f.type === "currency" || f.type === "number" || f.type === "percent") && typeof out[f.key] === "string") {
+      const n = parseNumberVN(out[f.key], f.type === "currency");
+      out[f.key] = n === null || Number.isNaN(n) ? null : n;
+    }
+  }
+  return out;
+}
+
+/** Điều kiện hiện theo nhãn ô tham chiếu (showIfRefLabel), chỉ dùng trên biểu mẫu */
+export function isShownByRefLabel(field: FieldDef, values: Record<string, unknown>, labels: Record<string, string>): boolean {
+  const c = field.showIfRefLabel;
+  if (!c) return true;
+  if (c.orIf && c.orIf.in.includes(String(values[c.orIf.field] ?? ""))) return true;
+  if (!values[c.field]) return false;
+  const fold = (labels[c.field] ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase();
+  return new RegExp(c.pattern, "i").test(fold);
+}

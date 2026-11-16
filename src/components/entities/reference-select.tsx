@@ -60,6 +60,14 @@ export function ReferenceSelect({
   const [quickOpen, setQuickOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Giá trị đổi từ bên ngoài (VD dán ảnh hóa đơn tự chọn khách hàng): bỏ nhãn cũ để tải nhãn mới
+  const labelFor = useRef(value);
+  useEffect(() => {
+    if (labelFor.current !== value) {
+      labelFor.current = value;
+      setLabel(options.find((o) => o.value === value)?.label ?? "");
+    }
+  }, [value, options]);
   // Hiển thị nhãn khi chỉ có id (ví dụ bản ghi mới tải)
   useEffect(() => {
     if (value && !label) {
@@ -104,6 +112,7 @@ export function ReferenceSelect({
 
   function pick(o: RefOption | null) {
     setLabel(o?.label ?? "");
+    labelFor.current = o?.value ?? "";
     onChange(o?.value ?? "", o?.label ?? "");
     setOpen(false);
   }

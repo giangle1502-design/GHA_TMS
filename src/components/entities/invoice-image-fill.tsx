@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { ClipboardPaste, ImageUp, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatNumber } from "@/lib/format";
-import { invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText, type ParsedInvoice } from "@/lib/invoice-parse";
+import { invoiceDirection, invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText, type ParsedInvoice } from "@/lib/invoice-parse";
 
 /**
  * Dán (Ctrl+V) hoặc chọn ảnh hóa đơn: đọc chữ ngay trên máy, điền ngày, số HĐ, người bán, số lít, đơn giá, tiền, thuế suất.
@@ -12,12 +12,18 @@ import { invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, p
  */
 export function InvoiceImageFill({
   mode = "invoice",
+  autoDirection = false,
+  onParsed,
   onFill,
   getNotes,
   disabled,
 }: {
   /** invoice = chi phí ngoài chuyến; sale_invoice / purchase_invoice = sổ hóa đơn bán ra / mua vào */
   mode?: "invoice" | "sale_invoice" | "purchase_invoice";
+  /** Sổ hóa đơn: tự chọn Mua vào / Bán ra theo vị trí MST của GHA trên hóa đơn (điền thêm trường direction) */
+  autoDirection?: boolean;
+  /** Gọi sau khi điền (sổ hóa đơn): tìm khách hàng / nhà cung cấp, gợi ý hạng mục */
+  onParsed?: (p: ParsedInvoice, dir: "sale" | "purchase") => void | Promise<void>;
   onFill: (values: Record<string, unknown>) => void;
   getNotes: () => string;
   disabled?: boolean;
@@ -44,10 +50,18 @@ export function InvoiceImageFill({
       }
       if (mode === "invoice") onFill(invoiceToFormValues(p, getNotes()));
       else {
-        const dir = mode === "sale_invoice" ? "sale" : "purchase";
-        onFill(invoiceToTaxInvoiceValues(p, dir, getNotes()));
-        const hint = invoiceDirectionHint(p, dir);
-        if (hint) toast.warning(hint);
+        const cur = mode === "sale_invoice" ? "sale" : "purchase";
+        const detected = invoiceDirection(p);
+        if (autoDirection) {
+          const dir = detected ?? cur;
+          onFill({ direction: dir, ...invoiceToTaxInvoiceValues(p, dir, getNotes()) });
+          void onParsed?.(p, dir);
+          if (dir !== cur) toast.info(dir === "sale" ? "GHA là người bán trên hóa đơn này: đã chọn Bán ra." : "GHA là người mua trên hóa đơn này: đã chọn Mua vào.");
+        } else {
+          onFill(invoiceToTaxInvoiceValues(p, cur, getNotes()));
+          const hint = invoiceDirectionHint(p, cur);
+          if (hint) toast.warning(hint);
+        }
       }
       toast.success(`Đã điền: ${p.found.join(", ")}. Kiểm tra lại trước khi lưu.`);
     } catch (e) {

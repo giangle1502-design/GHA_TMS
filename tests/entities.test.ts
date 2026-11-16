@@ -121,3 +121,35 @@ describe("Nhập Excel/CSV", () => {
     expect(slugifyKey("123 abc")).toBe("f_123_abc");
   });
 });
+
+describe("sổ hóa đơn: tổng tự cộng trên biểu mẫu", () => {
+  it("Thành tiền + VAT dạng chuỗi 1,500,000 vẫn ra Tổng", async () => {
+    const { getEntity } = await import("@/lib/entities/definitions");
+    const { numericValues } = await import("@/lib/entities/record");
+    const { computeFormula } = await import("@/lib/formula");
+    const e = getEntity("tax_invoices");
+    const f = e.fields.find((x) => x.key === "total_preview")!;
+    expect(computeFormula(f.formula, numericValues(e.fields, { amount: "2,000,000", vat_amount: "160,000" }))).toBe(2160000);
+    expect(computeFormula(f.formula, numericValues(e.fields, { amount: "500,000", vat_amount: "" }))).toBe(500000);
+    expect(e.fields[0].key).toBe("direction");
+    expect(e.fields.find((x) => x.key === "category_id")?.refWhere).toEqual({ direction: "direction" });
+  });
+});
+
+
+describe("sổ hóa đơn: ô khách hàng / nhà cung cấp theo hạng mục", () => {
+  it("chỉ hiện nhà cung cấp với hạng mục 3PL; bán ra luôn hiện tên khách", async () => {
+    const { getEntity } = await import("@/lib/entities/definitions");
+    const { isShownByRefLabel } = await import("@/lib/entities/record");
+    const e = getEntity("tax_invoices");
+    const sup = e.fields.find((x) => x.key === "supplier_id")!;
+    const name = e.fields.find((x) => x.key === "partner_name")!;
+    const buy = (label: string) => [{ direction: "purchase", category_id: "x" }, { category_id: label }] as const;
+    expect(isShownByRefLabel(sup, ...buy("Thuê xe ngoài 3PL"))).toBe(true);
+    expect(isShownByRefLabel(sup, ...buy("Bốc xếp thuê ngoài"))).toBe(true);
+    expect(isShownByRefLabel(sup, ...buy("Xăng dầu"))).toBe(false);
+    expect(isShownByRefLabel(name, ...buy("Ăn uống, tiếp khách"))).toBe(false);
+    expect(isShownByRefLabel(name, { direction: "sale", category_id: "" }, {})).toBe(true);
+    expect(isShownByRefLabel(sup, { direction: "purchase", category_id: "" }, { category_id: "Thuê xe ngoài 3PL" })).toBe(false);
+  });
+});

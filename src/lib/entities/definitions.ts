@@ -185,131 +185,115 @@ export const VAT_RATE_OPTIONS = [
 ];
 
 /** Sổ hóa đơn bán ra (GHA xuất cho khách) / mua vào (nhà cung cấp xuất cho GHA), GHA 9012 */
-/**
- * Hóa đơn mua vào: LE chỉ cần Hạng mục, Ngày, Số hóa đơn, Thành tiền, VAT, Tổng (16/11/2026).
- * Các cột khác ẩn khỏi biểu mẫu (giữ nguyên giá trị khi sửa): thanh toán dùng cho đề nghị thanh toán.
- */
-const PURCHASE_INVOICE_FIELDS: FieldDef[] = [
-  {
-    key: "category_id", label: "Hạng mục", type: "reference", ref: "purchase_invoice_categories", required: true, list: true, filter: true,
-    help: "VD: Xăng dầu, Vé máy bay, Ăn uống, Điện, Thuê xe 3PL. Chưa có thì gõ tên rồi bấm Thêm mới ngay ở ô chọn.",
-  },
-  { key: "invoice_date", label: "Ngày", type: "date", required: true, list: true, defaultValue: "today" },
-  { key: "invoice_no", label: "Số hóa đơn", type: "text", list: true, maxLength: 50 },
-  { key: "amount", label: "Thành tiền", type: "currency", required: true, min: 0, list: true, defaultValue: 0, help: "Tiền chưa thuế GTGT." },
-  { key: "vat_amount", label: "VAT", type: "currency", min: 0, list: true, help: "Tiền thuế GTGT trên hóa đơn. Để trống thì tự tính theo thuế suất mặc định của hạng mục." },
-  { key: "total_amount", label: "Tổng", type: "currency", list: true, readOnly: true, hideInForm: true },
-  {
-    key: "payment_status", label: "Đã trả", type: "select", list: true, filter: true, hideInForm: true,
-    options: [
-      { value: "unpaid", label: "Chưa trả", tone: "amber" },
-      { value: "paid", label: "Đã trả", tone: "green" },
-    ],
-  },
-  { key: "code", label: "Mã", type: "text", hideInForm: true },
-  { key: "partner_name", label: "Người bán", type: "text", hideInForm: true },
-  { key: "invoice_symbol", label: "Ký hiệu", type: "text", hideInForm: true },
-  { key: "vat_rate", label: "Thuế suất", type: "select", options: VAT_RATE_OPTIONS, hideInForm: true },
-  { key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", hideInForm: true },
-  { key: "paid_date", label: "Ngày trả", type: "date", hideInForm: true },
+const DIRECTION_OPTIONS: Option[] = [
+  { value: "purchase", label: "Mua vào (chi phí)", tone: "amber" },
+  { value: "sale", label: "Bán ra (xuất cho khách)", tone: "green" },
 ];
+const onlySale = { showIf: { field: "direction", in: ["sale"] } };
+/** Hóa đơn mua vào cần ghi nhà cung cấp: thuê xe 3PL, thuê ngoài, bốc xếp (xăng dầu, ăn uống… thì không) */
+const partnerCategory = { field: "category_id", pattern: "3pl|thue ngoai|thue xe|boc xep|nha xe" };
 
-function invoiceDef(dir: "sale" | "purchase"): EntityDef {
-  const sale = dir === "sale";
-  return {
-    key: sale ? "sale_invoices" : "purchase_invoices",
-    table: "tax_invoices",
-    label: sale ? "Hóa đơn bán ra" : "Hóa đơn mua vào",
-    singular: sale ? "hóa đơn bán ra" : "hóa đơn mua vào",
-    perm: "overhead",
-    fixed: { direction: dir },
-    imageFill: sale ? "sale_invoice" : "purchase_invoice",
-    hasExport: true,
-    autoCode: true,
-    search: ["code", "invoice_no", "invoice_symbol", "partner_name", "partner_tax_code", "description", "notes"],
-    defaultSort: { key: "invoice_date", desc: true },
-    labelCols: ["invoice_no", "partner_name"],
-    importExamples: sale
-      ? [{ invoice_date: "05/11/2026", invoice_symbol: "C26TGH", invoice_no: "123", category_id: "Cước vận chuyển", partner_name: "Công ty TNHH ABC", partner_tax_code: "0301234567", amount: "10,000,000", vat_rate: "8%" }]
-      : [
-          { invoice_date: "27/07/2026", category_id: "Xăng dầu", invoice_no: "422579", amount: "500,000", vat_amount: "0" },
-          { invoice_date: "10/11/2026", category_id: "Vé máy bay, tàu xe", invoice_no: "555", amount: "2,000,000", vat_amount: "160,000" },
-        ],
-    fields: sale ? saleFields() : PURCHASE_INVOICE_FIELDS,
-  };
-  function saleFields(): FieldDef[] {
-    return [
-      { key: "code", label: "Mã", type: "text", maxLength: 30, placeholder: "Để trống để tự sinh", help: "Để trống thì tự đặt mã HD00001…" },
-      { key: "invoice_date", label: "Ngày hóa đơn", type: "date", required: true, list: true, defaultValue: "today" },
-      { key: "invoice_symbol", label: "Ký hiệu", type: "text", list: true, maxLength: 20, compactUpper: true, placeholder: "VD: C26MAV" },
-      { key: "invoice_no", label: "Số hóa đơn", type: "text", list: true, maxLength: 50 },
-      {
-        key: "category_id", label: "Loại hóa đơn", type: "reference", ref: sale ? "sale_invoice_categories" : "purchase_invoice_categories", list: true, filter: true,
-        help: "Chưa có thì gõ tên rồi bấm Thêm mới ngay ở ô chọn.",
-      },
-      sale
-        ? { key: "customer_id", label: "Khách hàng", type: "reference", ref: "customers", filter: true, help: "Không bắt buộc. Chọn thì tự điền tên, MST khách." }
-        : { key: "supplier_id", label: "Nhà cung cấp", type: "reference", ref: "suppliers", filter: true, help: "Không bắt buộc. Chọn thì tự điền tên, MST nhà cung cấp (VD nhà xe 3PL)." },
-      {
-        key: "partner_name", label: sale ? "Tên khách hàng (người mua)" : "Tên người bán", type: "text", list: true, wide: true, maxLength: 300,
-        placeholder: sale ? "Để trống thì lấy theo Khách hàng" : "VD: Công ty CP AV Connect Việt Nam",
-      },
-      { key: "partner_tax_code", label: sale ? "MST khách" : "MST người bán", type: "text", list: true, maxLength: 20 },
-      ...(sale ? [] : [{ key: "vehicle_id", label: "Xe", type: "reference", ref: "vehicles", help: "Không bắt buộc: xăng dầu, sửa chữa của xe nào." } as FieldDef]),
-      { key: "description", label: "Nội dung", type: "text", list: true, wide: true, maxLength: 500, placeholder: sale ? "VD: Cước vận chuyển tháng 10/2026" : "VD: Xăng E10 RON 95, 23,33 lít" },
-      { key: "amount", label: "Tiền chưa thuế", type: "currency", required: true, min: 0, list: true, defaultValue: 0 },
-      { key: "vat_rate", label: "Thuế suất", type: "select", list: true, options: VAT_RATE_OPTIONS, help: "Để trống thì lấy theo loại hóa đơn." },
-      { key: "vat_amount", label: "Tiền thuế GTGT", type: "currency", min: 0, list: true, help: "Để trống thì tự tính = tiền chưa thuế × thuế suất. Ghi đúng số trên hóa đơn nếu lệch do làm tròn." },
-      { key: "total_amount", label: "Tổng thanh toán", type: "currency", list: true, readOnly: true, hideInForm: true },
-      ...(sale
-        ? []
-        : [{ key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", list: true, filter: true, defaultValue: true, help: "Bỏ chọn với hóa đơn không được tính vào chi phí được trừ / không khấu trừ VAT." } as FieldDef]),
-      {
-        key: "payment_status", label: sale ? "Khách đã trả" : "Đã trả người bán", type: "select", required: true, list: true, filter: true, defaultValue: "unpaid",
-        options: [
-          { value: "unpaid", label: sale ? "Chưa thu" : "Chưa trả", tone: "amber" },
-          { value: "paid", label: sale ? "Đã thu" : "Đã trả", tone: "green" },
-        ],
-        help: sale ? undefined : "Hóa đơn chưa trả lấy được vào Giấy đề nghị thanh toán.",
-      },
-      { key: "paid_date", label: sale ? "Ngày thu" : "Ngày trả", type: "date", showIf: { field: "payment_status", in: ["paid"] } },
-      notes,
-    ];
-  }
-}
+/**
+ * Sổ hóa đơn (GHA 9012): một sổ, chọn Mua vào / Bán ra ở ô đầu tiên của biểu mẫu.
+ * Mua vào: LE chỉ cần Hạng mục, Ngày, Số hóa đơn, Thành tiền, VAT, Tổng (16/11/2026).
+ * Bán ra có thêm ký hiệu, khách hàng, MST. Thanh toán, thuế suất ẩn khỏi biểu mẫu (giữ nguyên khi sửa).
+ */
+const TAX_INVOICE: EntityDef = {
+  key: "tax_invoices",
+  table: "tax_invoices",
+  customModule: "tax_invoices",
+  label: "Sổ hóa đơn",
+  singular: "hóa đơn",
+  perm: "overhead",
+  imageFill: "tax_invoice",
+  hasExport: true,
+  autoCode: true,
+  statusTabs: "direction",
+  search: ["code", "invoice_no", "invoice_symbol", "partner_name", "partner_tax_code", "description", "notes"],
+  defaultSort: { key: "invoice_date", desc: true },
+  labelCols: ["invoice_no", "partner_name"],
+  importExamples: [
+    { direction: "Mua vào (chi phí)", invoice_date: "27/07/2026", category_id: "Xăng dầu", invoice_no: "422579", amount: "500,000", vat_rate: "KKKNT (không kê khai, tính nộp)", vat_amount: "0" },
+    { direction: "Mua vào (chi phí)", invoice_date: "10/11/2026", category_id: "Vé máy bay, tàu xe", invoice_no: "555", amount: "2,000,000", vat_rate: "8%", vat_amount: "160,000" },
+    { direction: "Bán ra (xuất cho khách)", invoice_date: "05/11/2026", category_id: "Cước vận chuyển", invoice_symbol: "C26TGH", invoice_no: "123", partner_name: "Công ty TNHH ABC", amount: "10,000,000", vat_rate: "8%", vat_amount: "800,000" },
+  ],
+  fields: [
+    {
+      key: "direction", label: "Loại hóa đơn", type: "select", required: true, list: true, filter: true, wide: true, defaultValue: "purchase", options: DIRECTION_OPTIONS,
+      help: "Mua vào: hóa đơn 3PL, xăng dầu, điện, ăn uống, taxi, vé máy bay… Bán ra: hóa đơn GHA xuất cho khách. Dán ảnh thì tự nhận ra.",
+    },
+    {
+      key: "category_id", label: "Hạng mục", type: "reference", ref: "tax_invoice_categories", refWhere: { direction: "direction" }, required: true, list: true, filter: true,
+      help: "VD: Xăng dầu, Vé máy bay, Ăn uống, Cước vận chuyển. Chưa có thì gõ tên rồi bấm Thêm mới ngay ở ô chọn.",
+    },
+    { key: "invoice_date", label: "Ngày", type: "date", required: true, list: true, defaultValue: "today" },
+    { key: "invoice_no", label: "Số hóa đơn", type: "text", list: true, maxLength: 50 },
+    { key: "invoice_symbol", label: "Ký hiệu", type: "text", list: true, maxLength: 20, compactUpper: true, placeholder: "VD: C26TGH", ...onlySale },
+    { key: "customer_id", label: "Khách hàng", type: "reference", ref: "customers", filter: true, help: "Dán ảnh thì tự chọn theo MST / tên trên hóa đơn (nếu có trong danh mục).", ...onlySale },
+    { key: "supplier_id", label: "Nhà cung cấp 3PL", type: "reference", ref: "suppliers", filter: true, showIfRefLabel: partnerCategory, help: "Dán ảnh thì tự chọn theo MST / tên người bán trên hóa đơn (nếu có trong danh mục)." },
+    { key: "partner_name", label: "Tên khách hàng / nhà cung cấp (trên hóa đơn)", type: "text", list: true, wide: true, maxLength: 300, placeholder: "Dán ảnh thì tự điền; để trống thì lấy theo danh mục", showIfRefLabel: { ...partnerCategory, orIf: { field: "direction", in: ["sale"] } } },
+    { key: "partner_tax_code", label: "MST", type: "text", maxLength: 20, showIfRefLabel: { ...partnerCategory, orIf: { field: "direction", in: ["sale"] } } },
+    { key: "amount", label: "Thành tiền", type: "currency", required: true, min: 0, list: true, defaultValue: 0, help: "Tiền chưa thuế GTGT." },
+    {
+      key: "vat_rate", label: "Thuế suất VAT", type: "select", required: true, list: true, options: VAT_RATE_OPTIONS,
+      help: "Chọn đúng thuế suất ghi trên hóa đơn (0%, 5%, 8%, 10%, KCT, KKKNT).",
+    },
+    {
+      key: "vat_amount", label: "Tiền VAT", type: "currency", min: 0, list: true,
+      autoCalc: { formula: "ROUND(N(amount) * N(vat_rate) / 100, 0)", from: ["amount", "vat_rate"] },
+      help: "Tự tính = Thành tiền × Thuế suất. Hóa đơn ghi số khác (làm tròn) thì sửa lại đúng số trên hóa đơn.",
+    },
+    { key: "total_preview", label: "Tổng", type: "formula", formula: "N(amount) + N(vat_amount)", help: "Tự cộng Thành tiền + VAT." },
+    { key: "total_amount", label: "Tổng", type: "currency", list: true, readOnly: true, hideInForm: true },
+    {
+      key: "description", label: "Diễn giải", type: "text", list: true, wide: true, maxLength: 500,
+      placeholder: "VD: Hóa đơn cước vận chuyển tháng 10/2026", help: "Dán ảnh thì tự điền tên hàng (nếu đọc được), sửa lại được.",
+    },
+    { key: "notes", label: "Ghi chú", type: "textarea", wide: true, maxLength: 1000 },
+    {
+      key: "payment_status", label: "Thanh toán", type: "select", list: true, filter: true, hideInForm: true,
+      options: [
+        { value: "unpaid", label: "Chưa thanh toán", tone: "amber" },
+        { value: "paid", label: "Đã thanh toán", tone: "green" },
+      ],
+    },
+    { key: "code", label: "Mã", type: "text", hideInForm: true },
 
-function invoiceCategoryDef(dir: "sale" | "purchase"): EntityDef {
-  const sale = dir === "sale";
-  return {
-    key: sale ? "sale_invoice_categories" : "purchase_invoice_categories",
-    table: "tax_invoice_categories",
-    label: sale ? "Loại hóa đơn bán ra" : "Hạng mục chi phí",
-    singular: sale ? "loại hóa đơn" : "hạng mục",
-    perm: "overhead",
-    fixed: { direction: dir },
-    hasExport: false,
-    autoCode: true,
-    search: ["code", "name", "group_name"],
-    defaultSort: { key: "sort_order" },
-    labelCols: ["name"],
-    quickFields: ["name", "group_name", "default_vat_rate"],
-    activeFilter: { col: "is_active", value: true },
-    fields: [
-      code(true, { help: "Để trống thì tự đặt mã LH001…" }),
-      { key: "name", label: "Tên loại", type: "text", required: true, list: true, maxLength: 150, placeholder: sale ? "VD: Cước vận chuyển" : "VD: Vé máy bay, tàu xe" },
-      {
-        key: "group_name", label: "Nhóm", type: "text", list: true, maxLength: 100,
-        suggestions: sale ? ["Vận chuyển", "Dịch vụ khác", "Khác"] : ["Vận chuyển", "Xe", "Văn phòng", "Công tác, tiếp khách", "Thuế, kế toán", "Tài chính", "Khác"],
-        help: "Gom nhóm trên bảng cân đối thuế.",
-      },
-      { key: "default_vat_rate", label: "Thuế suất mặc định", type: "select", list: true, options: VAT_RATE_OPTIONS },
-      ...(sale ? [] : [{ key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", list: true, defaultValue: true } as FieldDef]),
-      { ...sortOrder, list: true },
-      isActive,
-      notes,
-    ],
-  };
-}
+    { key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", hideInForm: true },
+    { key: "paid_date", label: "Ngày thanh toán", type: "date", hideInForm: true },
+  ],
+};
+
+const TAX_INVOICE_CATEGORIES: EntityDef = {
+  key: "tax_invoice_categories",
+  table: "tax_invoice_categories",
+  label: "Hạng mục hóa đơn",
+  singular: "hạng mục",
+  perm: "overhead",
+  hasExport: false,
+  autoCode: true,
+  statusTabs: "direction",
+  search: ["code", "name", "group_name"],
+  defaultSort: { key: "sort_order" },
+  labelCols: ["name"],
+  quickFields: ["direction", "name", "group_name", "default_vat_rate"],
+  activeFilter: { col: "is_active", value: true },
+  fields: [
+    { key: "direction", label: "Dùng cho", type: "select", required: true, list: true, filter: true, defaultValue: "purchase", options: DIRECTION_OPTIONS },
+    code(true, { help: "Để trống thì tự đặt mã LH001…" }),
+    { key: "name", label: "Tên hạng mục", type: "text", required: true, list: true, maxLength: 150, placeholder: "VD: Vé máy bay, tàu xe" },
+    {
+      key: "group_name", label: "Nhóm", type: "text", list: true, maxLength: 100,
+      suggestions: ["Vận chuyển", "Xe", "Văn phòng", "Công tác, tiếp khách", "Thuế, kế toán", "Tài chính", "Dịch vụ khác", "Khác"],
+      help: "Gom nhóm trên bảng cân đối thuế.",
+    },
+    { key: "default_vat_rate", label: "Thuế suất mặc định", type: "select", list: true, options: VAT_RATE_OPTIONS, help: "Dùng để tự tính VAT khi để trống ô VAT." },
+    { key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", list: true, defaultValue: true, showIf: { field: "direction", in: ["purchase"] } },
+    { ...sortOrder, list: true },
+    isActive,
+    notes,
+  ],
+};
 
 export const ENTITIES: Record<string, EntityDef> = {
   // ---------------------------------------------------------------- Phương tiện
@@ -1909,10 +1893,8 @@ export const ENTITIES: Record<string, EntityDef> = {
     ],
   },
   // ---------------------------------------------------------------- Sổ hóa đơn bán ra / mua vào, cân đối thuế (GHA 9012)
-  sale_invoices: invoiceDef("sale"),
-  purchase_invoices: invoiceDef("purchase"),
-  sale_invoice_categories: invoiceCategoryDef("sale"),
-  purchase_invoice_categories: invoiceCategoryDef("purchase"),
+  tax_invoices: TAX_INVOICE,
+  tax_invoice_categories: TAX_INVOICE_CATEGORIES,
   report_tax_invoice_month: {
     key: "report_tax_invoice_month",
     table: "report_tax_invoice_month",
