@@ -3,11 +3,11 @@ import { notFound } from "next/navigation";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/entities/record";
-import { noteFileName, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
+import { noteBaseName, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
 import { DeliveryNoteSheet } from "@/components/delivery-note/delivery-note-sheet";
 import { DeliveryNoteToolbar } from "@/components/delivery-note/delivery-note-toolbar";
 import { DeliveryNoteBatch } from "@/components/delivery-note/delivery-note-batch";
-import { loadYardConfirm } from "@/lib/delivery-note-confirm";
+import { loadPickupNames, loadYardConfirm } from "@/lib/delivery-note-confirm";
 
 export const metadata: Metadata = { title: "Phiếu giao hàng" };
 
@@ -28,6 +28,7 @@ export default async function DeliveryNotePage({
   if (error) throw error;
   if (!data) notFound();
   const d = data as DeliveryNoteData;
+  await loadPickupNames(supabase, [{ id, d }]);
   // ?mau=xac-nhan: hàng giao về Bãi xe GHA, in kèm dấu ĐÃ NHẬN HÀNG
   if (sp.mau === "xac-nhan") {
     const notes = [{ id, d }];
@@ -35,7 +36,7 @@ export default async function DeliveryNotePage({
   }
   return (
     <div className="min-h-screen bg-muted/50 p-4 print:bg-white print:p-0">
-      <DeliveryNoteToolbar backHref={safeBackHref(sp.ve, `/chuyen-xe/${id}`)} fileName={noteFileName(d.shipment_code)} />
+      <DeliveryNoteToolbar backHref={safeBackHref(sp.ve, `/chuyen-xe/${id}`)} name={noteBaseName(d.pickup_name, d.shipment_code)} />
       <DeliveryNoteSheet d={d} />
     </div>
   );

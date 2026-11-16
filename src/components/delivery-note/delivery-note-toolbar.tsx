@@ -1,14 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ChevronLeft, Download, Loader2, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-/** Nút In / Tải PDF cho phiếu giao hàng (một hoặc nhiều phiếu, mỗi phiếu một trang A4). PDF dựng ở trình duyệt (ảnh A4) để chạy được cả trên điện thoại tài xế. */
-export function DeliveryNoteToolbar({ backHref, fileName, count = 1 }: { backHref: string; fileName: string; /** Số phiếu đang hiện (in hàng loạt) */ count?: number }) {
+/**
+ * Nút In / Tải PDF cho phiếu giao hàng (một hoặc nhiều phiếu, mỗi phiếu một trang A4). PDF dựng ở trình duyệt (ảnh A4) để chạy được cả trên điện thoại tài xế.
+ * name: tên phiếu không đuôi ("SP-ITC - SNOV-0004"). Dùng cho file "Tải PDF" và làm tiêu đề trang, vì trình duyệt lấy tiêu đề trang
+ * làm tên file mặc định khi bấm In → "Lưu dưới dạng PDF".
+ */
+export function DeliveryNoteToolbar({ backHref, name, count = 1 }: { backHref: string; name: string; /** Số phiếu đang hiện (in hàng loạt) */ count?: number }) {
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const prev = document.title;
+    document.title = name;
+    // Next.js có thể đặt lại tiêu đề sau khi điều hướng: đặt lại ngay trước khi in cho chắc
+    const before = () => {
+      document.title = name;
+    };
+    window.addEventListener("beforeprint", before);
+    return () => {
+      window.removeEventListener("beforeprint", before);
+      document.title = prev;
+    };
+  }, [name]);
   const [progress, setProgress] = useState("");
   const many = count > 1;
 
@@ -42,7 +59,7 @@ export function DeliveryNoteToolbar({ backHref, fileName, count = 1 }: { backHre
         pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", margin + (w - w * scale) / 2, margin, w * scale, h * scale);
         if (sheets.length > 1) setProgress(`${i + 1}/${sheets.length}`);
       }
-      pdf.save(fileName);
+      pdf.save(`${name}.pdf`);
     } catch (e) {
       console.error(e);
       toast.error("Không tạo được PDF. Hãy dùng nút In phiếu và chọn “Lưu dưới dạng PDF”.");
@@ -60,7 +77,10 @@ export function DeliveryNoteToolbar({ backHref, fileName, count = 1 }: { backHre
         </Link>
       </Button>
       <div className="flex-1" />
-      <Button size="lg" variant="outline" onClick={() => window.print()} disabled={count === 0}>
+      <Button size="lg" variant="outline" onClick={() => {
+          document.title = name;
+          window.print();
+        }} disabled={count === 0}>
         <Printer /> {many ? `In ${count} phiếu` : "In phiếu"}
       </Button>
       <Button size="lg" onClick={downloadPdf} disabled={busy || count === 0}>

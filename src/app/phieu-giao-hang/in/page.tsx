@@ -3,7 +3,7 @@ import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { parseNoteIds, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
 import { DeliveryNoteBatch } from "@/components/delivery-note/delivery-note-batch";
-import { loadYardConfirm } from "@/lib/delivery-note-confirm";
+import { loadPickupNames, loadYardConfirm } from "@/lib/delivery-note-confirm";
 
 export const metadata: Metadata = { title: "In phiếu giao hàng" };
 
@@ -27,6 +27,7 @@ export default async function DeliveryNoteBatchPage({ searchParams }: { searchPa
       if (r.data) notes.push({ id: part[j], d: r.data as DeliveryNoteData });
     });
   }
+  await loadPickupNames(supabase, notes);
   const confirm = sp.mau === "xac-nhan" ? await loadYardConfirm(supabase, notes) : undefined;
   return <DeliveryNoteBatch notes={notes} backHref={backHref} confirm={confirm} />;
 }
