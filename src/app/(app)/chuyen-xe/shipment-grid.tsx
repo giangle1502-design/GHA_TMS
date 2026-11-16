@@ -35,6 +35,8 @@ import { StatusBadge } from "@/components/dispatch/status-badge";
 import { updateShipmentField, type EditableField } from "./actions";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
 import { VehicleOrderCell } from "@/components/dispatch/vehicle-order-cell";
+import { ContainerNoCell } from "@/components/dispatch/container-no-cell";
+import { VehiclePlateCell } from "@/components/dispatch/vehicle-plate-cell";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 import { isGhaYard } from "@/lib/delivery-note";
 
@@ -114,7 +116,8 @@ const COLS: Col[] = [
   },
   { key: "plan_code", label: "Kế hoạch", width: 100, defaultHidden: true, render: (r) => r.plan_code },
   { key: "vehicle_type_name", label: "Loại xe", width: 120, render: (r) => r.vehicle_type_name },
-  { key: "plate_number", label: "Biển số", width: 100, render: (r) => r.plate_number },
+  { key: "container_no", label: "Số cont", width: 120, render: (r) => r.container_no },
+  { key: "plate_number", label: "Biển số", width: 110, render: (r) => r.plate_number },
   { key: "driver_name", label: "Tài xế", width: 150, render: (r) => r.driver_name },
   { key: "quantity", label: "SL", width: 70, align: "right", edit: "quantity", render: (r) => formatNumber(r.quantity) },
   { key: "pricing_unit", label: "ĐVT", width: 76, render: (r) => PRICING_UNITS[r.pricing_unit] ?? r.pricing_unit },
@@ -217,6 +220,7 @@ export function ShipmentGrid({
   canSeeProfit = false,
   canFillDriver = false,
   canSetOrder = false,
+  canAssign = false,
 }: {
   rows: ShipmentListRow[];
   canEdit: boolean;
@@ -232,6 +236,8 @@ export function ShipmentGrid({
   canFillDriver?: boolean;
   /** Nhập thứ tự chuyến của xe trong ngày (quyền điều phối) */
   canSetOrder?: boolean;
+  /** Đổi số xe ngay trên bảng (quyền phân công chuyến) */
+  canAssign?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -284,6 +290,9 @@ export function ShipmentGrid({
           const r = row.original;
           const editable = canEdit && c.edit && (c.edit === "notes" || !LOCKED_STATUSES.includes(r.status));
           if (c.key === "trip_order") return <VehicleOrderCell r={r} editable={canSetOrder} />;
+          // Sửa nhanh số cont, số xe (chọn trong danh mục xe) ngay trên bảng
+          if (c.key === "container_no") return <ContainerNoCell r={r} editable={canEdit} />;
+          if (c.key === "plate_number") return <VehiclePlateCell r={r} editable={canAssign} empty="" className="-ml-1" />;
           if (c.key === "driver_name" && r.driver_id)
             return (
               <div className="flex items-center gap-1">
@@ -291,10 +300,10 @@ export function ShipmentGrid({
                 <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} />
               </div>
             );
-          return editable ? <EditCell row={r} col={c} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? nr : x)))} /> : c.render(r);
+          return editable ? <EditCell row={r} col={c} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} /> : c.render(r);
         },
       })),
-    [canEdit, allCols, canFillDriver, canSetOrder],
+    [canEdit, allCols, canFillDriver, canSetOrder, canAssign],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library

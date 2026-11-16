@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { attachDriverPay } from "@/lib/driver-pay";
+import { attachContainerNo } from "@/lib/shipment-container";
 import Link from "next/link";
 import { Ban, ClipboardPaste, FileSpreadsheet, ReceiptText } from "lucide-react";
 import { redirect } from "next/navigation";
@@ -76,7 +77,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   ]);
   if (listRes.error) throw listRes.error;
   if (sumRes.error) throw sumRes.error;
-  const listRows = await attachDriverPay(supabase, (listRes.data ?? []) as ShipmentListRow[]);
+  const listRows = await attachContainerNo(supabase, await attachDriverPay(supabase, (listRes.data ?? []) as ShipmentListRow[]));
   // Điền nhanh CCCD / GPLX còn thiếu trong hộp Thông tin tài xế
   const canFillDriver = me.permissions.has("dispatch.update") || (me.permissions.has("drivers.view_sensitive") && me.permissions.has("drivers.update"));
   // Lời/lỗ từng chuyến của trang đang xem (chỉ người có quyền xem chi phí hoặc báo cáo)
@@ -188,7 +189,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
             <Ban className="size-4 text-destructive" /> Chuyến hủy ({cancelledCount})
           </Link>
         </div>
-        <ShipmentGrid rows={rows} canEdit={canEdit} view={view} adv={f.adv} advLabels={advLabels} customDefs={custom.defs} customAdv={custom.adv} canAddField={me.permissions.has("fields.configure")} canSeeProfit={canSeeProfit} canFillDriver={canFillDriver} canSetOrder={me.permissions.has("dispatch.update") || me.permissions.has("dispatch.create")} />
+        <ShipmentGrid rows={rows} canEdit={canEdit} view={view} adv={f.adv} advLabels={advLabels} customDefs={custom.defs} customAdv={custom.adv} canAddField={me.permissions.has("fields.configure")} canSeeProfit={canSeeProfit} canFillDriver={canFillDriver} canSetOrder={me.permissions.has("dispatch.update") || me.permissions.has("dispatch.create")} canAssign={me.permissions.has("dispatch.update")} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-sm text-muted-foreground">
           <span>
             {total === 0 ? "Không có chuyến phù hợp" : `Dòng ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} / ${total} chuyến`}

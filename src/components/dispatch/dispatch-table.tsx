@@ -39,6 +39,8 @@ import { CORRECT_CREW_STATUSES, UNACCEPT_STATUSES } from "@/lib/crew-change";
 import { VehicleOrderCell } from "./vehicle-order-cell";
 import { DeliveryDaysCell } from "./delivery-days-cell";
 import { DriverPayCell } from "./driver-pay-cell";
+import { ContainerNoCell } from "./container-no-cell";
+import { VehiclePlateCell } from "./vehicle-plate-cell";
 import { CancelDialog, DeleteCancelledButton, RestoreShipmentButton } from "./cancel-dialog";
 import { ResubmitTripButton, TripApprovalButtons } from "./trip-approval";
 import { DriverInfoButton } from "./driver-info-button";
@@ -181,6 +183,14 @@ const BASE_COLS: Col[] = [
   },
   { key: "vehicle_type_name", label: "Loại cont", width: 100, hint: "Loại cont / loại xe của chuyến (danh mục Loại xe)", sort: (r) => r.vehicle_type_name, render: (r) => <div className="truncate">{r.vehicle_type_name}</div> },
   {
+    key: "container_no",
+    label: "Số cont",
+    width: 120,
+    hint: "Số container của chuyến. Bấm vào ô để nhập hoặc sửa, Enter để lưu, để trống rồi Enter để xóa.",
+    sort: (r) => r.container_no,
+    render: () => null,
+  },
+  {
     key: "route",
     label: "Tuyến đường",
     width: 240,
@@ -208,23 +218,10 @@ const BASE_COLS: Col[] = [
       r.plate_number || r.driver_id
         ? [r.plate_number ? `${r.plate_number}${r.vehicle_day_order ? ` (chuyến ${r.vehicle_day_order})` : ""}` : "Chưa chọn xe", r.driver_name].filter(Boolean).join(" - ")
         : "Chưa phân công",
-    render: (r) =>
-      r.driver_id ? (
-        <>
-          <div className="font-medium whitespace-nowrap">
-            {r.plate_number ?? <span className="text-muted-foreground">Chưa chọn xe</span>}
-            {r.vehicle_day_order ? <DayOrder n={r.vehicle_day_order} /> : null}
-          </div>
-          <div className="truncate text-xs text-muted-foreground">{r.driver_name}</div>
-        </>
-      ) : (
-        <span className="whitespace-nowrap text-muted-foreground">
-          {r.plate_number ?? "Chưa phân công"}
-          {r.plate_number && r.vehicle_day_order ? <DayOrder n={r.vehicle_day_order} /> : null}
-        </span>
-      ),
+    // Ô thật vẽ trong bảng (sửa nhanh số xe theo quyền), xem vehicleDriverCell
+    render: () => null,
   },
-  { key: "plate_number", label: "Biển số", width: 100, defaultHidden: true, sort: (r) => r.plate_number, render: (r) => r.plate_number },
+  { key: "plate_number", label: "Biển số", width: 100, defaultHidden: true, sort: (r) => r.plate_number, render: () => null },
   { key: "driver_name", label: "Tài xế", width: 150, defaultHidden: true, sort: (r) => r.driver_name, render: (r) => <div className="truncate">{r.driver_name}</div> },
   { key: "trip_order", label: "Thứ tự chuyến", width: 90, align: "right", defaultHidden: true, sort: (r) => r.trip_order, render: (r) => (r.trip_order ? formatNumber(r.trip_order) : "") },
   {
@@ -414,6 +411,12 @@ export function DispatchTable({
             <DriverPayCell r={row.original} />
           ) : c.key === "delivery_days" ? (
             <DeliveryDaysCell r={row.original} editable={canAssign} />
+          ) : c.key === "container_no" ? (
+            <ContainerNoCell r={row.original} editable={canAssign} />
+          ) : c.key === "vehicle_driver" ? (
+            vehicleDriverCell(row.original, canAssign)
+          ) : c.key === "plate_number" ? (
+            <VehiclePlateCell r={row.original} editable={canAssign} empty="" />
           ) : (
             c.render(row.original, now)
           ),
@@ -754,6 +757,21 @@ function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: Shi
       {canCancel && r.status === "cancelled" ? <RestoreShipmentButton compact shipmentId={r.id} shipmentCode={r.shipment_code} /> : null}
       {canDelete && r.status === "cancelled" ? <DeleteCancelledButton compact ids={[r.id]} label={`chuyến ${r.shipment_code}`} /> : null}
     </div>
+  );
+}
+
+/** Ô Xe / Tài xế: số xe (bấm để chọn xe khác trong danh mục khi có quyền phân công) và tài xế bên dưới */
+function vehicleDriverCell(r: ShipmentListRow, editable: boolean) {
+  const order = r.vehicle_day_order && (r.driver_id || r.plate_number) ? <DayOrder n={r.vehicle_day_order} /> : null;
+  return (
+    <>
+      <div className="-ml-1 flex min-w-0 items-center">
+        <VehiclePlateCell r={r} editable={editable} empty={r.driver_id ? "Chưa chọn xe" : "Chưa phân công"}>
+          {order}
+        </VehiclePlateCell>
+      </div>
+      {r.driver_id ? <div className="truncate text-xs text-muted-foreground">{r.driver_name}</div> : null}
+    </>
   );
 }
 

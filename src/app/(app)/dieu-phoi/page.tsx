@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { attachDriverPay } from "@/lib/driver-pay";
+import { attachContainerNo } from "@/lib/shipment-container";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Ban, Plus, Truck, ListChecks, ListOrdered, FileSpreadsheet, ClipboardPaste } from "lucide-react";
@@ -104,9 +105,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const delegation = (delegationRes.data ?? null) as DelegationInfo | null;
   if (listRes.error) throw listRes.error;
   if (upcomingRes.error) throw upcomingRes.error;
-  const all = await attachDriverPay(supabase, (listRes.data ?? []) as ShipmentListRow[]);
+  const all = await attachContainerNo(supabase, await attachDriverPay(supabase, (listRes.data ?? []) as ShipmentListRow[]));
   const term = f.q.toLowerCase();
-  const upcoming = ((upcomingRes.data ?? []) as ShipmentListRow[]).filter(
+  const upcoming = (await attachContainerNo(supabase, (upcomingRes.data ?? []) as ShipmentListRow[])).filter(
     (r) =>
       (!f.kh || r.customer_id === f.kh) &&
       (!term || [r.shipment_code, r.order_code, r.customer_name, r.pickup_name, r.delivery_name, r.notes].some((v) => v?.toLowerCase().includes(term))),
