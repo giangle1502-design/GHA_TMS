@@ -15,6 +15,7 @@ import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
 import type { RefLabels } from "@/lib/entities/server";
 import { FieldInput } from "./field-input";
 import { AddFieldButton } from "./add-field-button";
+import { InvoiceImageFill } from "./invoice-image-fill";
 
 type Values = Record<string, unknown>;
 
@@ -159,6 +160,16 @@ export function EntityFormDialog({
           noValidate
           className="space-y-4"
         >
+          {entity.imageFill === "invoice" && !readOnly && !quick ? (
+            <InvoiceImageFill
+              disabled={pending || !open}
+              getNotes={() => String(form.getValues("notes") ?? "")}
+              onFill={(vals) => {
+                const keys = new Set(fields.map((f) => f.key));
+                for (const [k, v] of Object.entries(vals)) if (keys.has(k)) form.setValue(k, v, { shouldDirty: true, shouldValidate: form.formState.isSubmitted });
+              }}
+            />
+          ) : null}
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
             {fields.map((f) => {
               if (!isFieldShown(f, values)) return null;
