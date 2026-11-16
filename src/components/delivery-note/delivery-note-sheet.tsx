@@ -158,5 +158,8 @@ const CSS = `
   body * { visibility:hidden; }
   .dn-sheet, .dn-sheet * { visibility:visible; }
   .dn-sheet { position:absolute; left:0; top:0; max-width:none; padding:0; box-shadow:none; }
+  .dn-batch .dn-sheet { position:static; break-after:page; page-break-after:always; margin:0; }
+  .dn-batch .dn-sheet:last-child { break-after:auto; page-break-after:auto; }
 }
+@media screen { .dn-batch .dn-sheet + .dn-sheet { margin-top:16px; } }
 `;

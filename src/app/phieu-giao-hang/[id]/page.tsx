@@ -3,15 +3,22 @@ import { notFound } from "next/navigation";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/entities/record";
-import { noteFileName, type DeliveryNoteData } from "@/lib/delivery-note";
+import { noteFileName, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
 import { DeliveryNoteSheet } from "@/components/delivery-note/delivery-note-sheet";
 import { DeliveryNoteToolbar } from "@/components/delivery-note/delivery-note-toolbar";
 
 export const metadata: Metadata = { title: "Phiếu giao hàng" };
 
 // Trang in riêng (không có menu) để bản in/PDF chỉ có phiếu
-export default async function DeliveryNotePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DeliveryNotePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  const sp = await searchParams;
   if (!isUuid(id)) notFound();
   await requirePagePermission("shipments.view", "dispatch.view");
   const supabase = await createClient();
@@ -21,7 +28,7 @@ export default async function DeliveryNotePage({ params }: { params: Promise<{ i
   const d = data as DeliveryNoteData;
   return (
     <div className="min-h-screen bg-muted/50 p-4 print:bg-white print:p-0">
-      <DeliveryNoteToolbar backHref={`/chuyen-xe/${id}`} fileName={noteFileName(d.shipment_code)} />
+      <DeliveryNoteToolbar backHref={safeBackHref(sp.ve, `/chuyen-xe/${id}`)} fileName={noteFileName(d.shipment_code)} />
       <DeliveryNoteSheet d={d} />
     </div>
   );

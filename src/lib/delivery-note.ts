@@ -59,3 +59,31 @@ export function noteDateText(iso: string | null): string {
 export function noteFileName(code: string) {
   return `Phieu-giao-hang-${code.replace(/[^A-Za-z0-9_-]+/g, "-")}.pdf`;
 }
+
+/** Số phiếu tối đa in một lần (giới hạn độ dài đường dẫn và thời gian dựng PDF) */
+export const NOTE_BATCH_MAX = 200;
+
+export function noteBatchFileName(codes: string[]) {
+  if (codes.length === 1) return noteFileName(codes[0]);
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `Phieu-giao-hang-${codes.length}-chuyen-${stamp}.pdf`;
+}
+
+/** Danh sách mã chuyến từ tham số ?ids=a,b,c: chỉ giữ UUID hợp lệ, bỏ trùng, tối đa NOTE_BATCH_MAX */
+export function parseNoteIds(raw: string | string[] | undefined): string[] {
+  const text = Array.isArray(raw) ? raw.join(",") : (raw ?? "");
+  const re = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const out: string[] = [];
+  for (const p of text.split(",")) {
+    const id = p.trim().toLowerCase();
+    if (re.test(id) && !out.includes(id)) out.push(id);
+    if (out.length >= NOTE_BATCH_MAX) break;
+  }
+  return out;
+}
+
+/** Đường quay lại sau khi in: chỉ nhận đường nội bộ (bắt đầu bằng "/", không phải "//") */
+export function safeBackHref(raw: string | string[] | undefined, fallback: string): string {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return v && v.startsWith("/") && !v.startsWith("//") && !v.includes("\\") ? v : fallback;
+}
