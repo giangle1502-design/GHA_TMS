@@ -5,6 +5,7 @@ import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { ReferenceSelect } from "@/components/entities/reference-select";
+import { monthRangeYMD, todayVN } from "@/lib/format";
 
 type Filters = { tu: string; den: string; tt: string; kh: string; q: string; adv: string[] };
 
@@ -16,6 +17,11 @@ export function ShipmentFilterBar({ filters }: { filters: Filters }) {
     for (const k of ["tu", "den", "tt", "kh", "q"] as const) if (next[k]) q.set(k, next[k]);
     for (const a of next.adv) q.append("a", a);
     router.push(`/chuyen-xe?${q.toString()}`);
+  }
+  function pickMonth(offset: number) {
+    const next = { ...v, ...monthRangeYMD(todayVN(), offset) };
+    setV(next);
+    apply(next);
   }
   return (
     <form
@@ -52,6 +58,14 @@ export function ShipmentFilterBar({ filters }: { filters: Filters }) {
       <Button type="submit" className="sm:col-span-2 lg:col-span-1">
         <Search /> Lọc
       </Button>
+      <div className="flex flex-wrap gap-1.5 sm:col-span-2 lg:col-span-5">
+        <Button type="button" size="sm" variant="outline" onClick={() => pickMonth(0)}>
+          Tháng này
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={() => pickMonth(-1)}>
+          Tháng trước
+        </Button>
+      </div>
     </form>
   );
 }
