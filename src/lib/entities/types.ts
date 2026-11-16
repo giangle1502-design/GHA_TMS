@@ -55,6 +55,11 @@ export type FieldDef = {
   integer?: boolean;
   /** Chỉ hiện khi trường khác có một trong các giá trị */
   showIf?: { field: string; in: string[] };
+  /**
+   * Chỉ hiện trên biểu mẫu khi nhãn của ô tham chiếu khác khớp mẫu (không dấu, không phân biệt hoa thường),
+   * hoặc khi orIf thỏa. VD ô Nhà cung cấp chỉ hiện khi Hạng mục là "Thuê xe ngoài 3PL". Máy chủ không xét điều kiện này.
+   */
+  showIfRefLabel?: { field: string; pattern: string; orIf?: { field: string; in: string[] } };
   /** Chiếm cả hàng trên biểu mẫu */
   wide?: boolean;
   /** Mặc định khi tạo mới */

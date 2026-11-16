@@ -13,6 +13,7 @@ import { invoiceDirection, invoiceDirectionHint, invoiceToFormValues, invoiceToT
 export function InvoiceImageFill({
   mode = "invoice",
   autoDirection = false,
+  onParsed,
   onFill,
   getNotes,
   disabled,
@@ -21,6 +22,8 @@ export function InvoiceImageFill({
   mode?: "invoice" | "sale_invoice" | "purchase_invoice";
   /** Sổ hóa đơn: tự chọn Mua vào / Bán ra theo vị trí MST của GHA trên hóa đơn (điền thêm trường direction) */
   autoDirection?: boolean;
+  /** Gọi sau khi điền (sổ hóa đơn): tìm khách hàng / nhà cung cấp, gợi ý hạng mục */
+  onParsed?: (p: ParsedInvoice, dir: "sale" | "purchase") => void | Promise<void>;
   onFill: (values: Record<string, unknown>) => void;
   getNotes: () => string;
   disabled?: boolean;
@@ -52,6 +55,7 @@ export function InvoiceImageFill({
         if (autoDirection) {
           const dir = detected ?? cur;
           onFill({ direction: dir, ...invoiceToTaxInvoiceValues(p, dir, getNotes()) });
+          void onParsed?.(p, dir);
           if (dir !== cur) toast.info(dir === "sale" ? "GHA là người bán trên hóa đơn này: đã chọn Bán ra." : "GHA là người mua trên hóa đơn này: đã chọn Mua vào.");
         } else {
           onFill(invoiceToTaxInvoiceValues(p, cur, getNotes()));
