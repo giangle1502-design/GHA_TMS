@@ -160,8 +160,9 @@ export function EntityFormDialog({
           noValidate
           className="space-y-4"
         >
-          {entity.imageFill === "invoice" && !readOnly && !quick ? (
+          {entity.imageFill && !readOnly && !quick ? (
             <InvoiceImageFill
+              mode={entity.imageFill}
               disabled={pending || !open}
               getNotes={() => String(form.getValues("notes") ?? "")}
               onFill={(vals) => {

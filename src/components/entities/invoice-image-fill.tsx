@@ -4,13 +4,24 @@ import { toast } from "sonner";
 import { ClipboardPaste, ImageUp, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatNumber } from "@/lib/format";
-import { invoiceToFormValues, parseInvoiceText, type ParsedInvoice } from "@/lib/invoice-parse";
+import { invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText, type ParsedInvoice } from "@/lib/invoice-parse";
 
 /**
  * Dán (Ctrl+V) hoặc chọn ảnh hóa đơn: đọc chữ ngay trên máy, điền ngày, số HĐ, người bán, số lít, đơn giá, tiền, thuế suất.
  * Ảnh KHÔNG được lưu. Người dùng kiểm tra lại rồi bấm Lưu.
  */
-export function InvoiceImageFill({ onFill, getNotes, disabled }: { onFill: (values: Record<string, unknown>) => void; getNotes: () => string; disabled?: boolean }) {
+export function InvoiceImageFill({
+  mode = "invoice",
+  onFill,
+  getNotes,
+  disabled,
+}: {
+  /** invoice = chi phí ngoài chuyến; sale_invoice / purchase_invoice = sổ hóa đơn bán ra / mua vào */
+  mode?: "invoice" | "sale_invoice" | "purchase_invoice";
+  onFill: (values: Record<string, unknown>) => void;
+  getNotes: () => string;
+  disabled?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(0);
   const [result, setResult] = useState<ParsedInvoice | null>(null);
@@ -31,7 +42,13 @@ export function InvoiceImageFill({ onFill, getNotes, disabled }: { onFill: (valu
         toast.error("Không đọc được thông tin hóa đơn. Hãy dán ảnh rõ hơn (chụp nguyên hóa đơn, không bị mờ).");
         return;
       }
-      onFill(invoiceToFormValues(p, getNotes()));
+      if (mode === "invoice") onFill(invoiceToFormValues(p, getNotes()));
+      else {
+        const dir = mode === "sale_invoice" ? "sale" : "purchase";
+        onFill(invoiceToTaxInvoiceValues(p, dir, getNotes()));
+        const hint = invoiceDirectionHint(p, dir);
+        if (hint) toast.warning(hint);
+      }
       toast.success(`Đã điền: ${p.found.join(", ")}. Kiểm tra lại trước khi lưu.`);
     } catch (e) {
       console.error(e);
@@ -70,7 +87,7 @@ export function InvoiceImageFill({ onFill, getNotes, disabled }: { onFill: (valu
       <div className="flex flex-wrap items-center gap-2">
         <ClipboardPaste className="size-4 text-muted-foreground" />
         <span className="flex-1">
-          <b>Dán ảnh hóa đơn (Ctrl+V)</b> hoặc kéo thả ảnh vào đây để tự điền ngày, số HĐ, người bán, số lít, đơn giá, tiền, thuế. Ảnh không được lưu.
+          <b>Dán ảnh hóa đơn (Ctrl+V)</b> hoặc kéo thả ảnh vào đây để tự điền {mode === "invoice" ? "ngày, số HĐ, người bán, số lít, đơn giá, tiền, thuế" : mode === "sale_invoice" ? "ngày, ký hiệu, số HĐ, khách hàng, MST, tiền, thuế" : "ngày, số hóa đơn, thành tiền, VAT"}. Ảnh không được lưu.
         </span>
         <Button type="button" variant="outline" size="sm" disabled={busy || disabled} onClick={() => fileRef.current?.click()}>
           {busy ? <Loader2 className="animate-spin" /> : <ImageUp />} {busy ? `Đang đọc… ${pct}%` : "Chọn ảnh"}
@@ -91,7 +108,7 @@ export function InvoiceImageFill({ onFill, getNotes, disabled }: { onFill: (valu
         <p className="mt-1.5 text-xs text-muted-foreground">
           Đọc được: {result.found.join(", ")}
           {result.total !== null ? ` · Tổng thanh toán trên HĐ ${formatNumber(result.total)} đ` : ""}
-          {result.vat_label ? ` · Thuế suất ${result.vat_label}` : ""}. Chưa chọn Loại phí, Xe thì chọn thêm.
+          {result.vat_label ? ` · Thuế suất ${result.vat_label}` : ""}{mode === "invoice" ? ". Chưa chọn Loại phí, Xe thì chọn thêm." : mode === "sale_invoice" ? ". Chọn thêm Loại hóa đơn." : ". Chọn thêm Hạng mục."}
         </p>
       ) : null}
     </div>

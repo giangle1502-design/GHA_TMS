@@ -12,7 +12,17 @@ import { PaymentFormSheet } from "@/components/payment-forms/payment-form-sheet"
 import { formatDate, formatVND, todayVN } from "@/lib/format";
 import { formFileName, formTotal, type PaymentFormData, type PaymentFormItem } from "@/lib/payment-request-form";
 import { cn } from "@/lib/utils";
-import { deletePaymentForm, listOverheadForForm, markOverheadPaid, savePaymentForm, type OverheadPick } from "./actions";
+import {
+  deletePaymentForm,
+  listInvoicesForForm,
+  listOverheadForForm,
+  markInvoicesPaid,
+  markOverheadPaid,
+  savePaymentForm,
+  type InvoicePick,
+  type OverheadPick,
+} from "./actions";
+import type { ActionResult } from "@/lib/auth/action";
 
 export type SavedForm = {
   id: string;
@@ -39,7 +49,7 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
   const [d, setD] = useState<PaymentFormData>(initial);
   const [pending, start] = useTransition();
   const [pdfBusy, setPdfBusy] = useState(false);
-  const [pickOpen, setPickOpen] = useState(false);
+  const [pickOpen, setPickOpen] = useState<null | "invoice" | "overhead">(null);
   const [term, setTerm] = useState("");
   const isPay = d.form_type === "payment";
   const total = formTotal(d);
@@ -70,9 +80,16 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
   }
   function markPaid() {
     start(async () => {
-      const r = await markOverheadPaid({ ids: d.overhead_ids, date: todayVN() });
-      if (!r.ok) return void toast.error(r.error);
-      toast.success(r.message ?? "Đã cập nhật.");
+      const date = todayVN();
+      if (d.invoice_ids.length) {
+        const r = await markInvoicesPaid({ ids: d.invoice_ids, date });
+        if (!r.ok) return void toast.error(r.error);
+      }
+      if (d.overhead_ids.length) {
+        const r = await markOverheadPaid({ ids: d.overhead_ids, date });
+        if (!r.ok) return void toast.error(r.error);
+      }
+      toast.success("Đã đánh dấu là đã thanh toán.");
     });
   }
 
@@ -200,9 +217,14 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
                 <Label>Các khoản chi (để trống thì nhập tổng số tiền)</Label>
                 <div className="flex gap-1">
                   {can.pickOverhead ? (
-                    <Button type="button" variant="outline" size="sm" onClick={() => setPickOpen(true)}>
-                      <ListPlus /> Lấy từ chi phí ngoài chuyến
-                    </Button>
+                    <>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setPickOpen("invoice")}>
+                        <ListPlus /> Lấy từ hóa đơn mua vào
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setPickOpen("overhead")}>
+                        Chi phí ngoài chuyến
+                      </Button>
+                    </>
                   ) : null}
                   <Button type="button" variant="outline" size="sm" onClick={() => set("items", [...d.items, { content: "", invoice_no: "", invoice_date: "", amount: 0 }])}>
                     <Plus /> Thêm dòng
@@ -258,9 +280,13 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
               <Input id="pf-notes" value={d.notes} onChange={(e) => set("notes", e.target.value)} />
             </F>
           </div>
-          {d.id && d.overhead_ids.length && can.markPaid ? (
+          {d.id && (d.overhead_ids.length || d.invoice_ids.length) && can.markPaid ? (
             <Button type="button" variant="outline" size="sm" onClick={markPaid} disabled={pending}>
-              <CheckCheck /> Đã chi tiền: đánh dấu {d.overhead_ids.length} khoản chi ngoài chuyến là đã thanh toán
+              <CheckCheck /> Đã chi tiền: đánh dấu{" "}
+              {[d.invoice_ids.length ? `${d.invoice_ids.length} hóa đơn mua vào` : "", d.overhead_ids.length ? `${d.overhead_ids.length} khoản chi ngoài chuyến` : ""]
+                .filter(Boolean)
+                .join(" và ")}{" "}
+              là đã thanh toán
             </Button>
           ) : null}
         </div>
@@ -314,9 +340,20 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
         </div>
       </div>
 
-      {pickOpen ? (
-        <PickOverheadDialog
-          onClose={() => setPickOpen(false)}
+      {pickOpen === "overhead" ? (
+        <PickDialog<OverheadPick>
+          title="Lấy khoản chi ngoài chuyến"
+          description="Chọn các khoản để đưa vào giấy đề nghị thanh toán (VD: xăng đi lại cá nhân chi trước, chưa hoàn)."
+          load={listOverheadForForm}
+          date={(r) => r.expense_date}
+          columns={[
+            { label: "Loại phí", cell: (r) => r.category_name },
+            { label: "Xe", cell: (r) => r.plate_number },
+            { label: "Nội dung", cell: (r) => r.description },
+            { label: "Số HĐ", cell: (r) => r.invoice_no },
+            { label: "Người chi", cell: (r) => r.spender_name },
+          ]}
+          onClose={() => setPickOpen(null)}
           onPick={(rows) => {
             setD((x) => ({
               ...x,
@@ -333,7 +370,41 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
               attachment_count: x.attachment_count ?? (rows.filter((r) => r.invoice_no).length || null),
               requester_name: x.requester_name || rows.find((r) => r.spender_name)?.spender_name || "",
             }));
-            setPickOpen(false);
+            setPickOpen(null);
+          }}
+        />
+      ) : null}
+      {pickOpen === "invoice" ? (
+        <PickDialog<InvoicePick>
+          title="Lấy hóa đơn mua vào"
+          description="Chọn các hóa đơn nhà cung cấp (3PL, xăng dầu, điện, ăn uống, taxi, vé máy bay…) để lập giấy đề nghị thanh toán."
+          load={listInvoicesForForm}
+          date={(r) => r.invoice_date}
+          columns={[
+            { label: "Loại", cell: (r) => r.category_name },
+            { label: "Người bán", cell: (r) => r.partner_name },
+            { label: "Nội dung", cell: (r) => r.description },
+            { label: "Số HĐ", cell: (r) => [r.invoice_symbol, r.invoice_no].filter(Boolean).join(" ") },
+          ]}
+          onClose={() => setPickOpen(null)}
+          onPick={(rows) => {
+            const partners = [...new Set(rows.map((r) => r.partner_name).filter(Boolean))];
+            setD((x) => ({
+              ...x,
+              items: [
+                ...x.items.filter((it) => it.content.trim() || it.amount),
+                ...rows.map((r) => ({
+                  content: [r.category_name, r.partner_name, r.description].filter(Boolean).join(" · "),
+                  invoice_no: [r.invoice_symbol, r.invoice_no].filter(Boolean).join(" "),
+                  invoice_date: r.invoice_date,
+                  amount: r.total_amount,
+                })),
+              ],
+              invoice_ids: [...new Set([...x.invoice_ids, ...rows.map((r) => r.id)])],
+              attachment_count: x.attachment_count ?? (rows.length || null),
+              content: x.content || (partners.length === 1 ? `Thanh toán hóa đơn cho ${partners[0]}` : "Thanh toán các hóa đơn mua vào"),
+            }));
+            setPickOpen(null);
           }}
         />
       ) : null}
@@ -351,18 +422,36 @@ function F({ label, id, help, wide, children }: { label: string; id: string; hel
   );
 }
 
-function PickOverheadDialog({ onClose, onPick }: { onClose: () => void; onPick: (rows: OverheadPick[]) => void }) {
+type PickRow = { id: string; code: string; total_amount: number };
+
+function PickDialog<T extends PickRow>({
+  title,
+  description,
+  load: loadRows,
+  date,
+  columns,
+  onClose,
+  onPick,
+}: {
+  title: string;
+  description: string;
+  load: (input: { from: string; to: string; onlyUnpaid: boolean }) => Promise<ActionResult<T[]>>;
+  date: (r: T) => string;
+  columns: { label: string; cell: (r: T) => React.ReactNode }[];
+  onClose: () => void;
+  onPick: (rows: T[]) => void;
+}) {
   const today = todayVN();
   const [from, setFrom] = useState(`${today.slice(0, 7)}-01`);
   const [to, setTo] = useState(today);
   const [onlyUnpaid, setOnlyUnpaid] = useState(true);
-  const [rows, setRows] = useState<OverheadPick[] | null>(null);
+  const [rows, setRows] = useState<T[] | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [loading, start] = useTransition();
 
   function load() {
     start(async () => {
-      const r = await listOverheadForForm({ from, to, onlyUnpaid });
+      const r = await loadRows({ from, to, onlyUnpaid });
       if (!r.ok) return void toast.error(r.error);
       setRows(r.data ?? []);
       setSel(new Set((r.data ?? []).map((x) => x.id)));
@@ -373,8 +462,8 @@ function PickOverheadDialog({ onClose, onPick }: { onClose: () => void; onPick: 
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Lấy khoản chi ngoài chuyến</DialogTitle>
-          <DialogDescription>Chọn các khoản để đưa vào giấy đề nghị thanh toán (VD: xăng đi lại cá nhân chi trước, chưa hoàn).</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -406,11 +495,9 @@ function PickOverheadDialog({ onClose, onPick }: { onClose: () => void; onPick: 
                     />
                   </th>
                   <th>Ngày</th>
-                  <th>Loại phí</th>
-                  <th>Xe</th>
-                  <th>Nội dung</th>
-                  <th>Số HĐ</th>
-                  <th>Người chi</th>
+                  {columns.map((c) => (
+                    <th key={c.label}>{c.label}</th>
+                  ))}
                   <th className="text-right">Tổng tiền</th>
                 </tr>
               </thead>
@@ -430,19 +517,17 @@ function PickOverheadDialog({ onClose, onPick }: { onClose: () => void; onPick: 
                         }}
                       />
                     </td>
-                    <td>{formatDate(r.expense_date)}</td>
-                    <td>{r.category_name}</td>
-                    <td>{r.plate_number}</td>
-                    <td>{r.description}</td>
-                    <td>{r.invoice_no}</td>
-                    <td>{r.spender_name}</td>
+                    <td>{formatDate(date(r))}</td>
+                    {columns.map((c) => (
+                      <td key={c.label}>{c.cell(r)}</td>
+                    ))}
                     <td className="text-right tabular-nums">{formatVND(r.total_amount)}</td>
                   </tr>
                 ))}
                 {!rows.length ? (
                   <tr>
-                    <td colSpan={8} className="px-2 py-6 text-center text-muted-foreground">
-                      Không có khoản chi nào.
+                    <td colSpan={columns.length + 3} className="px-2 py-6 text-center text-muted-foreground">
+                      Không có khoản nào.
                     </td>
                   </tr>
                 ) : null}

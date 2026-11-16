@@ -1,67 +1,58 @@
 import { describe, expect, it } from "vitest";
-import { computeTaxBalance } from "@/lib/tax-balance";
-import type { SpendingLine } from "@/lib/spending-report";
+import { computeTaxBalance, type TaxInvoiceRow } from "@/lib/tax-balance";
 
-const line = (p: Partial<SpendingLine>): SpendingLine => ({
-  id: Math.random().toString(),
-  source: "trip",
-  group_name: "Nhiên liệu",
-  group_sort: 1,
-  item_name: "Dầu",
-  report_date: "2026-10-05",
+const inv = (p: Partial<TaxInvoiceRow>): TaxInvoiceRow => ({
+  direction: "purchase",
+  invoice_date: "2026-10-05",
   amount: 0,
-  status: "approved",
-  is_pass_through: false,
-  code: null,
-  shipment_code: null,
-  plate_number: null,
-  driver_name: null,
-  customer_name: null,
-  supplier_name: null,
-  paid_by: null,
-  ref_no: null,
-  note: null,
+  vat_amount: 0,
+  tax_deductible: true,
+  category_name: "",
+  group_name: "",
   ...p,
 });
 
-describe("cân đối thu chi, thuế", () => {
+describe("cân đối thuế từ sổ hóa đơn", () => {
   const b = computeTaxBalance({
-    revenue: [
-      { report_date: "2026-10-03", freight_amount: 10_000_000, surcharge_amount: 0, fuel_support_amount: 1_000_000, extra_fee_amount: 500_000, pass_through_amount: 2_000_000 },
-      { report_date: "2026-11-03", freight_amount: 8_000_000, surcharge_amount: 500_000, fuel_support_amount: 0, extra_fee_amount: 0, pass_through_amount: 0 },
-    ],
-    spending: [
-      line({ amount: 3_000_000 }),
-      line({ amount: 999, status: "pending" }),
-      line({ amount: 777, is_pass_through: true }),
-      line({ source: "carrier", amount: 4_000_000, report_date: "2026-11-02" }),
-      line({ source: "overhead", amount: 123 }), // bỏ qua: lấy từ danh sách chi phí ngoài chuyến
-    ],
-    overhead: [
-      { expense_date: "2026-10-10", amount: 2_000_000, vat_amount: 0, has_invoice: false, tax_deductible: true, group_name: "Thuế, kế toán" },
-      { expense_date: "2026-11-10", amount: 1_000_000, vat_amount: 100_000, has_invoice: true, tax_deductible: true, group_name: "Xe" },
-    ],
-    payroll: [{ report_month: "2026-10-01", payroll: 5_000_000 }],
-    vatRate: 8,
     citRate: 20,
+    invoices: [
+      inv({ direction: "sale", invoice_date: "2026-10-03", amount: 100_000_000, vat_amount: 8_000_000, category_name: "Cước vận chuyển", group_name: "Vận chuyển" }),
+      inv({ direction: "sale", invoice_date: "2026-11-03", amount: 20_000_000, vat_amount: 1_600_000, category_name: "Cước vận chuyển", group_name: "Vận chuyển" }),
+      inv({ amount: 50_000_000, vat_amount: 4_000_000, category_name: "Thuê xe ngoài 3PL", group_name: "Vận chuyển" }),
+      inv({ invoice_date: "2026-11-10", amount: 500_000, vat_amount: 0, category_name: "Xăng dầu", group_name: "Xe" }),
+      inv({ invoice_date: "2026-11-12", amount: 2_000_000, vat_amount: 160_000, tax_deductible: false, category_name: "Ăn uống, tiếp khách", group_name: "Công tác, tiếp khách" }),
+    ],
   });
-  it("doanh thu không gồm chi hộ", () => {
-    expect(b.revenue).toMatchObject({ freight: 19_500_000, extra: 500_000, total: 20_000_000, passThrough: 2_000_000, trips: 2 });
+
+  it("doanh thu, chi phí, VAT chỉ từ hóa đơn", () => {
+    expect(b.revenue).toBe(120_000_000);
+    expect(b.saleCount).toBe(2);
+    expect(b.costTotal).toBe(52_500_000);
+    expect(b.purchaseCount).toBe(3);
+    expect(b.vatOut).toBe(9_600_000);
+    expect(b.vatIn).toBe(4_000_000); // ăn uống không được trừ: không khấu trừ VAT
+    expect(b.vatPayable).toBe(5_600_000);
   });
-  it("chi phí: bỏ chờ duyệt, chi hộ; tách không hóa đơn", () => {
-    expect(b.costTotal).toBe(3_000_000 + 4_000_000 + 2_000_000 + 1_000_000 + 5_000_000);
+
+  it("lợi nhuận, thu nhập tính thuế, TNDN", () => {
+    expect(b.profit).toBe(67_500_000);
     expect(b.nonDeductible).toBe(2_000_000);
-    expect(b.profit).toBe(20_000_000 - 15_000_000);
-    expect(b.taxableProfit).toBe(7_000_000);
-    expect(b.cit).toBe(1_400_000);
+    expect(b.taxableProfit).toBe(69_500_000);
+    expect(b.cit).toBe(13_900_000);
   });
-  it("VAT đầu ra, đầu vào", () => {
-    expect([b.vatOut, b.vatIn, b.vatPayable]).toEqual([1_600_000, 100_000, 1_500_000]);
-  });
-  it("theo tháng", () => {
-    expect(b.months.map((m) => [m.month, m.revenue, m.cost, m.profit])).toEqual([
-      ["2026-10", 11_500_000, 10_000_000, 1_500_000],
-      ["2026-11", 8_500_000, 5_000_000, 3_500_000],
+
+  it("gom theo nhóm, loại và theo tháng", () => {
+    expect(b.revenueLines).toHaveLength(1);
+    expect(b.costLines.map((l) => l.label)).toEqual(["Ăn uống, tiếp khách", "Thuê xe ngoài 3PL", "Xăng dầu"]);
+    expect(b.months.map((m) => [m.label, m.revenue, m.cost, m.vatPayable])).toEqual([
+      ["10/2026", 100_000_000, 50_000_000, 4_000_000],
+      ["11/2026", 20_000_000, 2_500_000, 1_600_000],
     ]);
+  });
+
+  it("lỗ thì không có thuế TNDN", () => {
+    const l = computeTaxBalance({ citRate: 20, invoices: [inv({ amount: 1_000_000, vat_amount: 80_000 })] });
+    expect(l.cit).toBe(0);
+    expect(l.vatPayable).toBe(-80_000);
   });
 });

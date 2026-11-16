@@ -29,6 +29,7 @@ const formSchema = z.object({
     .array(z.object({ content: z.string().max(500), invoice_no: z.string().max(100), invoice_date: optYmd, amount: money }))
     .max(200),
   overhead_ids: z.array(z.string().uuid()).max(500),
+  invoice_ids: z.array(z.string().uuid()).max(500).default([]),
   notes: z.string().max(1000),
 });
 
@@ -58,6 +59,7 @@ export async function savePaymentForm(input: z.input<typeof formSchema>): Promis
       attachment_count: d.attachment_count,
       items: items.map((i) => ({ ...i, content: i.content.trim(), invoice_no: i.invoice_no.trim() })),
       overhead_ids: d.form_type === "payment" ? d.overhead_ids : [],
+      invoice_ids: d.form_type === "payment" ? d.invoice_ids : [],
       notes: nul(d.notes),
     };
     const q = d.id
@@ -138,4 +140,56 @@ export async function markOverheadPaid(input: { ids: string[]; date: string }): 
     if (error) throw error;
     revalidatePath("/chi-phi-ngoai");
   }, "Đã đánh dấu các khoản là đã thanh toán.");
+}
+
+export type InvoicePick = {
+  id: string;
+  code: string;
+  invoice_date: string;
+  invoice_symbol: string | null;
+  invoice_no: string | null;
+  partner_name: string;
+  category_name: string;
+  description: string | null;
+  total_amount: number;
+  payment_status: string;
+};
+
+/** Hóa đơn mua vào (Sổ hóa đơn) để đưa vào giấy đề nghị thanh toán */
+export async function listInvoicesForForm(input: z.input<typeof pickSchema>): Promise<ActionResult<InvoicePick[]>> {
+  return runAction(async () => {
+    await requirePermission("overhead.view");
+    const d = pickSchema.parse(input);
+    const supabase = await createClient();
+    let q = supabase
+      .from("tax_invoices")
+      .select("id, code, invoice_date, invoice_symbol, invoice_no, partner_name, description, total_amount, payment_status, tax_invoice_categories(name)")
+      .eq("direction", "purchase")
+      .gte("invoice_date", d.from)
+      .lte("invoice_date", d.to)
+      .order("invoice_date")
+      .limit(1000);
+    if (d.onlyUnpaid) q = q.eq("payment_status", "unpaid");
+    const { data, error } = await q;
+    if (error) throw error;
+    type Raw = Omit<InvoicePick, "category_name"> & { tax_invoice_categories: { name: string } | null };
+    return ((data ?? []) as unknown as Raw[]).map(({ tax_invoice_categories, ...r }) => ({
+      ...r,
+      total_amount: Number(r.total_amount),
+      category_name: tax_invoice_categories?.name ?? "",
+    }));
+  });
+}
+
+/** Sau khi chi tiền theo phiếu: đánh dấu các hóa đơn mua vào của phiếu là đã trả */
+export async function markInvoicesPaid(input: { ids: string[]; date: string }): Promise<ActionResult> {
+  return runAction(async () => {
+    await requirePermission("overhead.update");
+    const ids = z.array(z.string().uuid()).min(1).max(500).parse(input.ids);
+    const date = ymd.parse(input.date);
+    const supabase = await createClient();
+    const { error } = await supabase.from("tax_invoices").update({ payment_status: "paid", paid_date: date }).eq("direction", "purchase").in("id", ids);
+    if (error) throw error;
+    revalidatePath("/so-hoa-don");
+  }, "Đã đánh dấu các hóa đơn là đã trả.");
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invoiceToFormValues, parseInvoiceText } from "@/lib/invoice-parse";
+import { invoiceDirectionHint, invoiceToFormValues, invoiceToTaxInvoiceValues, parseInvoiceText } from "@/lib/invoice-parse";
 
 // Chữ đọc từ ảnh hóa đơn xăng (ảnh rõ, theo mẫu LE gửi 15/11/2026)
 const CLEAN = `Mẫu số 1
@@ -133,5 +133,60 @@ describe("điền biểu mẫu chi phí ngoài chuyến", () => {
       vat_rate: "0",
       notes: "Ký hiệu HĐ C26MAV · MST người bán 0313650711 · Thuế suất KKKNT",
     });
+  });
+});
+
+// Hóa đơn GHA xuất cho khách (bán ra)
+const SALE = `HÓA ĐƠN GIÁ TRỊ GIA TĂNG
+Ký hiệu: 1C26TGH
+Số: 0000045
+Ngày 05 tháng 11 năm 2026
+Đơn vị bán hàng: CÔNG TY TNHH GHA LOGISTICS & SERVICES
+Mã số thuế: 3703489735
+Họ tên người mua hàng:
+Tên đơn vị: CÔNG TY TNHH VẬN TẢI KHÁCH ABC
+Mã số thuế: 0301234567
+1 Cước vận chuyển container tháng 10/2026 Chuyến 10 1.000.000 10.000.000
+Cộng tiền hàng: 10.000.000
+Thuế suất GTGT: 8% Tiền thuế GTGT: 800.000
+Tổng cộng tiền thanh toán: 10.800.000`;
+
+describe("điền sổ hóa đơn từ ảnh", () => {
+  it("bán ra: đối tác là người mua, không lấy MST của GHA", () => {
+    const p = parseInvoiceText(SALE);
+    expect(p.gha_is_seller).toBe(true);
+    expect(p.buyer_name).toBe("CÔNG TY TNHH VẬN TẢI KHÁCH ABC");
+    const v = invoiceToTaxInvoiceValues(p, "sale", "");
+    expect(v).toMatchObject({
+      invoice_date: "2026-11-05",
+      invoice_symbol: "1C26TGH",
+      invoice_no: "45", // bỏ số 0 đầu, CSDL cũng chuẩn hóa như vậy
+      partner_name: "CÔNG TY TNHH VẬN TẢI KHÁCH ABC",
+      partner_tax_code: "0301234567",
+      amount: "10,000,000",
+      vat_rate: "8",
+      vat_amount: "800,000",
+    });
+    expect(invoiceDirectionHint(p, "sale")).toBeNull();
+    expect(invoiceDirectionHint(p, "purchase")).toMatch(/bán ra/);
+  });
+  it("mua vào: hóa đơn xăng KKKNT, đối tác là người bán", () => {
+    const p = parseInvoiceText(CLEAN);
+    expect(p.gha_is_buyer).toBe(true);
+    const v = invoiceToTaxInvoiceValues(p, "purchase", "");
+    expect(v).toMatchObject({
+      invoice_date: "2026-07-27",
+      invoice_symbol: "C26MAV",
+      invoice_no: "422579",
+      partner_name: "CÔNG TY CỔ PHẦN AV CONNECT VIỆT NAM",
+      partner_tax_code: "0313650711",
+      amount: "500,000",
+      vat_rate: "KKKNT",
+      vat_amount: "0",
+    });
+    expect(String(v.description)).toMatch(/^Xăng E10 RON 95.*23,33 lít$/);
+    expect(v.notes).toBe("Đơn giá 21,430 đ/lít");
+    expect(invoiceDirectionHint(p, "purchase")).toBeNull();
+    expect(invoiceDirectionHint(p, "sale")).toMatch(/mua vào/);
   });
 });

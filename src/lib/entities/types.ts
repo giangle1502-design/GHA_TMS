@@ -143,8 +143,8 @@ export type EntityDef = {
   createPerm?: string;
   /** Quyền khác cũng được xem danh sách (RLS vẫn lọc dòng, ví dụ người lập chỉ thấy phiếu của mình) */
   viewAnyOf?: string[];
-  /** Biểu mẫu có ô dán ảnh để tự điền (invoice = hóa đơn: ngày, số HĐ, người bán, tiền, thuế) */
-  imageFill?: "invoice";
+  /** Biểu mẫu có ô dán ảnh để tự điền (invoice = chi phí ngoài chuyến; sale_invoice / purchase_invoice = sổ hóa đơn bán ra / mua vào) */
+  imageFill?: "invoice" | "sale_invoice" | "purchase_invoice";
   /** Quyền khác cũng được thêm mới (ví dụ người lập phiếu thêm nhanh loại đề nghị ngay ở ô chọn) */
   createAnyOf?: string[];
 };
