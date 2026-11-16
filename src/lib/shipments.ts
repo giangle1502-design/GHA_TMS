@@ -45,6 +45,8 @@ export type ShipmentListRow = {
   custom_fields?: Record<string, unknown> | null;
   /** Thứ tự chuyến của xe trong ngày (1, 2...) khi xe chạy nhiều chuyến cùng ngày */
   vehicle_day_order?: number | null;
+  /** Số cont của chuyến (shipments.container_no), gắn thêm khi tải trang Điều phối / Quản lý chuyến */
+  container_no?: string | null;
   /** Số ngày giao điều phối nhập (trống = 1 ngày hoặc theo ngày giao dự kiến); work_days = số ngày công tính được */
   delivery_days?: number | null;
   work_days?: number | null;
