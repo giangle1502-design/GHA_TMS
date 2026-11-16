@@ -36,6 +36,8 @@ import { updateShipmentField, type EditableField } from "./actions";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
 import { VehicleOrderCell } from "@/components/dispatch/vehicle-order-cell";
 import { ContainerNoCell } from "@/components/dispatch/container-no-cell";
+import { DeliveryDaysCell } from "@/components/dispatch/delivery-days-cell";
+import { CustomFieldCell, PricingUnitCell, ShipmentDateCell, ShipmentRefCell } from "@/components/shipments/quick-cells";
 import { VehiclePlateCell } from "@/components/dispatch/vehicle-plate-cell";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 import { isGhaYard } from "@/lib/delivery-note";
@@ -47,6 +49,8 @@ type Col = {
   align?: "right";
   edit?: EditableField;
   custom?: boolean;
+  /** Trường bổ sung của cột (sửa nhanh ngay trên bảng) */
+  def?: FieldDef;
   /** Ẩn khi người dùng chưa lưu cách hiển thị riêng (bật lại trong Chọn cột) */
   defaultHidden?: boolean;
   /** Cột lời/lỗ: chỉ hiện với người có quyền xem chi phí hoặc báo cáo */
@@ -56,6 +60,7 @@ type Col = {
 
 const COLS: Col[] = [
   { key: "pickup_at", label: "Ngày nhận", width: 110, render: (r) => formatDate(r.pickup_at) },
+  { key: "expected_delivery_at", label: "Ngày giao dự kiến", width: 120, defaultHidden: true, render: (r) => (r.expected_delivery_at ? formatDate(r.expected_delivery_at) : "") },
   {
     key: "shipment_code",
     label: "Mã chuyến",
@@ -192,6 +197,17 @@ const COLS: Col[] = [
 
 const DEFAULT_PINNED = ["pickup_at", "shipment_code"];
 
+/** Cột chọn từ danh mục -> trường của chuyến */
+const REF_COLS: Record<string, "pickup_location_id" | "delivery_location_id" | "empty_return_location_id" | "offroute_return_location_id" | "vehicle_type_id" | "driver_id"> = {
+  pickup_name: "pickup_location_id",
+  delivery_name: "delivery_location_id",
+  empty_return_name: "empty_return_location_id",
+  offroute_return_name: "offroute_return_location_id",
+  vehicle_type_name: "vehicle_type_id",
+  driver_name: "driver_id",
+};
+const UNIT_OPTIONS = ["trip", "km", "ton"].map((v) => ({ value: v, label: PRICING_UNITS[v] ?? v }));
+
 /** Tuyến đường kèm dòng "Hạ hàng: ..." khi có trường bổ sung "Điểm hạ hàng" */
 function routeWithDropOff(r: ShipmentListRow, d: FieldDef) {
   const route = r.route_label ?? `${r.pickup_name ?? ""} → ${r.delivery_name ?? ""}`;
@@ -272,6 +288,7 @@ export function ShipmentGrid({
         width: d.type === "textarea" ? 220 : 140,
         align: ["number", "currency", "percent", "formula"].includes(d.type) ? ("right" as const) : undefined,
         custom: true,
+        def: d,
         render: (r: ShipmentListRow) => formatValue(d, d.type === "formula" ? computeFormula(d.formula, formulaVars("shipments", r as unknown as Record<string, unknown>, r.custom_fields)) : r.custom_fields?.[d.key]),
       })),
     ],
@@ -293,13 +310,22 @@ export function ShipmentGrid({
           // Sửa nhanh số cont, số xe (chọn trong danh mục xe) ngay trên bảng
           if (c.key === "container_no") return <ContainerNoCell r={r} editable={canEdit} />;
           if (c.key === "plate_number") return <VehiclePlateCell r={r} editable={canAssign} empty="" className="-ml-1" />;
-          if (c.key === "driver_name" && r.driver_id)
+          // Sửa nhanh ngày, điểm, loại xe, tài xế, ĐVT, số ngày giao, trường bổ sung ngay trên bảng
+          if (c.key === "pickup_at" || c.key === "expected_delivery_at") return <ShipmentDateCell r={r} field={c.key} display={c.render(r)} editable={canEdit} />;
+          const refField = REF_COLS[c.key];
+          if (refField && refField !== "driver_id") return <ShipmentRefCell r={r} field={refField} display={c.render(r)} editable={canEdit} />;
+          if (c.key === "driver_name")
             return (
               <div className="flex items-center gap-1">
-                <span className="min-w-0 flex-1 truncate">{r.driver_name}</span>
-                <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} />
+                <div className="min-w-0 flex-1">
+                  <ShipmentRefCell r={r} field="driver_id" display={r.driver_name} editable={canAssign} />
+                </div>
+                {r.driver_id ? <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} /> : null}
               </div>
             );
+          if (c.key === "pricing_unit") return <PricingUnitCell r={r} display={c.render(r)} editable={canEdit} options={UNIT_OPTIONS} />;
+          if (c.key === "delivery_days") return <DeliveryDaysCell r={r} editable={canSetOrder} />;
+          if (c.def) return <CustomFieldCell r={r} def={c.def} display={c.render(r)} editable={canEdit} />;
           return editable ? <EditCell row={r} col={c} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} /> : c.render(r);
         },
       })),

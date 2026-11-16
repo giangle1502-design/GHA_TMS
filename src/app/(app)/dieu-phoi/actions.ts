@@ -1485,3 +1485,158 @@ export async function setVehicleOrder(input: z.input<typeof orderOnlySchema>): P
     revalidatePath("/chuyen-xe", "layout");
   }, "Đã lưu thứ tự xe.");
 }
+
+// -----------------------------------------------------------------------------
+// Sửa nhanh một ô trên bảng Quản lý chuyến (không mở chi tiết chuyến)
+// -----------------------------------------------------------------------------
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+const quickEditSchema = z.discriminatedUnion("field", [
+  z.object({ field: z.literal("pickup_at"), shipmentId: uuid, version: z.number().int(), value: z.string().regex(YMD_RE, "Ngày không hợp lệ") }),
+  z.object({ field: z.literal("expected_delivery_at"), shipmentId: uuid, version: z.number().int(), value: z.string().regex(YMD_RE, "Ngày không hợp lệ").or(z.literal("")) }),
+  z.object({ field: z.enum(["pickup_location_id", "delivery_location_id"]), shipmentId: uuid, version: z.number().int(), value: uuid }),
+  z.object({ field: z.enum(["vehicle_type_id", "empty_return_location_id", "offroute_return_location_id"]), shipmentId: uuid, version: z.number().int(), value: uuid.or(z.literal("")) }),
+  z.object({ field: z.literal("driver_id"), shipmentId: uuid, version: z.number().int(), value: uuid }),
+  z.object({ field: z.literal("pricing_unit"), shipmentId: uuid, version: z.number().int(), value: z.enum(["trip", "km", "ton"]) }),
+]);
+export type QuickEditInput = z.input<typeof quickEditSchema>;
+
+/** Ngày mới (YYYY-MM-DD) giữ nguyên giờ trong ngày của thời điểm cũ (giờ VN) */
+function moveToDay(oldIso: string | null, ymd: string, fallback: string) {
+  if (!oldIso) return new Date(`${ymd}T${fallback}+07:00`).toISOString();
+  const oldDay = new Date(oldIso).toLocaleDateString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" });
+  return new Date(Date.parse(oldIso) + (Date.parse(startOfDayVN(ymd)) - Date.parse(startOfDayVN(oldDay)))).toISOString();
+}
+
+/**
+ * Sửa một ô của chuyến ngay trên bảng: ngày nhận / giao dự kiến, điểm nhận / giao / hạ rỗng, loại xe, tài xế, đơn vị tính.
+ * Đổi điểm nhận, điểm giao hoặc loại xe: tìm lại bảng giá như form Sửa đơn (chuyến chưa lập công nợ);
+ * không có bảng giá phù hợp thì giữ giá cũ và báo lại. Mọi thay đổi ghi nhật ký hệ thống (trigger audit).
+ */
+export async function quickEditShipment(input: QuickEditInput): Promise<ActionResult<{ note?: string }>> {
+  return runAction(async () => {
+    const p = quickEditSchema.safeParse(input);
+    if (!p.success) throw new ActionError(p.error.issues[0]?.message ?? "Dữ liệu không hợp lệ");
+    const d = p.data;
+    if (d.field === "driver_id") await requirePermission("dispatch.update");
+    else await requirePermission("shipments.update", "dispatch.update");
+    const supabase = await createClient();
+    const { data: row, error: curErr } = await supabase
+      .from("shipments")
+      .select(
+        "id, shipment_code, status, version, receivable_id, driver_id, vehicle_id, pickup_location_id, delivery_location_id, vehicle_type_id, pickup_at, expected_delivery_at, quantity, unit_price, pricing_unit, fuel_support_base, pricing_snapshot, custom_fields, transport_orders(customer_id)",
+      )
+      .eq("id", d.shipmentId)
+      .maybeSingle();
+    if (curErr) throw curErr;
+    if (!row) throw new ActionError("Không tìm thấy chuyến.");
+    const c = row as unknown as CurShipment & {
+      vehicle_type_id: string | null;
+      pickup_at: string;
+      expected_delivery_at: string | null;
+      quantity: number;
+      unit_price: number;
+      pricing_unit: string;
+      transport_orders: { customer_id: string } | { customer_id: string }[] | null;
+    };
+    if (c.status === "cancelled") throw new ActionError("Chuyến đã hủy, không sửa được.");
+    if (c.version !== d.version) throw new ActionError("Chuyến vừa được người khác sửa. Tải lại trang rồi thử lại.");
+
+    // Tài xế: đổi qua phân công (giữ xe), như hộp Phân công
+    if (d.field === "driver_id") {
+      if (!ASSIGNABLE.includes(c.status)) throw new ActionError("Chỉ đổi tài xế khi chuyến chưa chạy (Nháp, Chờ tài xế nhận, Tài xế đã nhận).");
+      if (c.vehicle_id) {
+        const { data: v } = await supabase.from("vehicles").select("ownership_type, supplier_id").eq("id", c.vehicle_id).maybeSingle();
+        if (v && (v.ownership_type === "outsourced" || v.supplier_id)) throw new ActionError("Chuyến chạy xe 3PL: bấm Đổi ở Điều phối để sửa tài xế 3PL.");
+      }
+      const { data: dr } = await supabase.from("drivers").select("is_outsourced").eq("id", d.value).maybeSingle();
+      if (dr?.is_outsourced) throw new ActionError("Tài xế 3PL: bấm Đổi ở Điều phối để giao cho nhà xe 3PL.");
+      if (d.value === c.driver_id) return {};
+      const { error } = await supabase.rpc("assign_shipment", { p_shipment_id: c.id, p_driver_id: d.value, p_vehicle_id: c.vehicle_id });
+      if (error) throw error;
+      revalidatePath("/dieu-phoi", "layout");
+      revalidatePath("/chuyen-xe", "layout");
+      return { note: c.driver_id ? "Đổi tài xế: chuyến có thể phải chờ Giám đốc duyệt lại." : undefined };
+    }
+
+    const patch: Record<string, unknown> = {};
+    let note: string | undefined;
+    if (d.field === "pickup_at") {
+      patch.pickup_at = moveToDay(c.pickup_at, d.value, "00:00:00");
+      if (c.expected_delivery_at && Date.parse(c.expected_delivery_at) < Date.parse(patch.pickup_at as string))
+        throw new ActionError("Ngày nhận không được sau Ngày giao dự kiến. Sửa Ngày giao dự kiến trước.");
+    } else if (d.field === "expected_delivery_at") {
+      patch.expected_delivery_at = d.value ? moveToDay(c.expected_delivery_at, d.value, "23:59:59") : null;
+      if (patch.expected_delivery_at && Date.parse(patch.expected_delivery_at as string) < Date.parse(c.pickup_at))
+        throw new ActionError("Ngày giao dự kiến không được trước ngày nhận hàng.");
+    } else if (d.field === "empty_return_location_id" || d.field === "offroute_return_location_id") {
+      patch[d.field] = d.value || null;
+    } else if (d.field === "pricing_unit") {
+      if (c.receivable_id) throw new ActionError("Chuyến đã lập công nợ: không sửa được giá (hủy phiếu công nợ trước).");
+      patch.pricing_unit = d.value;
+    } else {
+      // Điểm nhận, điểm giao, loại xe: đổi tuyến thì tìm lại bảng giá
+      const next = {
+        pickupLocationId: d.field === "pickup_location_id" ? d.value : c.pickup_location_id,
+        deliveryLocationId: d.field === "delivery_location_id" ? d.value : c.delivery_location_id,
+        vehicleTypeId: d.field === "vehicle_type_id" ? d.value || undefined : (c.vehicle_type_id ?? undefined),
+      };
+      if (next.pickupLocationId === next.deliveryLocationId) throw new ActionError("Điểm nhận và điểm giao phải khác nhau.");
+      patch[d.field] = d.value || null;
+      const order = Array.isArray(c.transport_orders) ? c.transport_orders[0] : c.transport_orders;
+      if (c.receivable_id || !order) {
+        if (d.field !== "vehicle_type_id") {
+          const { data: r } = await supabase
+            .from("routes")
+            .select("id")
+            .eq("pickup_location_id", next.pickupLocationId)
+            .eq("delivery_location_id", next.deliveryLocationId)
+            .eq("is_active", true)
+            .maybeSingle();
+          patch.route_id = r?.id ?? null;
+        }
+        if (c.receivable_id) note = "Chuyến đã lập công nợ nên giữ nguyên giá.";
+      } else {
+        const s = {
+          pickupAt: c.pickup_at,
+          ...next,
+          quantity: Number(c.quantity),
+          unitPrice: Number(c.unit_price),
+          pricingUnit: (["trip", "km", "ton"].includes(c.pricing_unit) ? c.pricing_unit : "trip") as "trip" | "km" | "ton",
+          priceMode: "quote" as const,
+        } as z.infer<typeof editShipmentSchema>;
+        try {
+          const price = await pricePatch(supabase, order.customer_id, s, c);
+          if (price.price_list_id) {
+            Object.assign(patch, price);
+            note = Number(price.unit_price) !== Number(c.unit_price) ? `Đã lấy lại giá theo bảng giá ${(price.pricing_snapshot as { price_list_code?: string })?.price_list_code ?? ""}: ${Number(price.unit_price).toLocaleString("en-US")} đ.` : undefined;
+          } else {
+            patch.route_id = price.route_id ?? null;
+            note = "Chưa có bảng giá cho tuyến / loại xe mới, giữ nguyên giá cũ. Kiểm tra lại Đơn giá.";
+          }
+        } catch (e) {
+          if (!(e instanceof ActionError)) throw e;
+          note = `Giữ nguyên giá cũ: ${e.message} Mở Sửa đơn để chọn bảng giá.`;
+          if (d.field !== "vehicle_type_id") {
+            const { data: r } = await supabase
+              .from("routes")
+              .select("id")
+              .eq("pickup_location_id", next.pickupLocationId)
+              .eq("delivery_location_id", next.deliveryLocationId)
+              .eq("is_active", true)
+              .maybeSingle();
+            patch.route_id = r?.id ?? null;
+          }
+        }
+      }
+    }
+    const { data, error } = await supabase.from("shipments").update(patch).eq("id", c.id).eq("version", c.version).select("id");
+    if (error) throw error;
+    if (!data?.length) throw new ActionError("Chuyến vừa được người khác sửa hoặc bạn không có quyền sửa. Tải lại trang rồi thử lại.");
+    revalidatePath("/dieu-phoi", "layout");
+    revalidatePath("/chuyen-xe", "layout");
+    revalidatePath(`/chuyen-xe/${c.id}`);
+    if (d.field === "pickup_at") revalidatePath("/cham-cong");
+    return { note };
+  }, "Đã lưu.");
+}
