@@ -816,6 +816,10 @@ export const ENTITIES: Record<string, EntityDef> = {
         help: "Đơn vị ghi trên đơn hàng. Khác KG thì nhập Quy đổi kg để tính tấn cho cước và bốc xếp.",
       },
       { key: "kg_per_unit", label: "Quy đổi (kg / 1 đơn vị)", type: "number", min: 0, list: true, help: "KG = 1; Bao 25 kg = 25; Tấn = 1000." },
+      {
+        key: "kg_per_bag", label: "Số KG/bao", type: "number", min: 0, list: true, defaultValue: 25,
+        help: "Số kg trong 1 bao (đa số 25). Phiếu giao hàng tính Số bao = Số lượng (KG) ÷ Số KG/bao.",
+      },
       { key: "owner_customer_id", label: "Chủ hàng", type: "reference", ref: "customers", list: true, filter: true, help: "Khách hàng sở hữu mã hàng (VD VAP). Để trống nếu dùng chung." },
       { key: "m3_per_unit", label: "Thể tích (m³ / 1 đơn vị)", type: "number", min: 0 },
       { key: "is_dangerous", label: "Hàng nguy hiểm", type: "boolean", list: true, filter: true, defaultValue: false },

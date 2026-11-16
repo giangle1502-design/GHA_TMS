@@ -22,17 +22,18 @@ select tests.assert_fails($$select public.set_shipment_items((select id from t_s
 select tests.assert_fails($$insert into public.shipment_items (shipment_id, line_no) values ((select id from t_si), 9)$$, 'Không ghi thẳng vào bảng được');
 -- 9014: số bao nhập tay, ĐVT bao, và tự tính theo quy cách đóng gói của mã hàng
 reset role;
-insert into public.products (code, name, unit, packing_id) select 'TSB25', 'Phân bón bao 25', 'KG', id from public.catalog_items where code = 'BAO25';
+insert into public.products (code, name, unit) values ('TSB25', 'Phân bón bao 25', 'KG');
+insert into public.products (code, name, unit, kg_per_bag) values ('TSJ1150', 'Hạt nhựa jumbo', 'KG', 1150);
 set role authenticated;
 select tests.assert(public.set_shipment_items((select id from t_si),
-  '[{"item_code":"MH001","quantity":"10","unit":"tấn","bag_count":"7"},{"item_code":"MH002","quantity":40,"unit":"Bao"},{"item_code":"tsb25","quantity":1000,"unit":"KG"},{"item_code":"MH004","quantity":5,"unit":"KG"}]') = 4,
+  '[{"item_code":"MH001","quantity":"10","unit":"tấn","bag_count":"7"},{"item_code":"MH002","quantity":40,"unit":"Bao"},{"item_code":"tsb25","quantity":1000,"unit":"KG"},{"item_code":"MH004","quantity":5,"unit":"KG"},{"item_code":"TSJ1150","quantity":2300}]') = 5,
   'Lưu dòng hàng có số bao');
 select tests.assert((select bag_count from public.shipment_items where shipment_id = (select id from t_si) and line_no = 1) = 7, 'Lưu số bao nhập tay');
 select tests.assert_fails($$select public.set_shipment_items((select id from t_si), '[{"item_code":"X","bag_count":"-1"}]')$$, 'Số bao âm bị chặn');
 select tests.assert_fails($$select public.set_shipment_items((select id from t_si), '[{"item_code":"X","bag_count":"abc"}]')$$, 'Số bao không phải số bị chặn');
 select tests.assert((select string_agg(coalesce((i ->> 'bag_count')::numeric::text, '-'), ',' order by (i ->> 'line_no')::int)
-                     from jsonb_array_elements(public.delivery_note((select id from t_si)) -> 'items') i) = '7.00,40.000,40.00,-',
-  'Phiếu giao hàng: số bao nhập tay, theo ĐVT bao, tự tính theo quy cách, để trống khi không tính được');
+                     from jsonb_array_elements(public.delivery_note((select id from t_si)) -> 'items') i) = '7.00,40.000,40.00,-,2.00',
+  'Phiếu giao hàng: số bao nhập tay, theo ĐVT bao, Số lượng KG ÷ Số KG/bao (mặc định 25), để trống khi không có mã hàng');
 reset role;
 
 insert into public.field_definitions (module, field_key, label, data_type) values ('shipment_items', 'so_seal', 'Số seal', 'short_text');
