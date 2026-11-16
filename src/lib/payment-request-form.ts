@@ -23,6 +23,8 @@ export type PaymentFormData = {
   attachment_count: number | null;
   items: PaymentFormItem[];
   overhead_ids: string[];
+  /** Hóa đơn mua vào (Sổ hóa đơn) đưa vào phiếu */
+  invoice_ids: string[];
   notes: string;
 };
 
@@ -51,6 +53,7 @@ export function blankForm(type: PaymentFormType, today: string): PaymentFormData
     attachment_count: null,
     items: [],
     overhead_ids: [],
+    invoice_ids: [],
     notes: "",
   };
 }

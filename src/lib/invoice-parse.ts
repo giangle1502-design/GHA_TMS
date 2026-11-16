@@ -10,6 +10,12 @@ export type ParsedInvoice = {
   invoice_symbol: string | null; // Ký hiệu (VD C26MAV)
   seller_name: string | null;
   seller_tax_code: string | null;
+  buyer_name: string | null; // tên đơn vị mua (hóa đơn GHA xuất cho khách)
+  buyer_tax_code: string | null;
+  /** MST của GHA nằm ở phần người bán: đây là hóa đơn GHA xuất (bán ra) */
+  gha_is_seller: boolean;
+  /** MST của GHA nằm ở phần người mua: hóa đơn nhà cung cấp xuất cho GHA (mua vào) */
+  gha_is_buyer: boolean;
   description: string | null; // tên hàng (VD Xăng E10 RON 95)
   quantity: number | null;
   unit_price: number | null;
@@ -82,6 +88,10 @@ export function parseInvoiceText(text: string): ParsedInvoice {
     invoice_symbol: null,
     seller_name: null,
     seller_tax_code: null,
+    buyer_name: null,
+    buyer_tax_code: null,
+    gha_is_seller: false,
+    gha_is_buyer: false,
     description: null,
     quantity: null,
     unit_price: null,
@@ -133,6 +143,26 @@ export function parseInvoiceText(text: string): ParsedInvoice {
     return null;
   };
   out.seller_tax_code = taxIn(iSeller >= 0 ? iSeller : 0, iBuyer > iSeller ? iBuyer : -1) ?? taxIn(0, -1);
+  const hasGha = (from: number, to: number) => lines.slice(Math.max(0, from), to).some((l) => l.replace(/\D/g, "").includes(BUYER_TAX));
+  if (iBuyer >= 0) {
+    out.gha_is_seller = hasGha(0, iBuyer);
+    out.gha_is_buyer = hasGha(iBuyer, iBuyer + 8);
+    // Tên đơn vị mua: "Tên đơn vị: …" (ưu tiên) hoặc "Đơn vị mua hàng: …" / "Họ tên người mua hàng: …"
+    const valueOf = (i: number) => lines[i].split(/:/).slice(1).join(":").trim().replace(/[.:;,]+$/, "");
+    const win = fl.slice(iBuyer, iBuyer + 6);
+    const iUnit = win.findIndex((l) => /(ten don vi|don vi mua( hang)?|ten cong ty)\s*:/.test(l));
+    const name = iUnit >= 0 ? valueOf(iBuyer + iUnit) : valueOf(iBuyer);
+    if (name) out.buyer_name = name;
+    for (let i = iBuyer; i < Math.min(lines.length, iBuyer + 8); i++) {
+      if (!/(ma so thue|mst)/.test(fl[i])) continue;
+      const m = /(\d[\d\s-]{8,16}\d)/.exec(lines[i].split(/:/).slice(1).join(":") || lines[i]);
+      const code = m?.[1].replace(/\s/g, "");
+      if (code && code.replace(/\D/g, "").length >= 10) {
+        out.buyer_tax_code = code;
+        break;
+      }
+    }
+  }
 
   // Tổng tiền
   out.total = labelAmount(lines, fl, /tong (cong )?(tien )?(thanh toan|cong tien thanh toan)(?! bang chu)/);
@@ -201,6 +231,7 @@ export function parseInvoiceText(text: string): ParsedInvoice {
     ["invoice_no", "số hóa đơn"],
     ["seller_name", "người bán"],
     ["seller_tax_code", "MST người bán"],
+    ["buyer_name", "người mua"],
     ["quantity", "số lít"],
     ["unit_price", "đơn giá"],
     ["amount", "tiền chưa thuế"],
@@ -237,3 +268,35 @@ export function invoiceToFormValues(p: ParsedInvoice, currentNotes: string): Rec
   return v;
 }
 
+
+/**
+ * Giá trị biểu mẫu Sổ hóa đơn (bán ra / mua vào) từ hóa đơn đọc được.
+ * Bán ra: đối tác là người mua (khách); mua vào: đối tác là người bán. Tiền thuế lấy đúng số ghi trên hóa đơn.
+ */
+export function invoiceToTaxInvoiceValues(p: ParsedInvoice, dir: "sale" | "purchase", currentNotes: string): Record<string, unknown> {
+  const v: Record<string, unknown> = {};
+  if (p.invoice_date) v.invoice_date = p.invoice_date;
+  if (p.invoice_symbol) v.invoice_symbol = p.invoice_symbol;
+  if (p.invoice_no) v.invoice_no = p.invoice_no;
+  const name = dir === "sale" ? p.buyer_name : p.seller_name;
+  const tax = dir === "sale" ? (p.buyer_tax_code !== BUYER_TAX ? p.buyer_tax_code : null) : p.seller_tax_code;
+  if (name) v.partner_name = name;
+  if (tax) v.partner_tax_code = tax;
+  if (p.description) v.description = p.quantity !== null && p.is_fuel ? `${p.description}, ${fmt(p.quantity).replace(".", ",")} lít` : p.description;
+  if (p.amount !== null) v.amount = fmt(p.amount);
+  if (p.vat_label === "KKKNT" || p.vat_label === "KCT") v.vat_rate = p.vat_label;
+  else if (p.vat_rate !== null && [0, 5, 8, 10].includes(p.vat_rate)) v.vat_rate = String(p.vat_rate);
+  if (p.vat_amount !== null) v.vat_amount = fmt(p.vat_amount);
+  if (p.unit_price !== null && p.is_fuel) {
+    const add = `Đơn giá ${fmt(p.unit_price)} đ/lít`;
+    if (!currentNotes.includes(add)) v.notes = currentNotes ? `${currentNotes} · ${add}` : add;
+  }
+  return v;
+}
+
+/** Ảnh dán vào có vẻ thuộc sổ kia (GHA là người bán mà đang nhập mua vào, hoặc ngược lại) */
+export function invoiceDirectionHint(p: ParsedInvoice, dir: "sale" | "purchase"): string | null {
+  if (dir === "purchase" && p.gha_is_seller && !p.gha_is_buyer) return "Hóa đơn này do GHA xuất (GHA là người bán): nên nhập ở Hóa đơn bán ra.";
+  if (dir === "sale" && p.gha_is_buyer && !p.gha_is_seller) return "Hóa đơn này GHA là người mua: nên nhập ở Hóa đơn mua vào.";
+  return null;
+}

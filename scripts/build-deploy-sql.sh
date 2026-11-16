@@ -191,3 +191,5 @@ upgrade nang-cap-tra-rong-cuoc-cont.sql "Tài xế nhập trả rỗng, cược 
   supabase/migrations/20261115009008_tra_rong_cuoc_cont.sql
 upgrade nang-cap-chi-phi-ngoai-chuyen.sql "Chi phí ngoài chuyến, cân đối thu chi thuế, phiếu đề nghị thanh toán / tạm ứng" "to_regclass('public.overhead_expenses') is not null" \
   supabase/migrations/20261115009011_chi_phi_ngoai_chuyen.sql
+upgrade nang-cap-so-hoa-don.sql "Sổ hóa đơn bán ra / mua vào, cân đối thuế từ hóa đơn, đề nghị thanh toán từ hóa đơn mua vào" "to_regclass('public.tax_invoices') is not null" \
+  supabase/migrations/20261116009012_so_hoa_don.sql

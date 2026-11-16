@@ -10,7 +10,7 @@ import { PaymentFormEditor, type SavedForm } from "./payment-form-editor";
 export const metadata: Metadata = { title: "Đề nghị thanh toán, tạm ứng" };
 
 const COLS =
-  "id, code, form_type, form_date, recipient, requester_name, department, content, amount, advance_amount, due_date, payment_method, bank_account_no, bank_name, account_holder, attachment_count, items, overhead_ids, notes, created_at";
+  "id, code, form_type, form_date, recipient, requester_name, department, content, amount, advance_amount, due_date, payment_method, bank_account_no, bank_name, account_holder, attachment_count, items, overhead_ids, invoice_ids, notes, created_at";
 
 type Raw = Record<string, unknown>;
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -37,6 +37,7 @@ function toForm(r: Raw): PaymentFormData {
       ? (r.items as Raw[]).map((i) => ({ content: s(i.content), invoice_no: s(i.invoice_no), invoice_date: s(i.invoice_date), amount: Number(i.amount ?? 0) }))
       : [],
     overhead_ids: Array.isArray(r.overhead_ids) ? (r.overhead_ids as string[]) : [],
+    invoice_ids: Array.isArray(r.invoice_ids) ? (r.invoice_ids as string[]) : [],
     notes: s(r.notes),
   };
 }
@@ -67,7 +68,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     <>
       <PageHeader
         title="Đề nghị thanh toán, tạm ứng"
-        description="Lập và in Giấy đề nghị thanh toán (mẫu 05-TT) và Giấy đề nghị tạm ứng (mẫu 03-TT) trên khổ A4 có logo GHA. Số tiền tự đọc thành chữ; lấy được các khoản từ Chi phí ngoài chuyến. Phiếu đã lưu in lại được bất cứ lúc nào."
+        description="Lập và in Giấy đề nghị thanh toán (mẫu 05-TT) và Giấy đề nghị tạm ứng (mẫu 03-TT) trên khổ A4 có logo GHA. Số tiền tự đọc thành chữ; lấy được các khoản từ hóa đơn mua vào (Sổ hóa đơn) hoặc Chi phí ngoài chuyến. Phiếu đã lưu in lại được bất cứ lúc nào."
       />
       <PaymentFormEditor
         key={initial.id ?? `new-${type}`}
