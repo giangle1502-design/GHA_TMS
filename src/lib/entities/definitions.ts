@@ -201,6 +201,7 @@ const partnerCategory = { field: "category_id", pattern: "3pl|thue ngoai|thue xe
 const TAX_INVOICE: EntityDef = {
   key: "tax_invoices",
   table: "tax_invoices",
+  customModule: "tax_invoices",
   label: "Sổ hóa đơn",
   singular: "hóa đơn",
   perm: "overhead",
@@ -237,6 +238,11 @@ const TAX_INVOICE: EntityDef = {
     { key: "total_preview", label: "Tổng", type: "formula", formula: "N(amount) + N(vat_amount)", help: "Tự cộng Thành tiền + VAT." },
     { key: "total_amount", label: "Tổng", type: "currency", list: true, readOnly: true, hideInForm: true },
     {
+      key: "description", label: "Diễn giải", type: "text", list: true, wide: true, maxLength: 500,
+      placeholder: "VD: Hóa đơn cước vận chuyển tháng 10/2026", help: "Dán ảnh thì tự điền tên hàng (nếu đọc được), sửa lại được.",
+    },
+    { key: "notes", label: "Ghi chú", type: "textarea", wide: true, maxLength: 1000 },
+    {
       key: "payment_status", label: "Thanh toán", type: "select", list: true, filter: true, hideInForm: true,
       options: [
         { value: "unpaid", label: "Chưa thanh toán", tone: "amber" },
@@ -244,7 +250,7 @@ const TAX_INVOICE: EntityDef = {
       ],
     },
     { key: "code", label: "Mã", type: "text", hideInForm: true },
-    { key: "description", label: "Nội dung", type: "text", hideInForm: true },
+
     { key: "vat_rate", label: "Thuế suất", type: "select", options: VAT_RATE_OPTIONS, hideInForm: true },
     { key: "tax_deductible", label: "Được trừ khi tính thuế", type: "boolean", hideInForm: true },
     { key: "paid_date", label: "Ngày thanh toán", type: "date", hideInForm: true },
