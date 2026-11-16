@@ -36,6 +36,7 @@ type ShipRow = {
   delivery_location_id: string;
   empty_return_location_id: string | null;
   offroute_return_location_id: string | null;
+  container_no: string | null;
   trip_order: number | null;
   vehicle_type_id: string | null;
   vehicle_id: string | null;
@@ -81,7 +82,7 @@ type ItemRow = {
 
 /** Sửa toàn bộ đơn hàng bằng đúng biểu mẫu lúc tạo đơn, nạp sẵn mọi thông tin đã nhập */
 const SHIP_COLS =
-  "id, shipment_code, status, version, receivable_id, pickup_at, expected_delivery_at, pickup_location_id, delivery_location_id, empty_return_location_id, offroute_return_location_id, trip_order, vehicle_type_id, vehicle_id, driver_id, price_list_id, unit_price, pricing_unit, quantity, surcharge_amount, fuel_support_rate, fuel_support_base, fuel_support_amount, pricing_snapshot, notes, pod_photo_required, custom_fields";
+  "id, shipment_code, status, version, receivable_id, pickup_at, expected_delivery_at, pickup_location_id, delivery_location_id, empty_return_location_id, offroute_return_location_id, trip_order, vehicle_type_id, container_no, vehicle_id, driver_id, price_list_id, unit_price, pricing_unit, quantity, surcharge_amount, fuel_support_rate, fuel_support_base, fuel_support_amount, pricing_snapshot, notes, pod_photo_required, custom_fields";
 
 export default async function Page(props: { params: Promise<{ id: string }>; searchParams: Promise<{ nhanban?: string }> }) {
   return withErrorDetail(() => PageInner(props));
@@ -179,6 +180,7 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
     deliveryLocationId: s.delivery_location_id,
     emptyReturnLocationId: s.empty_return_location_id ?? "",
     offrouteReturnLocationId: s.offroute_return_location_id ?? "",
+    containerNo: s.container_no ?? "",
     tripOrder: s.trip_order ?? null,
     vehicleTypeId: s.vehicle_type_id ?? "",
     vehicleId: s.vehicle_id ?? "",

@@ -24,6 +24,8 @@ import { PRICING_UNITS } from "@/lib/status";
 import { VehicleSourcePicker, type VehicleSource } from "@/components/dispatch/vehicle-source-picker";
 import { createOrder, customerDefaultPayer, quoteShipment, updateOrderFull, vehicleDefaultDriver, type QuoteResult } from "../actions";
 import { shipmentStatus } from "@/lib/status";
+import { normalizeContainerNo } from "@/lib/shipment-container";
+import { containerCheckOk } from "@/lib/paste-orders";
 
 type Row = {
   key: number;
@@ -37,6 +39,8 @@ type Row = {
   /** Thứ tự chuyến: tài xế phải nhận đúng thứ tự trong ngày */
   tripOrder: string;
   vehicleTypeId: string;
+  /** Số container của chuyến (không bắt buộc) */
+  containerNo: string;
   vehicleId: string;
   driverId: string;
   driverKey: number;
@@ -97,6 +101,7 @@ export type EditShipmentInit = {
   offrouteReturnLocationId: string;
   tripOrder: number | null;
   vehicleTypeId: string;
+  containerNo: string;
   vehicleId: string;
   driverId: string;
   quantity: number;
@@ -155,6 +160,8 @@ const newRow = (from?: Row, pod = true): Row => ({
   offrouteReturnLocationId: from?.offrouteReturnLocationId ?? "",
   tripOrder: "",
   vehicleTypeId: from?.vehicleTypeId ?? "",
+  // Chuyến nhân bản / thêm chuyến: mỗi chuyến một cont nên không chép số cont
+  containerNo: "",
   vehicleId: "",
   driverId: "",
   driverKey: 0,
@@ -184,6 +191,7 @@ const rowFromShipment = (s: EditShipmentInit, generalKeys: string[], priceKeys: 
   offrouteReturnLocationId: s.offrouteReturnLocationId,
   tripOrder: s.tripOrder === null ? "" : String(s.tripOrder),
   vehicleTypeId: s.vehicleTypeId,
+  containerNo: s.containerNo,
   vehicleId: s.vehicleId,
   driverId: s.driverId,
   driverKey: 0,
@@ -336,6 +344,7 @@ export function OrderForm({
     offrouteReturnLocationId: s.offrouteReturnLocationId,
     tripOrder: s.tripOrder.trim() === "" ? null : Number(s.tripOrder),
     vehicleTypeId: s.vehicleTypeId,
+    containerNo: normalizeContainerNo(s.containerNo),
     vehicleId: s.vehicleId,
     driverId: s.driverId,
     priceListId: s.priceListId,
@@ -713,6 +722,11 @@ function ShipmentEditor({
   const serviceKind = generalFields.find((f) => /lo[aạ]i\s*h[iì]nh/i.test(f.label))?.key;
   const generalOrder = (() => {
     const base = (shipmentLayout.length ? shipmentLayout : [...GENERAL_SYSTEM_KEYS, ...generalFields.map((f) => f.key)]).filter((k) => k !== "pricing_unit");
+    // Ô "Số cont" mới thêm: thứ tự đã lưu từ trước chưa có thì đứng ngay sau Loại xe
+    if (!base.includes("container_no")) {
+      const vt = base.indexOf("vehicle_type_id");
+      base.splice(vt < 0 ? base.length : vt + 1, 0, "container_no");
+    }
     // "Tính theo" đứng ngay sau "Loại hình vận chuyển"; chưa có trường đó thì đứng sau Số lượng
     const at = base.indexOf(serviceKind && base.includes(serviceKind) ? serviceKind : "quantity");
     base.splice(at < 0 ? base.length : at + 1, 0, "pricing_unit");
@@ -825,6 +839,23 @@ function ShipmentEditor({
                   value={row.expectedDeliveryAt.slice(0, 10)}
                   onChange={(e) => onChange({ expectedDeliveryAt: e.target.value })}
                 />
+              </div>
+            ),
+            container_no: (
+              <div className="space-y-1.5">
+                <SysLabel s={sSys} k="container_no" htmlFor={id("cont")}>Số cont</SysLabel>
+                <Input
+                  id={id("cont")}
+                  value={row.containerNo}
+                  maxLength={40}
+                  placeholder="TCLU1234567"
+                  className="font-mono"
+                  onChange={(e) => onChange({ containerNo: e.target.value.toUpperCase() })}
+                />
+                {(() => {
+                  const c = normalizeContainerNo(row.containerNo);
+                  return c && /^[A-Z]{4}\d{7}$/.test(c) && !containerCheckOk(c) ? <p className="text-xs text-amber-700">Sai chữ số kiểm tra, xem lại số cont.</p> : null;
+                })()}
               </div>
             ),
             vehicle_type_id: (
