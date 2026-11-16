@@ -21,17 +21,3 @@ export async function loadYardConfirm(supabase: SupabaseClient, notes: { id: str
   return out;
 }
 
-/** Điền tên điểm nhận (locations.name) vào từng phiếu, chỉ để đặt tên file PDF "<Điểm nhận> - <Mã chuyến>". Không in lên phiếu. */
-export async function loadPickupNames(supabase: SupabaseClient, notes: { id: string; d: DeliveryNoteData }[]): Promise<void> {
-  for (let i = 0; i < notes.length; i += 200) {
-    const part = notes.slice(i, i + 200);
-    const { data, error } = await supabase
-      .from("shipments")
-      .select("id, pickup:locations!shipments_pickup_location_id_fkey(name)")
-      .in("id", part.map((n) => n.id));
-    if (error) throw error;
-    const rows = (data ?? []) as unknown as { id: string; pickup: { name: string | null } | { name: string | null }[] | null }[];
-    const names = new Map(rows.map((r) => [r.id, (Array.isArray(r.pickup) ? r.pickup[0]?.name : r.pickup?.name) ?? null]));
-    for (const n of part) n.d.pickup_name = names.get(n.id) ?? null;
-  }
-}

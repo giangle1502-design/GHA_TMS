@@ -13,7 +13,7 @@ describe("phiếu giao hàng", () => {
     expect(noteCompany({ company: null } as unknown as DeliveryNoteData).name).toBe(GHA_COMPANY.name);
   });
 
-  it("đặt tên tệp PDF = Điểm nhận - Mã chuyến, bỏ ký tự không hợp lệ", () => {
+  it("đặt tên tệp PDF = Điểm giao - Mã chuyến, bỏ ký tự không hợp lệ", () => {
     expect(noteBaseName("SP-ITC", "SNOV-0004")).toBe("SP-ITC - SNOV-0004");
     expect(noteBaseName("Kho A/B: \"Cát Lái\"?", "CX|0001")).toBe("Kho A B Cát Lái - CX 0001");
     expect(noteBaseName(null, "SNOV-0004")).toBe("SNOV-0004");
@@ -41,11 +41,11 @@ describe("in phiếu giao hàng hàng loạt", () => {
     expect(safeBackHref(undefined, "/x")).toBe("/x");
   });
   it("tên tệp PDF nhiều phiếu", () => {
-    const n = (pickup_name: string | null, shipment_code: string) => ({ pickup_name, shipment_code });
+    const n = (delivery_name: string | null, shipment_code: string) => ({ delivery_name, shipment_code });
     expect(noteBatchBaseName([n("SP-ITC", "SNOV-0004")])).toBe("SP-ITC - SNOV-0004");
     expect(noteBatchBaseName([n("SP-ITC", "SNOV-0004"), n("SP-ITC", "SNOV-0005")])).toBe("SP-ITC - SNOV-0004, SNOV-0005");
     expect(noteBatchBaseName(["1", "2", "3", "4"].map((i) => n("SP-ITC", `SNOV-000${i}`)))).toBe("SP-ITC - SNOV-0001 đến SNOV-0004 (4 chuyến)");
-    expect(noteBatchBaseName([n("SP-ITC", "A-1"), n("Cát Lái", "A-2")])).toBe("Nhiều điểm nhận - A-1, A-2");
+    expect(noteBatchBaseName([n("SP-ITC", "A-1"), n("Cát Lái", "A-2")])).toBe("Nhiều điểm giao - A-1, A-2");
   });
 });
 
