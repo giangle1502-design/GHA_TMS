@@ -1,8 +1,11 @@
 import { formatNumber } from "@/lib/format";
 import { noteCompany, noteDateText, type DeliveryNoteData } from "@/lib/delivery-note";
 
+/** Dấu xác nhận đã nhận hàng (hàng giao về Bãi xe GHA) */
+export type NoteConfirm = { receiver: string; receivedAt: string };
+
 /** Mẫu phiếu giao hàng A4 (LE duyệt 15/11/2026). Màu dùng mã hex để xuất PDF bằng ảnh không lệch màu. */
-export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
+export function DeliveryNoteSheet({ d, confirm }: { d: DeliveryNoteData; /** Có thì in dấu ĐÃ NHẬN HÀNG ở ô Bên nhận */ confirm?: NoteConfirm }) {
   const co = noteCompany(d);
   const items = d.items.length
     ? d.items
@@ -108,6 +111,20 @@ export function DeliveryNoteSheet({ d }: { d: DeliveryNoteData }) {
         <div>
           <b>Bên nhận hàng</b>
           <i>(Ký, ghi rõ họ tên, đóng dấu)</i>
+          {confirm ? (
+            <div className="dn-stamp" data-confirm-stamp>
+              <div className="dn-stamp-head">
+                {/* eslint-disable-next-line @next/next/no-img-element -- ảnh tĩnh cùng nguồn, cần thẻ img thường để in và xuất PDF */}
+                <img src="/logo-gha.png" alt="" className="dn-stamp-logo" />
+                <span>ĐÃ NHẬN HÀNG</span>
+              </div>
+              <div className="dn-stamp-line">Ngày giờ nhận: {confirm.receivedAt || "......................"}</div>
+              <div className="dn-stamp-sign" />
+              <div className="dn-stamp-line">
+                Người nhận: <b>{confirm.receiver || "......................"}</b>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -151,6 +168,14 @@ const CSS = `
 .dn-signs { display:grid; grid-template-columns:1fr 1fr; text-align:center; margin-top:18px; min-height:40mm; }
 .dn-signs b { display:block; text-transform:uppercase; }
 .dn-signs i { font-size:11.5pt; color:#555; }
+.dn-stamp { display:inline-block; margin-top:10px; border:2.5px solid #c8102e; border-radius:10px; padding:6px 12px 5px; color:#c8102e;
+  transform:rotate(-3deg); text-align:left; font-family:Arial, Helvetica, sans-serif; min-width:62mm; }
+.dn-stamp-head { display:flex; align-items:center; gap:8px; border-bottom:1.5px solid #c8102e; padding-bottom:3px; }
+.dn-stamp-head span { font-weight:bold; font-size:15pt; letter-spacing:.5px; }
+.dn-stamp-logo { width:15mm; height:auto; }
+.dn-stamp-line { font-size:10.5pt; margin-top:3px; color:#c8102e; }
+.dn-stamp-line b { display:inline; text-transform:none; color:#c8102e; }
+.dn-stamp-sign { height:12mm; }
 @media screen and (max-width: 640px) {
   .dn-sheet { padding:14px; font-size:11.5pt; }
   .dn-head { flex-direction:column; } .dn-no { text-align:left; white-space:normal; }

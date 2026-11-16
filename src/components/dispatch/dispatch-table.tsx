@@ -29,6 +29,7 @@ import { formatDate, formatNumber } from "@/lib/format";
 import { ASSIGNABLE_STATUSES, CANCELLABLE_STATUSES, LOCKED_STATUSES, shipmentStatus, tripApprovalStatus } from "@/lib/status";
 import { ASSIGNED_ROW_CELL, isAssignedRow, isLate, type ShipmentListRow } from "@/lib/shipments";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
+import { isGhaYard } from "@/lib/delivery-note";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
 import { ActForDriverQuick } from "./act-for-driver-quick";
@@ -696,6 +697,7 @@ function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: Shi
   return (
     <div className="flex flex-wrap justify-end gap-1">
       {r.status !== "cancelled" ? <DeliveryNoteButton compact ids={[r.id]} label={r.shipment_code} /> : null}
+      {r.status !== "cancelled" && r.status !== "draft" && isGhaYard(r.delivery_name) ? <DeliveryNoteButton compact confirm ids={[r.id]} label={r.shipment_code} /> : null}
       {r.driver_id && r.status !== "cancelled" ? <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} /> : null}
       {r.can_approve_dispatch && r.dispatch_approval_request_id ? <TripApprovalButtons compact requestIds={[r.dispatch_approval_request_id]} label={r.shipment_code} /> : null}
       {canAssign && r.dispatch_approval === "rejected" && r.status === "assigned" ? (

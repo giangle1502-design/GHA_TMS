@@ -3,12 +3,14 @@ import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { parseNoteIds, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
 import { DeliveryNoteBatch } from "@/components/delivery-note/delivery-note-batch";
+import { loadYardConfirm } from "@/lib/delivery-note-confirm";
 
 export const metadata: Metadata = { title: "In phiếu giao hàng" };
 
 type SP = Record<string, string | string[] | undefined>;
 
 // In hàng loạt phiếu giao hàng (từ Điều phối / Quản lý chuyến): ?ids=uuid,uuid,...&ve=/dieu-phoi?...
+// &mau=xac-nhan: chuyến giao về Bãi xe GHA in kèm dấu ĐÃ NHẬN HÀNG
 export default async function DeliveryNoteBatchPage({ searchParams }: { searchParams: Promise<SP> }) {
   await requirePagePermission("shipments.view", "dispatch.view");
   const sp = await searchParams;
@@ -25,5 +27,6 @@ export default async function DeliveryNoteBatchPage({ searchParams }: { searchPa
       if (r.data) notes.push({ id: part[j], d: r.data as DeliveryNoteData });
     });
   }
-  return <DeliveryNoteBatch notes={notes} backHref={backHref} />;
+  const confirm = sp.mau === "xac-nhan" ? await loadYardConfirm(supabase, notes) : undefined;
+  return <DeliveryNoteBatch notes={notes} backHref={backHref} confirm={confirm} />;
 }

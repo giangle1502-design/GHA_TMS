@@ -1,10 +1,11 @@
 import { withErrorDetail } from "@/components/layout/page-error-detail";
+import { isGhaYard } from "@/lib/delivery-note";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { notFound } from "next/navigation";
-import { ArrowRight, ChevronLeft, Copy, Printer } from "lucide-react";
+import { ArrowRight, ChevronLeft, Copy, Printer, Stamp } from "lucide-react";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { missingColumn } from "@/lib/supabase/missing-column";
@@ -305,6 +306,13 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
               <Button asChild variant="outline">
                 <Link href={`/phieu-giao-hang/${s.id}`} data-delivery-note-link>
                   <Printer /> Phiếu giao hàng
+                </Link>
+              </Button>
+            ) : null}
+            {s.status !== "cancelled" && s.status !== "draft" && isGhaYard(s.delivery_name) ? (
+              <Button asChild variant="outline" className="text-[#c8102e]">
+                <Link href={`/phieu-giao-hang/${s.id}?mau=xac-nhan`} data-delivery-note-link title="Hàng giao về Bãi xe GHA: in phiếu kèm dấu ĐÃ NHẬN HÀNG, ngày giờ nhận, người nhận">
+                  <Stamp /> Xác nhận đã nhận hàng
                 </Link>
               </Button>
             ) : null}
