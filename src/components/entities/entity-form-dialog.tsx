@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/lib/format";
 import { getEntity } from "@/lib/entities/definitions";
 import { effectiveFields, formatValue, isFieldShown, isShownByRefLabel, numericValues, toFormValues, validateRecord } from "@/lib/entities/record";
 import { computeFormula } from "@/lib/formula";
@@ -85,6 +86,23 @@ export function EntityFormDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const values = useWatch({ control: form.control }) as Values;
+  // Ô tự tính (autoCalc): đổi Thành tiền / Thuế suất thì tính lại Tiền VAT; không đè khi ô đích được điền cùng lúc
+  const calcPrev = useRef<{ key: string; values: Values } | null>(null);
+  const calcKey = `${open}|${String(record?.[pk] ?? "new")}`;
+  useEffect(() => {
+    const last = calcPrev.current;
+    calcPrev.current = { key: calcKey, values };
+    if (!last || last.key !== calcKey) return; // vừa mở / đổi bản ghi: chỉ ghi nhận
+    const prev = last.values;
+    for (const f of fields) {
+      if (!f.autoCalc) continue;
+      const changed = f.autoCalc.from.some((k) => String(prev[k] ?? "") !== String(values[k] ?? ""));
+      if (!changed || String(prev[f.key] ?? "") !== String(values[f.key] ?? "")) continue;
+      const n = computeFormula(f.autoCalc.formula, numericValues(fields, values));
+      const next = n === null || !Number.isFinite(n) ? "" : formatNumber(n);
+      if (next !== String(values[f.key] ?? "")) form.setValue(f.key, next, { shouldDirty: true });
+    }
+  }, [values, fields, form, calcKey]);
   // Tự ghép tên (VD tên tuyến) từ nhãn hai ô tham chiếu; chỉ ghi đè khi ô tên trống hoặc đang là tên tự ghép
   const autoNames = useRef<Record<string, string>>({});
   const lastAuto = useRef("");
