@@ -442,3 +442,17 @@ export function numericValues(fields: FieldDef[], values: Record<string, unknown
   }
   return out;
 }
+
+/** Điều kiện hiện theo nhãn ô tham chiếu (showIfRefLabel), chỉ dùng trên biểu mẫu */
+export function isShownByRefLabel(field: FieldDef, values: Record<string, unknown>, labels: Record<string, string>): boolean {
+  const c = field.showIfRefLabel;
+  if (!c) return true;
+  if (c.orIf && c.orIf.in.includes(String(values[c.orIf.field] ?? ""))) return true;
+  if (!values[c.field]) return false;
+  const fold = (labels[c.field] ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase();
+  return new RegExp(c.pattern, "i").test(fold);
+}

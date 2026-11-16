@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useForm, useWatch, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { getEntity } from "@/lib/entities/definitions";
-import { effectiveFields, formatValue, isFieldShown, numericValues, toFormValues, validateRecord } from "@/lib/entities/record";
+import { effectiveFields, formatValue, isFieldShown, isShownByRefLabel, numericValues, toFormValues, validateRecord } from "@/lib/entities/record";
 import { computeFormula } from "@/lib/formula";
 import { saveRecord } from "@/lib/entities/actions";
 import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
@@ -16,6 +16,7 @@ import type { RefLabels } from "@/lib/entities/server";
 import { FieldInput } from "./field-input";
 import { AddFieldButton } from "./add-field-button";
 import { InvoiceImageFill } from "./invoice-image-fill";
+import { matchInvoicePartner } from "@/app/(app)/so-hoa-don/actions";
 
 type Values = Record<string, unknown>;
 
@@ -87,7 +88,16 @@ export function EntityFormDialog({
   // Tự ghép tên (VD tên tuyến) từ nhãn hai ô tham chiếu; chỉ ghi đè khi ô tên trống hoặc đang là tên tự ghép
   const autoNames = useRef<Record<string, string>>({});
   const lastAuto = useRef("");
+  // Nhãn đang chọn của các ô tham chiếu (cho điều kiện hiện showIfRefLabel)
+  // nhãn vừa chọn trong lần mở này (gắn với bản ghi đang sửa để không lẫn sang bản ghi khác)
+  const recId = String(record?.[pk] ?? "new");
+  const [picked, setPicked] = useState<{ rec: string; labels: Record<string, string> }>({ rec: recId, labels: {} });
+  const curLabels: Record<string, string> = {
+    ...Object.fromEntries(fields.filter((f) => f.type === "reference" && record?.[f.key]).map((f) => [f.key, refLabels?.[f.key]?.[String(record![f.key])] ?? ""])),
+    ...(picked.rec === recId ? picked.labels : {}),
+  };
   function onRefChange(key: string, label: string) {
+    setPicked((x) => ({ rec: recId, labels: { ...(x.rec === recId ? x.labels : {}), [key]: label } }));
     const an = entity.autoName;
     if (!an || !an.from.includes(key)) return;
     autoNames.current[key] = label.split(" – ")[0].trim();
@@ -164,6 +174,32 @@ export function EntityFormDialog({
             <InvoiceImageFill
               mode={entity.imageFill === "invoice" ? "invoice" : values.direction === "sale" ? "sale_invoice" : "purchase_invoice"}
               autoDirection={entity.imageFill === "tax_invoice"}
+              onParsed={
+                entity.imageFill === "tax_invoice"
+                  ? async (p, dir) => {
+                      const r = await matchInvoicePartner({
+                        direction: dir,
+                        taxCode: (dir === "sale" ? p.buyer_tax_code : p.seller_tax_code) ?? null,
+                        name: (dir === "sale" ? p.buyer_name : p.seller_name) ?? null,
+                        isFuel: p.is_fuel,
+                        hasCategory: Boolean(form.getValues("category_id")),
+                      });
+                      if (!r.ok || !r.data) return;
+                      const m = r.data;
+                      const set = (k: string, v: string) => form.setValue(k, v, { shouldDirty: true });
+                      if (m.category_id) set("category_id", m.category_id);
+                      if (m.customer_id) set("customer_id", m.customer_id);
+                      if (m.supplier_id) set("supplier_id", m.supplier_id);
+                      if (m.category_id) {
+                        // Hạng mục chọn tự động: lấy nhãn để hiện / ẩn ô nhà cung cấp
+                        const { searchReferences } = await import("@/lib/entities/actions");
+                        const l = await searchReferences("tax_invoice_categories", "", [m.category_id]);
+                        if (l.ok) onRefChange("category_id", l.data?.find((o) => o.value === m.category_id)?.label ?? "");
+                      }
+                      if (m.matched) toast.info(`Đã chọn ${dir === "sale" ? "khách hàng" : "nhà cung cấp"} trong danh mục: ${m.matched}`);
+                    }
+                  : undefined
+              }
               disabled={pending || !open}
               getNotes={() => String(form.getValues("notes") ?? "")}
               onFill={(vals) => {
@@ -174,7 +210,7 @@ export function EntityFormDialog({
           ) : null}
           <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
             {fields.map((f) => {
-              if (!isFieldShown(f, values)) return null;
+              if (!isFieldShown(f, values) || !isShownByRefLabel(f, values, curLabels)) return null;
               const err = form.formState.errors[f.key]?.message as string | undefined;
               const wide = f.wide || f.type === "multiselect" || f.type === "textarea";
               if (f.type === "formula" || (f.readOnly && f.custom)) {

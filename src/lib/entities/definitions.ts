@@ -190,6 +190,8 @@ const DIRECTION_OPTIONS: Option[] = [
   { value: "sale", label: "Bán ra (xuất cho khách)", tone: "green" },
 ];
 const onlySale = { showIf: { field: "direction", in: ["sale"] } };
+/** Hóa đơn mua vào cần ghi nhà cung cấp: thuê xe 3PL, thuê ngoài, bốc xếp (xăng dầu, ăn uống… thì không) */
+const partnerCategory = { field: "category_id", pattern: "3pl|thue ngoai|thue xe|boc xep|nha xe" };
 
 /**
  * Sổ hóa đơn (GHA 9012): một sổ, chọn Mua vào / Bán ra ở ô đầu tiên của biểu mẫu.
@@ -226,9 +228,10 @@ const TAX_INVOICE: EntityDef = {
     { key: "invoice_date", label: "Ngày", type: "date", required: true, list: true, defaultValue: "today" },
     { key: "invoice_no", label: "Số hóa đơn", type: "text", list: true, maxLength: 50 },
     { key: "invoice_symbol", label: "Ký hiệu", type: "text", list: true, maxLength: 20, compactUpper: true, placeholder: "VD: C26TGH", ...onlySale },
-    { key: "customer_id", label: "Khách hàng", type: "reference", ref: "customers", help: "Chọn thì tự điền tên, MST khách.", ...onlySale },
-    { key: "partner_name", label: "Tên khách / người bán", type: "text", list: true, maxLength: 300, placeholder: "Để trống thì lấy theo Khách hàng", ...onlySale },
-    { key: "partner_tax_code", label: "MST khách", type: "text", maxLength: 20, ...onlySale },
+    { key: "customer_id", label: "Khách hàng", type: "reference", ref: "customers", filter: true, help: "Dán ảnh thì tự chọn theo MST / tên trên hóa đơn (nếu có trong danh mục).", ...onlySale },
+    { key: "supplier_id", label: "Nhà cung cấp 3PL", type: "reference", ref: "suppliers", filter: true, showIfRefLabel: partnerCategory, help: "Dán ảnh thì tự chọn theo MST / tên người bán trên hóa đơn (nếu có trong danh mục)." },
+    { key: "partner_name", label: "Tên khách hàng / nhà cung cấp (trên hóa đơn)", type: "text", list: true, wide: true, maxLength: 300, placeholder: "Dán ảnh thì tự điền; để trống thì lấy theo danh mục", showIfRefLabel: { ...partnerCategory, orIf: { field: "direction", in: ["sale"] } } },
+    { key: "partner_tax_code", label: "MST", type: "text", maxLength: 20, showIfRefLabel: { ...partnerCategory, orIf: { field: "direction", in: ["sale"] } } },
     { key: "amount", label: "Thành tiền", type: "currency", required: true, min: 0, list: true, defaultValue: 0, help: "Tiền chưa thuế GTGT." },
     { key: "vat_amount", label: "VAT", type: "currency", min: 0, list: true, help: "Tiền thuế GTGT trên hóa đơn. Để trống thì tự tính theo thuế suất mặc định của hạng mục." },
     { key: "total_preview", label: "Tổng", type: "formula", formula: "N(amount) + N(vat_amount)", help: "Tự cộng Thành tiền + VAT." },
