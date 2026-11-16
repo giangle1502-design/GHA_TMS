@@ -197,3 +197,5 @@ upgrade nang-cap-so-hoa-don-truong-them.sql "Sổ hóa đơn: trường bổ sun
   supabase/migrations/20261116009013_so_hoa_don_truong_them.sql
 upgrade nang-cap-so-bao-phieu-giao-hang.sql "Số bao trên phiếu giao hàng (nhập ở dòng hàng, tự tính theo quy cách đóng gói)" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'shipment_items' and column_name = 'bag_count')" \
   supabase/migrations/20261116009014_so_bao_phieu_giao_hang.sql
+upgrade nang-cap-kg-moi-bao.sql "Số KG/bao trong danh mục mã hàng, số bao trên phiếu = số lượng KG ÷ số KG/bao" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'products' and column_name = 'kg_per_bag')" \
+  supabase/migrations/20261116009015_kg_moi_bao.sql

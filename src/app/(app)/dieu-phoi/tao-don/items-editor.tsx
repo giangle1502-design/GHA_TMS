@@ -191,7 +191,7 @@ export function ItemsEditor({
                             c.key === "unit" && byCode.has(norm(l.item_code))
                               ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)"
                               : c.key === "bag_count"
-                                ? "Để trống thì phiếu giao hàng tự tính số bao theo quy cách đóng gói của mã hàng (Bao 25 kg, Jumbo...) hoặc lấy số lượng khi ĐVT là bao"
+                                ? "Để trống thì phiếu giao hàng tự tính: Số lượng (KG) ÷ Số KG/bao của mã hàng (sửa trong Danh mục mã hàng); ĐVT là bao thì lấy số lượng"
                                 : undefined
                           }
                           onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
