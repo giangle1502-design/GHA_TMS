@@ -22,6 +22,7 @@ import { ShipmentFilterBar } from "./filter-bar";
 import { ShipmentGrid } from "./shipment-grid";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
+import { isGhaYard } from "@/lib/delivery-note";
 import { ExportShipmentsButton } from "./export-button";
 import { ReportLinks } from "@/components/reports/report-links";
 
@@ -93,6 +94,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   const shareIds = rows.filter((r) => r.driver_id && r.status !== "cancelled").map((r) => r.id).slice(0, 500);
   // In phiếu giao hàng hàng loạt: chuyến của trang đang xem đã phân công xe (bỏ chuyến nháp)
   const noteIds = rows.filter((r) => r.status !== "cancelled" && r.status !== "draft").map((r) => r.id);
+  // Hàng đã giao về Bãi xe GHA: in bản xác nhận đã nhận hàng
+  const yardIds = rows.filter((r) => ["driver_completed", "closed"].includes(r.status) && isGhaYard(r.delivery_name)).map((r) => r.id);
   const total = listRes.count ?? rows.length;
   const summary = sumRes.data as Summary;
   const cancelledCount = summary.by_status.cancelled?.count ?? 0;
@@ -137,6 +140,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
           <>
             <DriverInfoButton variant="outline" shipmentIds={shareIds} label={`Thông tin tài xế (${shareIds.length} chuyến)`} canFill={canFillDriver} />
             <DeliveryNoteButton ids={noteIds} />
+            {yardIds.length ? <DeliveryNoteButton confirm ids={yardIds} /> : null}
             <Button variant="outline" asChild>
               <Link href={`/chuyen-xe/bang-ke?${new URLSearchParams(f.kh ? { kh: f.kh } : {}).toString()}`}>
                 <ReceiptText /> Bảng kê cước

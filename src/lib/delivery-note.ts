@@ -89,3 +89,28 @@ export function safeBackHref(raw: string | string[] | undefined, fallback: strin
   const v = Array.isArray(raw) ? raw[0] : raw;
   return v && v.startsWith("/") && !v.startsWith("//") && !v.includes("\\") ? v : fallback;
 }
+
+/** Người nhận mặc định in trên dấu xác nhận hàng về Bãi xe GHA (sửa được trên trang in) */
+export const GHA_YARD_RECEIVER = "Lê Văn Giang";
+
+/** Điểm giao là Bãi xe GHA (không phân biệt dấu, hoa thường) */
+export function isGhaYard(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[đĐ]/g, "d")
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+  return n.includes("BAI XE GHA");
+}
+
+/** Giờ nhận in trên dấu: "16/11/2026 14:30" theo giờ Việt Nam; trống nếu chưa có */
+export function noteTimeText(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  const p = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(t);
+  const g = (k: string) => p.find((x) => x.type === k)?.value ?? "";
+  return `${g("day")}/${g("month")}/${g("year")} ${g("hour")}:${g("minute")}`;
+}

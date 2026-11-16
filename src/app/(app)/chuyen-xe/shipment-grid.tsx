@@ -36,6 +36,7 @@ import { updateShipmentField, type EditableField } from "./actions";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
 import { VehicleOrderCell } from "@/components/dispatch/vehicle-order-cell";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
+import { isGhaYard } from "@/lib/delivery-note";
 
 type Col = {
   key: string;
@@ -63,6 +64,7 @@ const COLS: Col[] = [
           {r.shipment_code}
         </Link>
         {r.status !== "cancelled" ? <DeliveryNoteButton compact ids={[r.id]} label={r.shipment_code} /> : null}
+        {r.status !== "cancelled" && r.status !== "draft" && isGhaYard(r.delivery_name) ? <DeliveryNoteButton compact confirm ids={[r.id]} label={r.shipment_code} /> : null}
       </span>
     ),
   },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GHA_COMPANY, NOTE_BATCH_MAX, noteBatchFileName, noteCompany, noteDateText, noteFileName, parseNoteIds, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
+import { GHA_COMPANY, NOTE_BATCH_MAX, noteBatchFileName, noteCompany, noteDateText, noteFileName, parseNoteIds, safeBackHref, isGhaYard, noteTimeText, type DeliveryNoteData } from "@/lib/delivery-note";
 
 describe("phiếu giao hàng", () => {
   it("ghi ngày theo kiểu chứng từ", () => {
@@ -40,5 +40,19 @@ describe("in phiếu giao hàng hàng loạt", () => {
   it("tên tệp PDF nhiều phiếu", () => {
     expect(noteBatchFileName(["CX-1"])).toBe("Phieu-giao-hang-CX-1.pdf");
     expect(noteBatchFileName(["CX-1", "CX-2"])).toMatch(/^Phieu-giao-hang-2-chuyen-\d{4}-\d{2}-\d{2}\.pdf$/);
+  });
+});
+
+describe("xác nhận nhận hàng Bãi xe GHA", () => {
+  it("nhận ra Bãi xe GHA dù viết khác dấu, hoa thường", () => {
+    expect(isGhaYard("BÃI XE GHA")).toBe(true);
+    expect(isGhaYard("Bãi  xe GHA - Tân Đông Hiệp")).toBe(true);
+    expect(isGhaYard("bai xe gha")).toBe(true);
+    expect(isGhaYard("Kho VAP")).toBe(false);
+    expect(isGhaYard(null)).toBe(false);
+  });
+  it("giờ nhận theo giờ Việt Nam", () => {
+    expect(noteTimeText("2026-11-16T07:30:00Z")).toBe("16/11/2026 14:30");
+    expect(noteTimeText(null)).toBe("");
   });
 });
