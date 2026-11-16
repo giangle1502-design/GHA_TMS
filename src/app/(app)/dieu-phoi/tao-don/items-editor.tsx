@@ -38,7 +38,7 @@ function useProducts() {
 
 const norm = (v: string) => v.trim().toUpperCase();
 
-export type ItemLine = { key: number; item_code: string; item_name: string; quantity: string; unit: string; note: string; custom: Record<string, unknown> };
+export type ItemLine = { key: number; item_code: string; item_name: string; quantity: string; unit: string; bag_count: string; note: string; custom: Record<string, unknown> };
 
 let seq = 0;
 export const newItem = (from?: Partial<ItemLine>): ItemLine => ({
@@ -47,19 +47,21 @@ export const newItem = (from?: Partial<ItemLine>): ItemLine => ({
   item_name: from?.item_name ?? "",
   quantity: from?.quantity ?? "",
   unit: from?.unit ?? "",
+  bag_count: from?.bag_count ?? "",
   note: from?.note ?? "",
   custom: { ...(from?.custom ?? {}) },
 });
 
 /** Dữ liệu gửi lên máy chủ (dòng trống bị bỏ qua ở máy chủ) */
 export const itemsPayload = (lines: ItemLine[]) =>
-  lines.map((l) => ({ item_code: l.item_code, item_name: l.item_name, quantity: l.quantity, unit: l.unit, note: l.note, custom: l.custom }));
+  lines.map((l) => ({ item_code: l.item_code, item_name: l.item_name, quantity: l.quantity, unit: l.unit, bag_count: l.bag_count, note: l.note, custom: l.custom }));
 
 const SYSTEM_COLS = [
   { key: "item_code", label: "Mã hàng", width: "min-w-56", placeholder: "VD: MH001" },
   { key: "item_name", label: "Tên hàng", width: "min-w-48", placeholder: "VD: Thép cuộn" },
   { key: "quantity", label: "Số lượng", width: "w-24", placeholder: "0" },
   { key: "unit", label: "ĐVT", width: "w-20", placeholder: "kiện" },
+  { key: "bag_count", label: "Số bao", width: "w-24", placeholder: "tự tính" },
   { key: "note", label: "Ghi chú", width: "min-w-40", placeholder: "" },
 ] as const;
 type SysKey = (typeof SYSTEM_COLS)[number]["key"];
@@ -108,6 +110,7 @@ export function ItemsEditor({
     set(l.key, key === "item_code" ? { item_code: v, ...fromProduct(v) } : ({ [key]: v } as Partial<ItemLine>));
   }
   const totalQty = value.reduce((a, l) => a + (parseNumberVN(l.quantity) ?? 0), 0);
+  const totalBags = value.reduce((a, l) => a + (parseNumberVN(l.bag_count) ?? 0), 0);
   const sumOf = (f: FieldDef) => value.reduce((a, l) => a + (f.type === "formula" ? (computeFormula(f.formula, lineVars(l)) ?? 0) : (parseNumberVN(l.custom[f.key], f.type === "currency") ?? 0)), 0);
 
   function applyPaste() {
@@ -115,10 +118,10 @@ export function ItemsEditor({
       .split(/\r?\n/)
       .map((r) => r.split("\t"))
       .filter((c) => c.some((x) => x.trim()));
-    const add = lines.map(([item_code = "", item_name = "", quantity = "", unit = "", note = ""]) =>
-      newItem({ item_code: item_code.trim(), item_name: item_name.trim(), quantity: quantity.trim(), unit: unit.trim(), note: note.trim(), ...fromProduct(item_code) }),
+    const add = lines.map(([item_code = "", item_name = "", quantity = "", unit = "", note = "", bag_count = ""]) =>
+      newItem({ item_code: item_code.trim(), item_name: item_name.trim(), quantity: quantity.trim(), unit: unit.trim(), note: note.trim(), bag_count: bag_count.trim(), ...fromProduct(item_code) }),
     );
-    onChange([...value.filter((l) => l.item_code || l.item_name || l.quantity || l.note), ...add].slice(0, 500));
+    onChange([...value.filter((l) => l.item_code || l.item_name || l.quantity || l.bag_count || l.note), ...add].slice(0, 500));
     setPaste(null);
   }
 
@@ -179,12 +182,18 @@ export function ItemsEditor({
                           aria-label={`${c.sys.label} dòng ${i + 1}`}
                           id={i === 0 ? `${idPrefix}${c.key}` : undefined}
                           className={`h-8 ${c.key === "unit" && byCode.has(norm(l.item_code)) ? "bg-muted/50" : ""}`}
-                          inputMode={c.key === "quantity" ? "decimal" : undefined}
+                          inputMode={c.key === "quantity" || c.key === "bag_count" ? "decimal" : undefined}
                           placeholder={i === 0 ? c.sys.placeholder : undefined}
                           value={l[c.key as SysKey]}
-                          maxLength={c.key === "item_name" ? 300 : c.key === "note" ? 500 : 100}
+                          maxLength={c.key === "item_name" ? 300 : c.key === "note" ? 500 : c.key === "bag_count" ? 20 : 100}
                           readOnly={c.key === "unit" && byCode.has(norm(l.item_code))}
-                          title={c.key === "unit" && byCode.has(norm(l.item_code)) ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)" : undefined}
+                          title={
+                            c.key === "unit" && byCode.has(norm(l.item_code))
+                              ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)"
+                              : c.key === "bag_count"
+                                ? "Để trống thì phiếu giao hàng tự tính số bao theo quy cách đóng gói của mã hàng (Bao 25 kg, Jumbo...) hoặc lấy số lượng khi ĐVT là bao"
+                                : undefined
+                          }
                           onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
                         />
                       ) : (
@@ -209,6 +218,8 @@ export function ItemsEditor({
                       ? `Tổng ${value.length} dòng`
                       : c.key === "quantity"
                         ? formatNumber(totalQty)
+                        : c.key === "bag_count"
+                          ? (totalBags ? formatNumber(totalBags) : "")
                         : c.field && (c.field.type === "number" || c.field.type === "formula")
                           ? formatValue(c.field.type === "formula" ? { ...c.field, type: "number" } : c.field, sumOf(c.field))
                           : ""}
@@ -228,7 +239,7 @@ export function ItemsEditor({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Dán hàng hóa từ Excel</DialogTitle>
-            <DialogDescription>Trong Excel, chọn các ô theo thứ tự cột: Mã hàng, Tên hàng, Số lượng, ĐVT, Ghi chú (cột nào không có thì để trống), bấm Ctrl+C rồi dán vào đây.</DialogDescription>
+            <DialogDescription>Trong Excel, chọn các ô theo thứ tự cột: Mã hàng, Tên hàng, Số lượng, ĐVT, Ghi chú, Số bao (cột nào không có thì để trống), bấm Ctrl+C rồi dán vào đây.</DialogDescription>
           </DialogHeader>
           <Textarea aria-label="Dữ liệu dán từ Excel" className="min-h-40 font-mono text-xs" value={paste ?? ""} onChange={(e) => setPaste(e.target.value)} placeholder={"MH001\tThép cuộn\t12\ttấn\nMH002\tTôn lạnh\t30\tcuộn"} />
           <DialogFooter>

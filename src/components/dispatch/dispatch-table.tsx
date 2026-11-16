@@ -28,6 +28,7 @@ import type { DispatchExtraColumn, DispatchExtraValues } from "@/lib/dispatch-co
 import { formatDate, formatNumber } from "@/lib/format";
 import { ASSIGNABLE_STATUSES, CANCELLABLE_STATUSES, LOCKED_STATUSES, shipmentStatus, tripApprovalStatus } from "@/lib/status";
 import { ASSIGNED_ROW_CELL, isAssignedRow, isLate, type ShipmentListRow } from "@/lib/shipments";
+import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
 import { ActForDriverQuick } from "./act-for-driver-quick";
@@ -343,7 +344,7 @@ export function DispatchTable({
   const fillDriver = canFillDriver ?? canAssign;
   const [savePending, startSave] = useTransition();
   const [exportPending, startExport] = useTransition();
-  const showActions = canAssign || canCancel || rows.some((r) => r.can_approve_dispatch || r.driver_id);
+  const showActions = canAssign || canCancel || rows.some((r) => r.can_approve_dispatch || r.driver_id || r.status !== "cancelled");
   const kindCol = extraColumns.find((c) => c.serviceKind);
   const dropCol = extraColumns.find((c) => c.dropOff);
 
@@ -373,7 +374,7 @@ export function DispatchTable({
       else list.push(c);
     }
     for (const c of extraColumns) if (!c.serviceKind) list.push(extra(c));
-    if (showActions) list.push({ key: "actions", label: "Thao tác", width: 230, align: "right", render: () => null });
+    if (showActions) list.push({ key: "actions", label: "Thao tác", width: 260, align: "right", render: () => null });
     return list;
   }, [extraColumns, extraValues, kindCol, dropCol, showOrder, showActions]);
 
@@ -694,6 +695,7 @@ export function DispatchTable({
 function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: ShipmentListRow; canAssign: boolean; canCancel: boolean; canDelete: boolean; canFillDriver: boolean }) {
   return (
     <div className="flex flex-wrap justify-end gap-1">
+      {r.status !== "cancelled" ? <DeliveryNoteButton compact ids={[r.id]} label={r.shipment_code} /> : null}
       {r.driver_id && r.status !== "cancelled" ? <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} /> : null}
       {r.can_approve_dispatch && r.dispatch_approval_request_id ? <TripApprovalButtons compact requestIds={[r.dispatch_approval_request_id]} label={r.shipment_code} /> : null}
       {canAssign && r.dispatch_approval === "rejected" && r.status === "assigned" ? (

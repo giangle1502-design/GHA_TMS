@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { ReportLinks } from "@/components/reports/report-links";
 import { TripApprovalButtons } from "@/components/dispatch/trip-approval";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
+import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 import { DayPlanButton } from "@/components/dispatch/day-plan-button";
 import { DelegateNotice, TripDelegationManager, type DelegationInfo } from "@/components/dispatch/trip-delegation";
 
@@ -139,6 +140,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const canFillDriver = canAssign || (me.permissions.has("drivers.view_sensitive") && me.permissions.has("drivers.update"));
   // Chép thông tin tài xế của các chuyến trong tab đang xem (bỏ chuyến hủy, chưa có tài xế)
   const shareIds = rows.filter((r) => r.driver_id && r.status !== "cancelled").map((r) => r.id).slice(0, 500);
+  // In phiếu giao hàng hàng loạt: chuyến trong tab đang xem đã phân công xe (bỏ chuyến nháp, chuyến hủy)
+  const noteIds = rows.filter((r) => r.status !== "cancelled" && r.status !== "draft").map((r) => r.id);
   const href = (p: { tt?: string; xem?: string }) => {
     const q = new URLSearchParams();
     if (f.tu !== today || f.den !== today) {
@@ -184,6 +187,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             {!xem ? (
               <DriverInfoButton variant="outline" shipmentIds={shareIds} label={`Thông tin tài xế (${shareIds.length} chuyến)`} canFill={canFillDriver} />
             ) : null}
+            {!xem ? <DeliveryNoteButton ids={noteIds} /> : null}
             {canCreate ? (
               <Button variant="outline" asChild>
                 <Link href="/dieu-phoi/nhap-excel">

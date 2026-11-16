@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GHA_COMPANY, noteCompany, noteDateText, noteFileName, type DeliveryNoteData } from "@/lib/delivery-note";
+import { GHA_COMPANY, NOTE_BATCH_MAX, noteBatchFileName, noteCompany, noteDateText, noteFileName, parseNoteIds, safeBackHref, type DeliveryNoteData } from "@/lib/delivery-note";
 
 describe("phiếu giao hàng", () => {
   it("ghi ngày theo kiểu chứng từ", () => {
@@ -15,5 +15,30 @@ describe("phiếu giao hàng", () => {
 
   it("đặt tên tệp PDF an toàn", () => {
     expect(noteFileName("CX/0001 A")).toBe("Phieu-giao-hang-CX-0001-A.pdf");
+  });
+});
+
+describe("in phiếu giao hàng hàng loạt", () => {
+  const a = "11111111-1111-4111-8111-111111111111";
+  const b = "22222222-2222-4222-8222-222222222222";
+  it("chỉ nhận UUID hợp lệ, bỏ trùng, giữ thứ tự", () => {
+    expect(parseNoteIds(`${b}, ${a.toUpperCase()},xyz,${b}`)).toEqual([b, a]);
+    expect(parseNoteIds(undefined)).toEqual([]);
+    expect(parseNoteIds([a, b])).toEqual([a, b]);
+  });
+  it("giới hạn số phiếu mỗi lần in", () => {
+    const many = Array.from({ length: NOTE_BATCH_MAX + 5 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    expect(parseNoteIds(many.join(","))).toHaveLength(NOTE_BATCH_MAX);
+  });
+  it("đường quay lại chỉ là đường nội bộ", () => {
+    expect(safeBackHref("/dieu-phoi?tu=2026-11-16", "/x")).toBe("/dieu-phoi?tu=2026-11-16");
+    expect(safeBackHref("//evil.com", "/x")).toBe("/x");
+    expect(safeBackHref("https://evil.com", "/x")).toBe("/x");
+    expect(safeBackHref("/\\evil.com", "/x")).toBe("/x");
+    expect(safeBackHref(undefined, "/x")).toBe("/x");
+  });
+  it("tên tệp PDF nhiều phiếu", () => {
+    expect(noteBatchFileName(["CX-1"])).toBe("Phieu-giao-hang-CX-1.pdf");
+    expect(noteBatchFileName(["CX-1", "CX-2"])).toMatch(/^Phieu-giao-hang-2-chuyen-\d{4}-\d{2}-\d{2}\.pdf$/);
   });
 });

@@ -35,6 +35,7 @@ import { StatusBadge } from "@/components/dispatch/status-badge";
 import { updateShipmentField, type EditableField } from "./actions";
 import { DriverInfoButton } from "@/components/dispatch/driver-info-button";
 import { VehicleOrderCell } from "@/components/dispatch/vehicle-order-cell";
+import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 
 type Col = {
   key: string;
@@ -55,11 +56,14 @@ const COLS: Col[] = [
   {
     key: "shipment_code",
     label: "Mã chuyến",
-    width: 170,
+    width: 190,
     render: (r) => (
-      <Link href={`/chuyen-xe/${r.id}`} className="font-medium text-primary hover:underline">
-        {r.shipment_code}
-      </Link>
+      <span className="flex items-center gap-1">
+        <Link href={`/chuyen-xe/${r.id}`} className="min-w-0 flex-1 truncate font-medium text-primary hover:underline">
+          {r.shipment_code}
+        </Link>
+        {r.status !== "cancelled" ? <DeliveryNoteButton compact ids={[r.id]} label={r.shipment_code} /> : null}
+      </span>
     ),
   },
   {

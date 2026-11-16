@@ -12,13 +12,14 @@ import { computeFormula } from "@/lib/formula";
 import { formatNumber } from "@/lib/format";
 import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
 
-export type ShipmentItem = { line_no: number; item_code: string | null; item_name: string | null; quantity: number | null; unit: string | null; note: string | null; custom_fields: Record<string, unknown> };
+export type ShipmentItem = { line_no: number; item_code: string | null; item_name: string | null; quantity: number | null; unit: string | null; bag_count?: number | null; note: string | null; custom_fields: Record<string, unknown> };
 
 const SYS = [
   { key: "item_code", label: "Mã hàng" },
   { key: "item_name", label: "Tên hàng" },
   { key: "quantity", label: "Số lượng" },
   { key: "unit", label: "ĐVT" },
+  { key: "bag_count", label: "Số bao" },
   { key: "note", label: "Ghi chú" },
 ] as const;
 
@@ -45,7 +46,7 @@ export function ItemsCard({
   const [pending, start] = useTransition();
   const cols = applyLayout([...SYS.map((c) => ({ key: c.key as string, label: c.label, field: null as FieldDef | null })), ...fields.map((f) => ({ key: f.key, label: f.label, field: f }))], layout);
   const cell = (it: ShipmentItem, key: string, f: FieldDef | null) => {
-    if (!f) return key === "quantity" ? (it.quantity === null ? "" : formatNumber(Number(it.quantity))) : ((it[key as keyof ShipmentItem] as string | null) ?? "");
+    if (!f) return key === "quantity" || key === "bag_count" ? (it[key] === null || it[key] === undefined ? "" : formatNumber(Number(it[key]))) : ((it[key as keyof ShipmentItem] as string | null) ?? "");
     if (f.type === "formula") return formatValue({ ...f, type: "number" }, computeFormula(f.formula, { ...it.custom_fields, quantity: it.quantity }));
     return formatValue(f, it.custom_fields?.[f.key]);
   };
@@ -61,7 +62,7 @@ export function ItemsCard({
             onClick={() =>
               setEditing(
                 items.map((it) =>
-                  newItem({ item_code: it.item_code ?? "", item_name: it.item_name ?? "", quantity: it.quantity === null ? "" : String(it.quantity), unit: it.unit ?? "", note: it.note ?? "", custom: it.custom_fields ?? {} }),
+                  newItem({ item_code: it.item_code ?? "", item_name: it.item_name ?? "", quantity: it.quantity === null ? "" : String(it.quantity), unit: it.unit ?? "", bag_count: it.bag_count === null || it.bag_count === undefined ? "" : String(it.bag_count), note: it.note ?? "", custom: it.custom_fields ?? {} }),
                 ),
               )
             }
@@ -126,7 +127,11 @@ export function ItemsCard({
                   <td />
                   {cols.map((c) => (
                     <td key={c.key} className="py-1.5 pr-3">
-                      {c.key === "quantity" ? formatNumber(items.reduce((a, it) => a + Number(it.quantity ?? 0), 0)) : ""}
+                      {c.key === "quantity"
+                        ? formatNumber(items.reduce((a, it) => a + Number(it.quantity ?? 0), 0))
+                        : c.key === "bag_count" && items.some((it) => it.bag_count != null)
+                          ? formatNumber(items.reduce((a, it) => a + Number(it.bag_count ?? 0), 0))
+                          : ""}
                     </td>
                   ))}
                 </tr>

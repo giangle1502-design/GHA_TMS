@@ -74,6 +74,7 @@ type ItemRow = {
   item_name: string | null;
   quantity: number | null;
   unit: string | null;
+  bag_count: number | null;
   note: string | null;
   custom_fields: Record<string, unknown> | null;
 };
@@ -141,7 +142,7 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
           .select("shipment_id, line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name)")
           .in("shipment_id", ids)
           .order("line_no"),
-        sb.from("shipment_items").select("shipment_id, line_no, item_code, item_name, quantity, unit, note, custom_fields").in("shipment_id", ids).order("line_no"),
+        sb.from("shipment_items").select("shipment_id, line_no, item_code, item_name, quantity, unit, bag_count, note, custom_fields").in("shipment_id", ids).order("line_no"),
         // Tệp hóa đơn chi hộ đã đính kèm (lỗi thì chỉ không hiện số tệp)
         sb.from("documents").select("entity_id, fee_type_id").eq("entity_type", "shipment_fee").in("entity_id", ids).is("archived_at", null),
       ])
@@ -201,6 +202,7 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
         item_name: it.item_name ?? "",
         quantity: it.quantity === null ? "" : String(it.quantity),
         unit: it.unit ?? "",
+        bag_count: it.bag_count === null || it.bag_count === undefined ? "" : String(it.bag_count),
         note: it.note ?? "",
         custom: it.custom_fields ?? {},
       })),

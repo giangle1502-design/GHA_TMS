@@ -115,6 +115,7 @@ const itemSchema = z.object({
   item_name: z.string().max(300, "Tên hàng tối đa 300 ký tự").optional(),
   quantity: z.union([z.number(), z.string()]).optional(),
   unit: z.string().max(30, "Đơn vị tính tối đa 30 ký tự").optional(),
+  bag_count: z.union([z.number(), z.string()]).optional(),
   note: z.string().max(500, "Ghi chú hàng hóa tối đa 500 ký tự").optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
 });
@@ -125,11 +126,14 @@ function itemRows(items: z.infer<typeof itemsSchema>, fields: FieldDef[], prefix
   return items.map((it, j) => {
     const q = it.quantity === undefined || it.quantity === "" ? null : parseNumberVN(it.quantity);
     if (q !== null && (Number.isNaN(q) || q < 0)) throw new ActionError(`${prefix}dòng hàng ${j + 1}: số lượng không hợp lệ`);
+    const bags = it.bag_count === undefined || it.bag_count === "" ? null : parseNumberVN(it.bag_count);
+    if (bags !== null && (Number.isNaN(bags) || bags < 0)) throw new ActionError(`${prefix}dòng hàng ${j + 1}: số bao không hợp lệ`);
     return {
       item_code: it.item_code ?? "",
       item_name: it.item_name ?? "",
       quantity: q ?? "",
       unit: it.unit ?? "",
+      bag_count: bags ?? "",
       note: it.note ?? "",
       custom_fields: customValues(fields, it.custom, `${prefix}dòng hàng ${j + 1}: `),
     };
