@@ -360,7 +360,7 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
               items: [
                 ...x.items.filter((it) => it.content.trim() || it.amount),
                 ...rows.map((r) => ({
-                  content: [r.category_name, r.plate_number, r.description].filter(Boolean).join(" · "),
+                  content: [r.category_name, r.plate_number, r.description].filter(Boolean).join(" · ").slice(0, 500),
                   invoice_no: r.invoice_no ?? "",
                   invoice_date: r.invoice_date ?? "",
                   amount: r.total_amount,
@@ -394,7 +394,7 @@ export function PaymentFormEditor({ initial, saved, can }: { initial: PaymentFor
               items: [
                 ...x.items.filter((it) => it.content.trim() || it.amount),
                 ...rows.map((r) => ({
-                  content: [r.category_name, r.partner_name, r.description].filter(Boolean).join(" · "),
+                  content: [r.category_name, r.partner_name, r.description].filter(Boolean).join(" · ").slice(0, 500),
                   invoice_no: [r.invoice_symbol, r.invoice_no].filter(Boolean).join(" "),
                   invoice_date: r.invoice_date,
                   amount: r.total_amount,

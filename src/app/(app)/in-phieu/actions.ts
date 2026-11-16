@@ -2,7 +2,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { requirePermission, runAction, type ActionResult } from "@/lib/auth/action";
+import { ActionError, requirePermission, runAction, type ActionResult } from "@/lib/auth/action";
+import { zodMessageVi } from "@/lib/zod-vi";
 import { formTotal } from "@/lib/payment-request-form";
 
 const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày không hợp lệ");
@@ -35,10 +36,38 @@ const formSchema = z.object({
 
 const nul = (s: string) => (s.trim() ? s.trim() : null);
 
+const FORM_LABELS: Record<string, string> = {
+  form_date: "Ngày lập",
+  recipient: "Kính gửi",
+  requester_name: "Họ tên người đề nghị",
+  department: "Bộ phận",
+  content: "Nội dung",
+  amount: "Số tiền",
+  advance_amount: "Số đã tạm ứng",
+  due_date: "Thời hạn thanh toán",
+  bank_account_no: "Số tài khoản",
+  bank_name: "Ngân hàng",
+  account_holder: "Chủ tài khoản",
+  attachment_count: "Số chứng từ gốc",
+  notes: "Ghi chú",
+};
+const ITEM_LABELS: Record<string, string> = { content: "nội dung", invoice_no: "số hóa đơn", invoice_date: "ngày hóa đơn", amount: "số tiền" };
+
+/** Lỗi nhập liệu của phiếu: nói rõ ô nào (kể cả dòng khoản chi thứ mấy) */
+function formErrorMessage(error: z.ZodError): string {
+  const iss = error.issues[0];
+  if (iss?.path[0] === "items" && typeof iss.path[1] === "number") {
+    return `Khoản chi dòng ${iss.path[1] + 1}, ${ITEM_LABELS[String(iss.path[2])] ?? "dữ liệu"}: ${iss.message}`;
+  }
+  return zodMessageVi(error, FORM_LABELS);
+}
+
 /** Lưu (thêm mới hoặc sửa) giấy đề nghị thanh toán / tạm ứng. Trả về id và số phiếu. */
 export async function savePaymentForm(input: z.input<typeof formSchema>): Promise<ActionResult<{ id: string; code: string }>> {
   return runAction(async () => {
-    const d = formSchema.parse(input);
+    const p = formSchema.safeParse(input);
+    if (!p.success) throw new ActionError(formErrorMessage(p.error));
+    const d = p.data;
     await requirePermission(d.id ? "overhead.update" : "overhead.create", "overhead.create");
     const supabase = await createClient();
     const items = d.form_type === "payment" ? d.items.filter((i) => i.content.trim() || i.amount) : [];

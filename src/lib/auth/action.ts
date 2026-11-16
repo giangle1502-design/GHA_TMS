@@ -1,5 +1,6 @@
 import "server-only";
-import "@/lib/zod-vi";
+import { z } from "zod";
+import { zodMessageVi } from "@/lib/zod-vi";
 import { getCurrentUser, type CurrentUser } from "@/lib/auth/session";
 import type { Permission } from "@/lib/permissions";
 
@@ -37,6 +38,13 @@ export function toUserMessage(err: PgLikeError | unknown): string {
   if (code === "23514") return "Dữ liệu không hợp lệ theo ràng buộc của hệ thống.";
   if (code === "23P01") return "Dữ liệu chồng lấn với bản ghi đang hiệu lực.";
   if (code === "P0001" && msg) return msg;
+  // Mã nguồn mới hơn CSDL: còn file nâng cấp SQL chưa chạy
+  if (code === "PGRST204" || code === "42703" || code === "42P01" || code === "PGRST205") {
+    const what = /'([^']+)' column|column "?([\w.]+)"? does not exist|relation "?([\w.]+)"? does not exist|table '([^']+)'/.exec(msg);
+    const name = what?.slice(1).find(Boolean);
+    return `Cơ sở dữ liệu chưa được nâng cấp${name ? ` (thiếu ${name})` : ""}. Chạy các file nâng cấp SQL mới nhất trong Supabase SQL Editor rồi thử lại.`;
+  }
+  if (err instanceof z.ZodError) return zodMessageVi(err);
   return "Đã có lỗi xảy ra. Vui lòng thử lại hoặc liên hệ quản trị viên.";
 }
 
