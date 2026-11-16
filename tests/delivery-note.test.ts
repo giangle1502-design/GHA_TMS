@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GHA_COMPANY, NOTE_BATCH_MAX, noteBatchFileName, noteCompany, noteDateText, noteFileName, parseNoteIds, safeBackHref, isGhaYard, noteTimeText, type DeliveryNoteData } from "@/lib/delivery-note";
+import { GHA_COMPANY, NOTE_BATCH_MAX, noteBatchBaseName, noteBaseName, noteCompany, noteDateText, parseNoteIds, safeBackHref, isGhaYard, noteTimeText, type DeliveryNoteData } from "@/lib/delivery-note";
 
 describe("phiếu giao hàng", () => {
   it("ghi ngày theo kiểu chứng từ", () => {
@@ -13,8 +13,11 @@ describe("phiếu giao hàng", () => {
     expect(noteCompany({ company: null } as unknown as DeliveryNoteData).name).toBe(GHA_COMPANY.name);
   });
 
-  it("đặt tên tệp PDF an toàn", () => {
-    expect(noteFileName("CX/0001 A")).toBe("Phieu-giao-hang-CX-0001-A.pdf");
+  it("đặt tên tệp PDF = Điểm nhận - Mã chuyến, bỏ ký tự không hợp lệ", () => {
+    expect(noteBaseName("SP-ITC", "SNOV-0004")).toBe("SP-ITC - SNOV-0004");
+    expect(noteBaseName("Kho A/B: \"Cát Lái\"?", "CX|0001")).toBe("Kho A B Cát Lái - CX 0001");
+    expect(noteBaseName(null, "SNOV-0004")).toBe("SNOV-0004");
+    expect(noteBaseName("  ", "")).toBe("Phieu giao hang");
   });
 });
 
@@ -38,8 +41,11 @@ describe("in phiếu giao hàng hàng loạt", () => {
     expect(safeBackHref(undefined, "/x")).toBe("/x");
   });
   it("tên tệp PDF nhiều phiếu", () => {
-    expect(noteBatchFileName(["CX-1"])).toBe("Phieu-giao-hang-CX-1.pdf");
-    expect(noteBatchFileName(["CX-1", "CX-2"])).toMatch(/^Phieu-giao-hang-2-chuyen-\d{4}-\d{2}-\d{2}\.pdf$/);
+    const n = (pickup_name: string | null, shipment_code: string) => ({ pickup_name, shipment_code });
+    expect(noteBatchBaseName([n("SP-ITC", "SNOV-0004")])).toBe("SP-ITC - SNOV-0004");
+    expect(noteBatchBaseName([n("SP-ITC", "SNOV-0004"), n("SP-ITC", "SNOV-0005")])).toBe("SP-ITC - SNOV-0004, SNOV-0005");
+    expect(noteBatchBaseName(["1", "2", "3", "4"].map((i) => n("SP-ITC", `SNOV-000${i}`)))).toBe("SP-ITC - SNOV-0001 đến SNOV-0004 (4 chuyến)");
+    expect(noteBatchBaseName([n("SP-ITC", "A-1"), n("Cát Lái", "A-2")])).toBe("Nhiều điểm nhận - A-1, A-2");
   });
 });
 
