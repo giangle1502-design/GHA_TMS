@@ -6,6 +6,7 @@ import { dispatchExtraColumns } from "@/lib/dispatch-columns";
 import type { ShipmentListRow } from "@/lib/shipments";
 import {
   BASE_STATEMENT_COLUMNS,
+  STATEMENT_ALL_CUSTOMERS,
   STATEMENT_STATUS_OPTIONS,
   invoiceText,
   statementRouteLabel,
@@ -18,7 +19,37 @@ import {
 /** Số chuyến tối đa của một bảng kê */
 export const STATEMENT_MAX_ROWS = 2000;
 
+/** kh: id khách hàng, hoặc "all" = mọi khách hàng được gán (chỉ tài khoản khách) */
 export type StatementParams = { kh: string; tu: string; den: string; tt: StatementStatusFilter };
+
+/**
+ * Tài khoản khách chỉ xem bảng kê (quyền statements.view, không có quyền xem chuyến):
+ * đọc qua các view statement_* (CSDL tự lọc theo khách hàng được gán ở trang Người dùng).
+ */
+export function isStatementPortal(perms: Set<string>): boolean {
+  return perms.has("statements.view") && !perms.has("shipments.view");
+}
+
+/** Khách hàng được lập bảng kê: nhân viên GHA thấy mọi khách đang dùng, tài khoản khách chỉ thấy khách được gán */
+export async function loadStatementCustomers(supabase: SupabaseClient, perms: Set<string>): Promise<StatementCustomer[]> {
+  const portal = isStatementPortal(perms);
+  let q = supabase.from(portal ? "statement_customers" : "customers").select("id, code, name, tax_code, billing_address").order("name").limit(3000);
+  if (!portal) q = q.eq("status", "active");
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data ?? []) as StatementCustomer[];
+}
+
+/** Đầu bảng kê khi chọn "Tất cả": gộp tên và MST các công ty */
+function combinedCustomer(list: StatementCustomer[]): StatementCustomer {
+  return {
+    id: STATEMENT_ALL_CUSTOMERS,
+    code: list.map((c) => c.code).join("-"),
+    name: list.map((c) => c.name).join(" / "),
+    tax_code: list.map((c) => `${c.code}: ${c.tax_code ?? ""}`).join("; "),
+    billing_address: null,
+  };
+}
 
 export type StatementData = {
   customer: StatementCustomer | null;
@@ -52,29 +83,51 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
     return { customer: null, catalog: buildCatalog(columns, feeTypes), rows: [], truncated: false, notDelivered: 0 };
   }
 
+  const portal = isStatementPortal(perms);
   const statuses = STATEMENT_STATUS_OPTIONS.find((o) => o.value === p.tt)?.statuses ?? STATEMENT_STATUS_OPTIONS[0].statuses;
   const from = startOfDayVN(p.tu);
   const to = startOfDayVN(addDaysYMD(p.den, 1));
-  const [custRes, notDeliveredRes] = await Promise.all([
-    supabase.from("customers").select("id, code, name, tax_code, billing_address").eq("id", p.kh).maybeSingle(),
+  const listView = portal ? "statement_shipment_list" : "shipment_list";
+
+  // Khách hàng của bảng kê. "Tất cả" chỉ dành cho tài khoản khách: mọi khách hàng được gán.
+  let customer: StatementCustomer | null = null;
+  let customerIds: string[];
+  if (p.kh === STATEMENT_ALL_CUSTOMERS) {
+    const list = portal ? await loadStatementCustomers(supabase, perms) : [];
+    customer = list.length ? (list.length === 1 ? list[0] : combinedCustomer(list)) : null;
+    customerIds = list.map((c) => c.id);
+  } else {
+    const custRes = await supabase
+      .from(portal ? "statement_customers" : "customers")
+      .select("id, code, name, tax_code, billing_address")
+      .eq("id", p.kh)
+      .maybeSingle();
+    if (custRes.error) throw custRes.error;
+    customer = (custRes.data as StatementCustomer | null) ?? null;
+    customerIds = customer ? [customer.id] : [];
+  }
+  if (!customer) {
+    const { columns } = await dispatchExtraColumns(supabase, perms, []);
+    return { customer: null, catalog: buildCatalog(columns, feeTypes), rows: [], truncated: false, notDelivered: 0 };
+  }
+
+  const notDeliveredRes =
     p.tt === "giao"
-      ? supabase
-          .from("shipment_list")
+      ? await supabase
+          .from(listView)
           .select("id", { count: "exact", head: true })
-          .eq("customer_id", p.kh)
+          .in("customer_id", customerIds)
           .gte("pickup_at", from)
           .lt("pickup_at", to)
           .in("status", ["draft", "assigned", "accepted", "in_transit"])
-      : Promise.resolve({ count: 0, error: null }),
-  ]);
-  if (custRes.error) throw custRes.error;
+      : { count: 0, error: null };
 
-  const list: ShipmentListRow[] = [];
+  const list: (ShipmentListRow & { pickup_billing_address?: string | null; delivery_billing_address?: string | null })[] = [];
   for (let page = 0; page < 3; page++) {
     const { data, error } = await supabase
-      .from("shipment_list")
+      .from(listView)
       .select("*")
-      .eq("customer_id", p.kh)
+      .in("customer_id", customerIds)
       .gte("pickup_at", from)
       .lt("pickup_at", to)
       .in("status", [...statuses])
@@ -92,7 +145,7 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
   const fees = new Map<string, Record<string, number>>();
   for (let i = 0; i < rowsIn.length; i += 200) {
     const { data, error } = await supabase
-      .from("shipment_fees")
+      .from(portal ? "statement_shipment_fees" : "shipment_fees")
       .select("shipment_id, fee_type_id, amount")
       .in("shipment_id", rowsIn.slice(i, i + 200).map((r) => r.id));
     if (error) throw error;
@@ -105,8 +158,15 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
   }
 
   // Thông tin xuất hóa đơn của điểm nhận / điểm giao (ô "Địa chỉ xuất hóa đơn" của địa điểm)
+  // (tài khoản khách: view bảng kê có sẵn hai cột này, không đọc danh mục địa điểm)
   const billing = new Map<string, string | null>();
-  const locIds = [...new Set(rowsIn.flatMap((r) => [r.pickup_location_id, r.delivery_location_id]).filter((x): x is string => Boolean(x)))];
+  if (portal) {
+    for (const r of rowsIn) {
+      if (r.pickup_location_id) billing.set(r.pickup_location_id, r.pickup_billing_address ?? null);
+      if (r.delivery_location_id) billing.set(r.delivery_location_id, r.delivery_billing_address ?? null);
+    }
+  }
+  const locIds = portal ? [] : [...new Set(rowsIn.flatMap((r) => [r.pickup_location_id, r.delivery_location_id]).filter((x): x is string => Boolean(x)))];
   for (let i = 0; i < locIds.length; i += 200) {
     const { data, error } = await supabase.from("locations").select("id, billing_address").in("id", locIds.slice(i, i + 200));
     if (error) throw error;
@@ -123,6 +183,7 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
       expected_delivery_at: formatDate(r.expected_delivery_at),
       shipment_code: r.shipment_code,
       order_code: r.order_code,
+      customer_code: r.customer_code ?? null,
       route_label: statementRouteLabel(r),
       invoice_info:
         invoiceText(r.pickup_location_id ? billing.get(r.pickup_location_id) : null, r.delivery_location_id ? billing.get(r.delivery_location_id) : null) || null,
@@ -158,7 +219,7 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
   });
 
   return {
-    customer: (custRes.data as StatementCustomer | null) ?? null,
+    customer,
     catalog,
     rows,
     truncated,
