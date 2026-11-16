@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Input, Label, NativeSelect, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
+  STATEMENT_ALL_CUSTOMERS,
   STATEMENT_STATUS_OPTIONS,
   defaultStatementConfig,
   formatStatementCell,
@@ -46,6 +47,8 @@ const PX = 7.5;
 export function StatementBuilder({
   filters,
   customers,
+  allowAll = false,
+  readOnly = false,
   data,
   templates,
   initialTemplateId,
@@ -56,6 +59,10 @@ export function StatementBuilder({
 }: {
   filters: Filters;
   customers: { id: string; code: string; name: string }[];
+  /** Có lựa chọn "Tất cả" (tài khoản khách gắn nhiều công ty) */
+  allowAll?: boolean;
+  /** Tài khoản khách: chỉ xem, in, tải; không chọn cột, không sửa tiêu đề, không lưu mẫu, không bỏ tích chuyến */
+  readOnly?: boolean;
   data: StatementData;
   templates: StatementTemplate[];
   initialTemplateId: string;
@@ -101,7 +108,15 @@ export function StatementBuilder({
     setConfig((c) => ({ ...c, ...p }));
     setDirty(true);
   };
-  const cols = useMemo(() => resolveColumns(data.catalog, config), [data.catalog, config]);
+  // Bảng kê gộp nhiều công ty: luôn có cột Khách hàng ngay sau cột Ngày
+  const shownConfig = useMemo<StatementConfig>(() => {
+    if (filters.kh !== STATEMENT_ALL_CUSTOMERS || config.columns.includes("customer_code")) return config;
+    const at = config.columns.indexOf("pickup_at");
+    const columns = [...config.columns];
+    columns.splice(at >= 0 ? at + 1 : Math.min(1, columns.length), 0, "customer_code");
+    return { ...config, columns };
+  }, [config, filters.kh]);
+  const cols = useMemo(() => resolveColumns(data.catalog, shownConfig), [data.catalog, shownConfig]);
   const term = norm(q.trim());
   const shownRows = useMemo(() => {
     if (!term) return data.rows;
@@ -140,7 +155,7 @@ export function StatementBuilder({
     if (!customer) return void toast.error("Chọn khách hàng trước.");
     const includedIds = new Set(included.map((r) => r.id));
     startBusy(async () => {
-      const r = await exportStatementExcel({ ...filters, config, excludeIds: data.rows.filter((x) => !includedIds.has(x.id)).map((x) => x.id) });
+      const r = await exportStatementExcel({ ...filters, config: shownConfig, excludeIds: data.rows.filter((x) => !includedIds.has(x.id)).map((x) => x.id) });
       if (!r.ok || !r.data) return void toast.error(r.ok ? "Không tạo được tệp" : r.error);
       const bytes = Uint8Array.from(atob(r.data.base64), (c) => c.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -203,12 +218,16 @@ export function StatementBuilder({
       <div className="print:hidden">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <Link href="/chuyen-xe" className="mb-1 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary">
-              <ArrowLeft className="size-4" /> Quản lý chuyến xe
-            </Link>
+            {readOnly ? null : (
+              <Link href="/chuyen-xe" className="mb-1 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary">
+                <ArrowLeft className="size-4" /> Quản lý chuyến xe
+              </Link>
+            )}
             <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Bảng kê cước phí vận chuyển</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Chọn khách hàng và khoảng ngày (theo ngày nhận hàng), chọn mẫu cột phù hợp rồi xuất Excel hoặc In / Lưu PDF để khách ký nhận.
+              {readOnly
+                ? "Chọn công ty (hoặc Tất cả) và khoảng ngày theo ngày nhận hàng, rồi bấm Xuất Excel hoặc In / Lưu PDF."
+                : "Chọn khách hàng và khoảng ngày (theo ngày nhận hàng), chọn mẫu cột phù hợp rồi xuất Excel hoặc In / Lưu PDF để khách ký nhận."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -228,7 +247,8 @@ export function StatementBuilder({
           <div>
             <Label className="mb-1 block text-xs">Khách hàng</Label>
             <NativeSelect value={filters.kh} onChange={(e) => go({ kh: e.target.value })}>
-              <option value="">— Chọn khách hàng —</option>
+              {readOnly ? null : <option value="">— Chọn khách hàng —</option>}
+              {allowAll ? <option value={STATEMENT_ALL_CUSTOMERS}>Tất cả ({customers.map((c) => c.code).join(", ")})</option> : null}
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.code} – {c.name}
@@ -265,7 +285,8 @@ export function StatementBuilder({
           </div>
         </Card>
 
-        {/* Mẫu bảng kê */}
+        {/* Mẫu bảng kê (tài khoản khách: chỉ chọn mẫu GHA đã lập, không sửa) */}
+        {readOnly && !templates.length ? null : (
         <Card className="mb-3 flex flex-wrap items-end gap-2 p-3">
           <div className="min-w-56 flex-1 sm:flex-none">
             <Label className="mb-1 block text-xs">Mẫu bảng kê (bộ cột hiển thị)</Label>
@@ -279,6 +300,8 @@ export function StatementBuilder({
               ))}
             </NativeSelect>
           </div>
+          {readOnly ? null : (
+          <>
           <Button variant={panel === "cot" ? "default" : "outline"} onClick={() => setPanel(panel === "cot" ? "" : "cot")}>
             <Columns3 /> Chọn cột ({cols.length})
           </Button>
@@ -289,11 +312,14 @@ export function StatementBuilder({
             <Save /> Lưu mẫu{dirty ? " *" : ""}
           </Button>
           {dirty ? <span className="pb-2 text-xs text-amber-700 dark:text-amber-400">Mẫu đang có thay đổi chưa lưu</span> : null}
+          </>
+          )}
         </Card>
+        )}
 
-        {panel === "cot" ? <ColumnsPanel catalog={data.catalog} config={config} update={update} /> : null}
-        {panel === "dau-trang" ? <HeaderPanel config={config} update={update} /> : null}
-        {panel === "luu" ? (
+        {!readOnly && panel === "cot" ? <ColumnsPanel catalog={data.catalog} config={config} update={update} /> : null}
+        {!readOnly && panel === "dau-trang" ? <HeaderPanel config={config} update={update} /> : null}
+        {!readOnly && panel === "luu" ? (
           <SavePanel
             key={templateId}
             current={current}
@@ -371,6 +397,7 @@ export function StatementBuilder({
             <table className="w-full border-collapse print:!min-w-0" style={{ minWidth: totalW * PX }}>
               <thead className="sticky top-0 print:static">
                 <tr>
+                  {readOnly ? null : (
                   <th className="w-7 border border-black bg-black px-1 print:hidden" title="Bỏ tích để không đưa chuyến vào bảng kê">
                     <input
                       type="checkbox"
@@ -379,14 +406,15 @@ export function StatementBuilder({
                       onChange={(e) => setExcluded(e.target.checked ? new Set() : new Set(shownRows.map((r) => r.id)))}
                     />
                   </th>
+                  )}
                   {cols.map((c) => (
                     <th key={c.key} className="relative border border-x-white border-y-black bg-black px-1 py-1.5 text-center align-middle font-bold text-white first:border-l-black last:border-r-black" style={{ width: `${((c.w / totalW) * 100).toFixed(2)}%` }}>
                       {c.title}
-                      <span
+                      {readOnly ? null : <span
                         className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize select-none hover:bg-primary/40 print:hidden"
                         onPointerDown={(e) => startResize(e, c.key, c.w)}
                         title="Kéo để giãn cột"
-                      />
+                      />}
                     </th>
                   ))}
                 </tr>
@@ -396,6 +424,7 @@ export function StatementBuilder({
                   const off = excluded.has(r.id);
                   return (
                     <tr key={r.id} className={cn(off && "text-muted-foreground line-through opacity-50 print:hidden")}>
+                      {readOnly ? null : (
                       <td className="border border-black px-1 text-center align-middle print:hidden">
                         <input
                           type="checkbox"
@@ -411,6 +440,7 @@ export function StatementBuilder({
                           }
                         />
                       </td>
+                      )}
                       {cols.map((c) => (
                         <td
                           key={c.key}
@@ -424,13 +454,13 @@ export function StatementBuilder({
                 })}
                 {!shownRows.length ? (
                   <tr>
-                    <td colSpan={cols.length + 1} className="border border-black p-4 text-center text-muted-foreground">
+                    <td colSpan={cols.length + (readOnly ? 0 : 1)} className="border border-black p-4 text-center text-muted-foreground">
                       Không có chuyến nào trong kỳ này.
                     </td>
                   </tr>
                 ) : null}
                 <tr className="bg-[#f2f2f2] font-bold">
-                  <td className="border border-black print:hidden" />
+                  {readOnly ? null : <td className="border border-black print:hidden" />}
                   <td colSpan={labelSpan} className="border border-black px-1 py-1 text-center align-middle">
                     TỔNG CỘNG
                   </td>

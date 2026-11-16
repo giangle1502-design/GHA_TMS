@@ -199,3 +199,5 @@ upgrade nang-cap-so-bao-phieu-giao-hang.sql "Số bao trên phiếu giao hàng (
   supabase/migrations/20261116009014_so_bao_phieu_giao_hang.sql
 upgrade nang-cap-kg-moi-bao.sql "Số KG/bao trong danh mục mã hàng, số bao trên phiếu = số lượng KG ÷ số KG/bao" "exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'products' and column_name = 'kg_per_bag')" \
   supabase/migrations/20261116009015_kg_moi_bao.sql
+upgrade nang-cap-khach-xem-bang-ke.sql "Tài khoản khách chỉ xem / tải bảng kê, gắn một tài khoản với nhiều khách hàng (chặn ở RLS)" "to_regclass('public.user_customers') is not null" \
+  supabase/migrations/20261116009016_khach_xem_bang_ke.sql

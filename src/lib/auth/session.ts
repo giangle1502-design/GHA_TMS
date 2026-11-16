@@ -87,6 +87,8 @@ export async function requirePagePermission(...anyOf: Permission[]): Promise<Cur
 export function homePathFor(user: CurrentUser): string {
   if (user.status !== "active") return "/cho-cap-quyen";
   if (user.permissions.has("dashboard.view")) return "/tong-quan";
+  // Tài khoản khách chỉ xem bảng kê
+  if (user.permissions.has("statements.view") && !user.permissions.has("shipments.view")) return "/chuyen-xe/bang-ke";
   if (user.isDriver) return "/tx";
   return "/tai-khoan";
 }

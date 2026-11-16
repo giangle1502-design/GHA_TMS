@@ -27,6 +27,9 @@ export const COMPANY_DEFAULT = {
   taxCode: "3703489735",
 };
 
+/** Giá trị ô Khách hàng: "Tất cả khách hàng được gán" (chỉ tài khoản khách gắn nhiều công ty) */
+export const STATEMENT_ALL_CUSTOMERS = "all";
+
 /** Mẫu bảng kê lưu trong table_view_preferences với table_key này (không cần nâng cấp CSDL) */
 export const STATEMENT_TABLE_KEY = "freight_statement";
 
@@ -44,6 +47,7 @@ export const BASE_STATEMENT_COLUMNS: StatementColumn[] = [
   { key: "expected_delivery_at", label: "Ngày giao", kind: "text", group: "Chung", width: 12 },
   { key: "shipment_code", label: "Mã chuyến", kind: "text", group: "Chung", width: 14 },
   { key: "order_code", label: "Mã đơn hàng", kind: "text", group: "Chung", width: 14 },
+  { key: "customer_code", label: "Khách hàng", kind: "text", group: "Chung", width: 10 },
   { key: "route_label", label: "Tuyến đường", kind: "text", group: "Tuyến", width: 32 },
   { key: "invoice_info", label: "Thông tin xuất hóa đơn", kind: "text", group: "Tuyến", width: 34 },
   { key: "pickup_name", label: "Điểm nhận", kind: "text", group: "Tuyến", width: 22 },
