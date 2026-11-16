@@ -181,6 +181,12 @@ const shipmentBase = z.object({
   offrouteReturnLocationId: optUuid,
   tripOrder: z.number().int().min(1, "Thứ tự chuyến từ 1 đến 99").max(99, "Thứ tự chuyến từ 1 đến 99").nullable().optional(),
   vehicleTypeId: optUuid,
+  /** Số cont (không bắt buộc): chữ và số, tối đa 30 ký tự */
+  containerNo: z
+    .string()
+    .max(30, "Số cont tối đa 30 ký tự")
+    .regex(/^[A-Z0-9]*$/, "Số cont chỉ gồm chữ và số (VD: TCLU1234567)")
+    .optional(),
   vehicleId: optUuid,
   driverId: optUuid,
   priceListId: optUuid,
@@ -259,6 +265,12 @@ async function insertShipments(
     if (!ids.length) continue;
     const r = await supabase.from("shipments").update({ pod_photo_required: want }).in("id", ids).neq("pod_photo_required", want);
     if (r.error) created.itemsError = `Chưa lưu được ô "Khách yêu cầu chụp chứng từ": ${toUserMessage(r.error)}. Mở chi tiết chuyến để sửa.`;
+  }
+  // Số cont từng chuyến (ghi sau khi tạo, như ô chụp chứng từ)
+  for (const [i, s] of list.entries()) {
+    if (!s.containerNo || !created.shipments[i]) continue;
+    const r = await supabase.from("shipments").update({ container_no: s.containerNo }).eq("id", created.shipments[i].id);
+    if (r.error) created.itemsError = `Chưa lưu được số cont của chuyến ${created.shipments[i].shipment_code}: ${toUserMessage(r.error)}. Sửa ở cột Số cont trên bảng Điều phối.`;
   }
   // Hàng hóa từng chuyến: lỗi ở bước này không làm mất đơn đã tạo, báo lại để nhập ở chi tiết chuyến
   for (const [i, rows] of items.entries()) {
@@ -1006,6 +1018,7 @@ export async function updateOrderFull(
           notes: s.notes?.trim() || null,
           custom_fields: plan.custom,
           ...(s.podPhotoRequired === undefined ? {} : { pod_photo_required: s.podPhotoRequired }),
+          ...(s.containerNo === undefined ? {} : { container_no: s.containerNo || null }),
         };
         const routeChanged = s.pickupLocationId !== c.pickup_location_id || s.deliveryLocationId !== c.delivery_location_id;
         if (!c.receivable_id) {

@@ -2841,6 +2841,7 @@ export const FORM_SYSTEM_FIELDS: Record<string, { key: string; label: string }[]
     { key: "pickup_at", label: "Ngày nhận hàng" },
     { key: "expected_delivery_at", label: "Ngày giao dự kiến" },
     { key: "vehicle_type_id", label: "Loại xe" },
+    { key: "container_no", label: "Số cont" },
     { key: "quantity", label: "Số lượng" },
     { key: "pickup_location_id", label: "Điểm nhận" },
     { key: "delivery_location_id", label: "Điểm giao" },
