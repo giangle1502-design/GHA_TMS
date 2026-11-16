@@ -1,5 +1,5 @@
 import "server-only";
-import { addDaysYMD, startOfDayVN, todayVN } from "@/lib/format";
+import { addDaysYMD, monthRangeYMD, startOfDayVN, todayVN } from "@/lib/format";
 import { isUuid } from "@/lib/entities/record";
 import { sanitizeSearch } from "@/lib/entities/server";
 import { SHIPMENT_STATUS } from "@/lib/status";
@@ -17,12 +17,12 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Chuẩn hóa bộ lọc từ URL; mặc định 30 ngày trước đến 7 ngày tới */
+/** Chuẩn hóa bộ lọc từ URL; mặc định cả tháng hiện tại (giờ Việt Nam) */
 export function parseShipmentFilters(raw: SP, extraAdv: AdvField[] = []): ShipmentFilters {
   const sp = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== "a").map(([k, v]) => [k, one(v)])) as Record<string, string | undefined>;
-  const today = todayVN();
-  let tu = sp.tu && YMD.test(sp.tu) ? sp.tu : addDaysYMD(today, -30);
-  let den = sp.den && YMD.test(sp.den) ? sp.den : addDaysYMD(today, 7);
+  const month = monthRangeYMD(todayVN());
+  let tu = sp.tu && YMD.test(sp.tu) ? sp.tu : month.tu;
+  let den = sp.den && YMD.test(sp.den) ? sp.den : month.den;
   if (den < tu) [tu, den] = [den, tu];
   return {
     tu,

@@ -76,6 +76,14 @@ export function startOfDayVN(ymd: string): string {
   return new Date(`${ymd}T00:00:00+07:00`).toISOString();
 }
 
+/** Ngày đầu và ngày cuối của tháng chứa ymd (lệch thêm `offset` tháng), dạng YYYY-MM-DD */
+export function monthRangeYMD(ymd: string, offset = 0): { tu: string; den: string } {
+  const [y, m] = ymd.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1 + offset, 1));
+  const last = new Date(Date.UTC(y, m + offset, 0));
+  return { tu: first.toISOString().slice(0, 10), den: last.toISOString().slice(0, 10) };
+}
+
 /** Cộng số ngày vào một ngày dạng YYYY-MM-DD (ngày lịch, không phụ thuộc múi giờ) */
 export function addDaysYMD(ymd: string, days: number): string {
   const [y, m, d] = ymd.split("-").map(Number);
