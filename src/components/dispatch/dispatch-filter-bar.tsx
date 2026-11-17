@@ -8,8 +8,9 @@ import { ReferenceSelect } from "@/components/entities/reference-select";
 import { AdvancedFilter } from "@/components/advanced-filter";
 import { addDaysYMD } from "@/lib/format";
 import { encodeCondition, parseConditions, type AdvField } from "@/lib/advanced-filter";
+import { CarrierFilter, type CarrierOption } from "./carrier-filter";
 
-export type DispatchFilters = { tu: string; den: string; kh: string; xe: string; tx: string; q: string; adv: string[]; xem: string };
+export type DispatchFilters = { tu: string; den: string; kh: string; xe: string; tx: string; q: string; adv: string[]; xem: string; pl?: string };
 
 const days = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
 
@@ -20,6 +21,8 @@ export function DispatchFilterBar({
   advFields,
   advLabels,
   keepRange = false,
+  carriers = null,
+  carrierName,
 }: {
   filters: DispatchFilters;
   today: string;
@@ -27,6 +30,9 @@ export function DispatchFilterBar({
   advLabels: Record<string, string>;
   /** Luôn ghi khoảng ngày lên URL (trang có khoảng ngày mặc định khác "hôm nay") */
   keepRange?: boolean;
+  /** Nhà xe 3PL để lọc (null = không hiện ô lọc 3PL: người không có quyền xem 3PL) */
+  carriers?: CarrierOption[] | null;
+  carrierName?: string;
 }) {
   const [v, setV] = useState(filters);
   const [pending, start] = useTransition();
@@ -43,7 +49,7 @@ export function DispatchFilterBar({
       q.set("tu", tu);
       q.set("den", den);
     }
-    for (const k of ["kh", "xe", "tx", "q", "xem"] as const) if (next[k]) q.set(k, next[k].trim());
+    for (const k of ["kh", "xe", "tx", "pl", "q", "xem"] as const) if (next[k]) q.set(k, next[k]!.trim());
     for (const a of next.adv) q.append("a", a);
     setV({ ...next, tu, den });
     start(() => router.push(q.size ? `${pathname}?${q.toString()}` : pathname, { scroll: false }));
@@ -57,7 +63,7 @@ export function DispatchFilterBar({
       {label}
     </Button>
   );
-  const hasFilter = Boolean(filters.kh || filters.xe || filters.tx || filters.q || filters.adv.length);
+  const hasFilter = Boolean(filters.kh || filters.xe || filters.tx || filters.pl || filters.q || filters.adv.length);
 
   return (
     <form
@@ -67,7 +73,13 @@ export function DispatchFilterBar({
         go(v);
       }}
     >
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[auto_minmax(9rem,10rem)_minmax(9rem,10rem)_auto_repeat(3,minmax(10rem,1fr))] lg:items-end">
+      <div
+        className={
+          carriers
+            ? "grid gap-2 sm:grid-cols-2 lg:grid-cols-[auto_minmax(9rem,10rem)_minmax(9rem,10rem)_auto_repeat(4,minmax(9rem,1fr))] lg:items-end"
+            : "grid gap-2 sm:grid-cols-2 lg:grid-cols-[auto_minmax(9rem,10rem)_minmax(9rem,10rem)_auto_repeat(3,minmax(10rem,1fr))] lg:items-end"
+        }
+      >
         <Button type="button" variant="outline" size="icon" aria-label="Lùi một khoảng" title={`Lùi ${span} ngày`} className="hidden lg:inline-flex" onClick={() => setRange(addDaysYMD(v.tu, -span), addDaysYMD(v.den, -span))}>
           <ChevronLeft />
         </Button>
@@ -104,6 +116,14 @@ export function DispatchFilterBar({
           </Label>
           <ReferenceSelect id="dp-tx" refKey="drivers" value={v.tx} allowQuickCreate={false} onChange={(id) => setV({ ...v, tx: id })} />
         </div>
+        {carriers ? (
+          <div className="space-y-1">
+            <Label htmlFor="dp-pl" className="text-xs text-muted-foreground">
+              Nhà xe 3PL
+            </Label>
+            <CarrierFilter id="dp-pl" value={v.pl ?? ""} options={carriers} selectedName={carrierName} onChange={(pl) => go({ ...v, pl })} />
+          </div>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-80">
@@ -114,7 +134,7 @@ export function DispatchFilterBar({
           {pending ? <Loader2 className="animate-spin" /> : <Search />} Lọc
         </Button>
         {hasFilter ? (
-          <Button type="button" variant="ghost" size="sm" onClick={() => go({ ...v, kh: "", xe: "", tx: "", q: "", adv: [] })}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => go({ ...v, kh: "", xe: "", tx: "", pl: "", q: "", adv: [] })}>
             <X /> Bỏ lọc
           </Button>
         ) : null}

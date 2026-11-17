@@ -7,7 +7,7 @@ import { lastDayOfMonth, loadTrips, tripDay } from "@/lib/trip-counts";
 import { ActionError, requirePermission, runAction, toUserMessage, type ActionResult } from "@/lib/auth/action";
 import { loadCustomFields, visibleCustomRows } from "@/lib/entities/server";
 import { assertActiveRefs } from "@/lib/entities/active-check";
-import { moduleCustomFields, parseNumberVN, splitCustom, validateRecord } from "@/lib/entities/record";
+import { compactUpper, moduleCustomFields, parseNumberVN, splitCustom, validateRecord } from "@/lib/entities/record";
 import type { FieldDef } from "@/lib/entities/types";
 
 /** Kiểm tra và chuẩn hóa giá trị trường bổ sung (cùng quy tắc với biểu mẫu danh mục) */
@@ -189,6 +189,8 @@ const shipmentBase = z.object({
     .optional(),
   vehicleId: optUuid,
   driverId: optUuid,
+  /** Nhà xe 3PL chỉ định cho chuyến (lưu được cả khi chưa có số xe); không gửi = giữ nguyên */
+  carrierSupplierId: optUuid,
   priceListId: optUuid,
   unitPrice: optNum("Đơn giá", { min: 0 }),
   pricingUnit: z.enum(["trip", "km", "ton"]).optional(),
@@ -271,6 +273,12 @@ async function insertShipments(
     if (!s.containerNo || !created.shipments[i]) continue;
     const r = await supabase.from("shipments").update({ container_no: s.containerNo }).eq("id", created.shipments[i].id);
     if (r.error) created.itemsError = `Chưa lưu được số cont của chuyến ${created.shipments[i].shipment_code}: ${toUserMessage(r.error)}. Sửa ở cột Số cont trên bảng Điều phối.`;
+  }
+  // Nhà xe 3PL chỉ định (chưa có số xe vẫn lưu, số xe nhập sau)
+  for (const [i, s] of list.entries()) {
+    if (!s.carrierSupplierId || !created.shipments[i]) continue;
+    const r = await supabase.from("shipments").update({ carrier_supplier_id: s.carrierSupplierId }).eq("id", created.shipments[i].id);
+    if (r.error) created.itemsError = `Chưa lưu được nhà xe 3PL của chuyến ${created.shipments[i].shipment_code}: ${toUserMessage(r.error)}. Bấm Phân công ở Điều phối để chọn lại.`;
   }
   // Hàng hóa từng chuyến: lỗi ở bước này không làm mất đơn đã tạo, báo lại để nhập ở chi tiết chuyến
   for (const [i, rows] of items.entries()) {
@@ -387,6 +395,8 @@ export async function assignShipment(input: z.input<typeof assignSchema>): Promi
         p_vehicle_id: p.data.vehicleId ?? null,
       });
       if (error) throw error;
+      // Giao cho xe, tài xế nội bộ: bỏ nhà xe 3PL đã chỉ định trước (chưa nhập chi phí 3PL nào)
+      if (p.data.driverId) await clearCarrierIfInternal(supabase, p.data.shipmentId, p.data.vehicleId ?? null);
       await setDayOrders(supabase, [
         ...(p.data.otherOrders ?? []),
         ...(p.data.vehicleDayOrder !== undefined ? [{ shipmentId: p.data.shipmentId, order: p.data.vehicleDayOrder }] : []),
@@ -555,14 +565,59 @@ const assign3plSchema = z.object({
   licenseNo: z.string().trim().max(30).optional(),
 });
 
-/** Giao chuyến cho nhà xe 3PL: số xe, tài xế, SĐT, CCCD, GPLX đều không bắt buộc */
+/** Chuyến đã chỉ định nhà xe 3PL mà nay giao xe/tài xế nội bộ: bỏ nhà xe (giữ lại nếu đã nhập chi phí 3PL) */
+async function clearCarrierIfInternal(supabase: Sb, shipmentId: string, vehicleId: string | null) {
+  const { data: s } = await supabase.from("shipments").select("carrier_supplier_id").eq("id", shipmentId).maybeSingle();
+  if (!s?.carrier_supplier_id) return;
+  if (vehicleId) {
+    const { data: v } = await supabase.from("vehicles").select("ownership_type, supplier_id").eq("id", vehicleId).maybeSingle();
+    if (v && (v.ownership_type === "outsourced" || v.supplier_id)) return;
+  }
+  const { count } = await supabase.from("shipment_carrier_costs").select("shipment_id", { count: "exact", head: true }).eq("shipment_id", shipmentId);
+  if (count) return;
+  await supabase.from("shipments").update({ carrier_supplier_id: null }).eq("id", shipmentId);
+}
+
+/**
+ * Chỉ định nhà xe 3PL cho chuyến khi chưa có số xe, tài xế: lưu nhà xe trước, số xe nhập sau
+ * (ở cột Số xe trên bảng hoặc nút Đổi). Chuyến đang gắn xe/tài xế khác thì gỡ ra, chuyến về Nháp.
+ */
+async function saveCarrierOnly(supabase: Sb, shipmentId: string, supplierId: string) {
+  const { data: s, error } = await supabase.from("shipments").select("id, status, driver_id, vehicle_id, carrier_supplier_id").eq("id", shipmentId).maybeSingle();
+  if (error) throw error;
+  if (!s) throw new ActionError("Không tìm thấy chuyến.");
+  if (!ASSIGNABLE.includes(s.status as string)) throw new ActionError("Chỉ chỉ định 3PL được khi chuyến chưa chạy (Nháp, Chờ tài xế nhận, Tài xế đã nhận).");
+  const { data: sp } = await supabase.from("suppliers").select("id").eq("id", supplierId).maybeSingle();
+  if (!sp) throw new ActionError("Chọn nhà xe 3PL.");
+  if (s.driver_id || s.vehicle_id) {
+    const { error: ue } = await supabase.rpc("assign_shipment", { p_shipment_id: shipmentId, p_driver_id: null, p_vehicle_id: null });
+    if (ue) throw ue;
+  }
+  if (s.carrier_supplier_id !== supplierId) {
+    const { data, error: e2 } = await supabase.from("shipments").update({ carrier_supplier_id: supplierId }).eq("id", shipmentId).select("id");
+    if (e2) throw e2;
+    if (!data?.length) throw new ActionError("Bạn không có quyền sửa chuyến này.");
+  }
+}
+
+/**
+ * Giao chuyến cho nhà xe 3PL: số xe, tài xế, SĐT, CCCD, GPLX đều không bắt buộc.
+ * Không nhập gì ngoài nhà xe: chỉ lưu nhà xe (chuyến vẫn ở Nháp), số xe nhập sau.
+ */
 export async function assignShipment3pl(input: z.input<typeof assign3plSchema>): Promise<ActionResult> {
+  const carrierOnly = !input.plate?.trim() && !input.driverName?.trim() && !input.driverPhone?.trim() && !input.nationalId?.trim() && !input.licenseNo?.trim();
   return runAction(async () => {
     await requirePermission("dispatch.update");
     const p = assign3plSchema.safeParse(input);
     if (!p.success) throw new ActionError(p.error.issues[0]?.message ?? "Dữ liệu không hợp lệ");
     const d = p.data;
     const supabase = await createClient();
+    if (carrierOnly) {
+      await saveCarrierOnly(supabase, d.shipmentId, d.supplierId);
+      revalidatePath("/dieu-phoi", "layout");
+      revalidatePath("/chuyen-xe", "layout");
+      return;
+    }
     const { error } = await supabase.rpc("assign_shipment_3pl", {
       p_shipment_id: d.shipmentId,
       p_supplier_id: d.supplierId,
@@ -578,7 +633,46 @@ export async function assignShipment3pl(input: z.input<typeof assign3plSchema>):
     }
     revalidatePath("/dieu-phoi", "layout");
     revalidatePath("/chuyen-xe", "layout");
-  }, "Đã giao chuyến cho nhà xe 3PL.");
+  }, carrierOnly ? "Đã lưu nhà xe 3PL. Số xe nhập sau ở cột Số xe hoặc nút Đổi." : "Đã giao chuyến cho nhà xe 3PL.");
+}
+
+const plate3plSchema = z.object({ shipmentId: uuid, plate: z.string().trim().max(20) });
+
+/**
+ * Nhập / sửa số xe của chuyến đã chỉ định nhà xe 3PL ngay trên bảng (giữ tài xế 3PL đang ghi).
+ * Để trống = bỏ số xe, chỉ giữ nhà xe.
+ */
+export async function setShipment3plPlate(input: z.input<typeof plate3plSchema>): Promise<ActionResult<{ plate: string | null }>> {
+  return runAction(async () => {
+    await requirePermission("dispatch.update");
+    const p = plate3plSchema.safeParse(input);
+    if (!p.success) throw new ActionError(p.error.issues[0]?.message ?? "Dữ liệu không hợp lệ");
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("shipment_3pl_info", { p_shipment_id: p.data.shipmentId });
+    if (error) throw error;
+    const info = data as Shipment3plInfo | null;
+    if (!info?.supplier_id) throw new ActionError("Chuyến chưa chỉ định nhà xe 3PL: bấm Phân công để chọn.");
+    const plate = compactUpper(p.data.plate);
+    const driverName = info.is_3pl ? info.driver_name : null;
+    const driverPhone = info.is_3pl ? info.driver_phone : null;
+    if (!plate && !driverName && !driverPhone) {
+      await saveCarrierOnly(supabase, p.data.shipmentId, info.supplier_id);
+    } else {
+      const { error: e2 } = await supabase.rpc("assign_shipment_3pl", {
+        p_shipment_id: p.data.shipmentId,
+        p_supplier_id: info.supplier_id,
+        p_plate: plate || null,
+        p_driver_name: driverName || null,
+        p_driver_phone: driverPhone || null,
+        p_national_id: null,
+        p_license_no: null,
+      });
+      if (e2) throw e2;
+    }
+    revalidatePath("/dieu-phoi", "layout");
+    revalidatePath("/chuyen-xe", "layout");
+    return { plate: plate || null };
+  }, input.plate.trim() ? "Đã lưu số xe 3PL." : "Đã bỏ số xe, giữ nhà xe 3PL.");
 }
 
 /** Khách thanh toán mặc định trong hồ sơ khách hàng, để tự điền vào đơn hàng */
@@ -1019,6 +1113,7 @@ export async function updateOrderFull(
           custom_fields: plan.custom,
           ...(s.podPhotoRequired === undefined ? {} : { pod_photo_required: s.podPhotoRequired }),
           ...(s.containerNo === undefined ? {} : { container_no: s.containerNo || null }),
+          ...(s.carrierSupplierId ? { carrier_supplier_id: s.carrierSupplierId } : {}),
         };
         const routeChanged = s.pickupLocationId !== c.pickup_location_id || s.deliveryLocationId !== c.delivery_location_id;
         if (!c.receivable_id) {
@@ -1057,6 +1152,7 @@ export async function updateOrderFull(
             p_vehicle_id: s.vehicleId ?? null,
           });
           if (ae) throw ae;
+          if (s.driverId && !s.carrierSupplierId) await clearCarrierIfInternal(supabase, c.id, s.vehicleId ?? null);
         }
         if (s.vehicleDayOrder !== undefined)
           dayOrders.push({

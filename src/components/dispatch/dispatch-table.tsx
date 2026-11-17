@@ -53,6 +53,8 @@ type Col = {
   align?: "right";
   /** Chỉ có khi bảng hiện đơn hàng/khách (màn hình Điều phối) */
   orderOnly?: boolean;
+  /** Chỉ người có quyền xem 3PL mới thấy cột */
+  only3pl?: boolean;
   defaultHidden?: boolean;
   /** Cột bổ sung do người dùng tự thêm */
   custom?: boolean;
@@ -66,25 +68,31 @@ type Col = {
 
 const SERVICE_KIND_PLACEHOLDER = "service_kind";
 
-/** Ô Tuyến đường: điểm nhận → điểm giao, kèm Hạ hàng (trường "Điểm hạ hàng" nếu có), Hạ rỗng, Hạ rỗng trái tuyến */
+/** Một chặng của tuyến đường: mũi tên + tên điểm */
+function RouteLeg({ name, title }: { name: string; title: string }) {
+  return (
+    <div className="flex items-center gap-1 text-muted-foreground" title={`${title}: ${name}`}>
+      <ArrowRight className="size-3.5 shrink-0" />
+      <span className="truncate">{name}</span>
+    </div>
+  );
+}
+
+/**
+ * Ô Tuyến đường: Điểm nhận → Điểm giao → Điểm hạ rỗng (không có điểm hạ rỗng thì bỏ qua),
+ * kèm Hạ hàng (trường "Điểm hạ hàng" nếu có) và Hạ rỗng trái tuyến
+ */
 function routeCell(r: ShipmentListRow, dropOff?: string) {
   return (
       <>
-        <div className="truncate" title={r.pickup_name ?? undefined}>
+        <div className="truncate" title={r.pickup_name ? `Điểm nhận: ${r.pickup_name}` : undefined}>
           {r.pickup_name}
         </div>
-        <div className="flex items-center gap-1 text-muted-foreground" title={r.delivery_name ?? undefined}>
-          <ArrowRight className="size-3.5 shrink-0" />
-          <span className="truncate">{r.delivery_name}</span>
-        </div>
+        {r.delivery_name ? <RouteLeg name={r.delivery_name} title="Điểm giao" /> : null}
+        {r.empty_return_name ? <RouteLeg name={r.empty_return_name} title="Điểm hạ rỗng" /> : null}
         {dropOff ? (
           <div className="truncate text-xs text-muted-foreground" title={`Điểm hạ hàng: ${dropOff}`}>
             Hạ hàng: {dropOff}
-          </div>
-        ) : null}
-        {r.empty_return_name ? (
-          <div className="truncate text-xs text-muted-foreground" title={`Điểm hạ rỗng: ${r.empty_return_name}`}>
-            Hạ rỗng: {r.empty_return_name}
           </div>
         ) : null}
         {r.offroute_return_name ? (
@@ -96,12 +104,16 @@ function routeCell(r: ShipmentListRow, dropOff?: string) {
   );
 }
 
+/** Tuyến đường dạng một dòng: Điểm nhận → Điểm giao → Điểm hạ rỗng (bỏ điểm trống) */
+export function routeLine(r: Pick<ShipmentListRow, "pickup_name" | "delivery_name" | "empty_return_name">) {
+  return [r.pickup_name, r.delivery_name, r.empty_return_name].filter(Boolean).join(" → ");
+}
+
 /** Ô Tuyến đường dạng chữ cho Excel */
 function routeText(r: ShipmentListRow, dropOff?: string) {
   return [
-    `${r.pickup_name ?? ""} → ${r.delivery_name ?? ""}`,
+    routeLine(r),
     dropOff ? `Hạ hàng: ${dropOff}` : "",
-    r.empty_return_name ? `Hạ rỗng: ${r.empty_return_name}` : "",
     r.offroute_return_name ? `Hạ rỗng trái tuyến: ${r.offroute_return_name}` : "",
   ]
     .filter(Boolean)
@@ -194,7 +206,7 @@ const BASE_COLS: Col[] = [
     key: "route",
     label: "Tuyến đường",
     width: 240,
-    sort: (r) => r.route_label ?? `${r.pickup_name ?? ""} ${r.delivery_name ?? ""}`,
+    sort: (r) => routeLine(r),
     text: (r) => routeText(r),
     render: (r) => routeCell(r),
   },
@@ -220,6 +232,20 @@ const BASE_COLS: Col[] = [
         : "Chưa phân công",
     // Ô thật vẽ trong bảng (sửa nhanh số xe theo quyền), xem vehicleDriverCell
     render: () => null,
+  },
+  {
+    key: "carrier_name",
+    label: "Nhà xe 3PL",
+    width: 140,
+    only3pl: true,
+    hint: "Nhà xe 3PL chạy chuyến (trống = xe nội bộ). Bấm tiêu đề để sắp xếp gom chuyến theo nhà xe, hoặc chọn nhà xe ở ô lọc Nhà xe 3PL để gửi cho 3PL.",
+    sort: (r) => r.carrier_name,
+    render: (r) =>
+      r.carrier_name ? (
+        <div className="truncate font-medium text-violet-700 dark:text-violet-300" title={r.carrier_name}>
+          {r.carrier_name}
+        </div>
+      ) : null,
   },
   { key: "plate_number", label: "Biển số", width: 100, defaultHidden: true, sort: (r) => r.plate_number, render: () => null },
   { key: "driver_name", label: "Tài xế", width: 150, defaultHidden: true, sort: (r) => r.driver_name, render: (r) => <div className="truncate">{r.driver_name}</div> },
@@ -315,6 +341,7 @@ export function DispatchTable({
   toolbar = true,
   canFillDriver,
   exportName,
+  show3pl = false,
 }: {
   rows: ShipmentListRow[];
   canAssign: boolean;
@@ -338,6 +365,8 @@ export function DispatchTable({
   canFillDriver?: boolean;
   /** Có thì hiện nút Xuất Excel: tên tệp và tiêu đề trong tệp */
   exportName?: { filename: string; title: string };
+  /** Hiện cột Nhà xe 3PL (người có quyền xem 3PL) */
+  show3pl?: boolean;
 }) {
   const fillDriver = canFillDriver ?? canAssign;
   const [savePending, startSave] = useTransition();
@@ -365,6 +394,7 @@ export function DispatchTable({
     const list: Col[] = [];
     for (const c of BASE_COLS) {
       if (c.orderOnly && !showOrder) continue;
+      if (c.only3pl && !show3pl) continue;
       // Đã có trường "Loại hình vận chuyển" thì cột đó đứng đúng chỗ này
       if (c.key === SERVICE_KIND_PLACEHOLDER) list.push(kindCol ? extra(kindCol) : c);
       else if (c.key === "route" && dropCol)
@@ -374,7 +404,7 @@ export function DispatchTable({
     for (const c of extraColumns) if (!c.serviceKind) list.push(extra(c));
     if (showActions) list.push({ key: "actions", label: "Thao tác", width: 260, align: "right", render: () => null });
     return list;
-  }, [extraColumns, extraValues, kindCol, dropCol, showOrder, showActions]);
+  }, [extraColumns, extraValues, kindCol, dropCol, showOrder, showActions, show3pl]);
 
   const [visibility, setVisibility] = useState<VisibilityState>(() =>
     Object.fromEntries((view?.hidden ?? cols.filter((c) => c.defaultHidden).map((c) => c.key)).map((k) => [k, false])),
@@ -766,11 +796,12 @@ function vehicleDriverCell(r: ShipmentListRow, editable: boolean) {
   return (
     <>
       <div className="-ml-1 flex min-w-0 items-center">
-        <VehiclePlateCell r={r} editable={editable} empty={r.driver_id ? "Chưa chọn xe" : "Chưa phân công"}>
+        <VehiclePlateCell r={r} editable={editable} empty={r.carrier_supplier_id ? "Chưa có số xe" : r.driver_id ? "Chưa chọn xe" : "Chưa phân công"}>
           {order}
         </VehiclePlateCell>
       </div>
       {r.driver_id ? <div className="truncate text-xs text-muted-foreground">{r.driver_name}</div> : null}
+      {r.carrier_name ? <div className="truncate text-xs font-medium text-violet-700 dark:text-violet-300">3PL {r.carrier_name}</div> : null}
     </>
   );
 }

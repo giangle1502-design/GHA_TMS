@@ -80,6 +80,9 @@ export type ShipmentListRow = {
   plan_code?: string | null;
   pickup_phone?: string | null;
   delivery_phone?: string | null;
+  /** Nhà xe 3PL của chuyến (SQL 9018): ghi ở chuyến hoặc theo xe/tài xế 3PL; trống với người không xem được 3PL */
+  carrier_supplier_id?: string | null;
+  carrier_name?: string | null;
   /** Lời/lỗ (view shipment_profit, ghép ở trang khi người xem có quyền chi phí/báo cáo) */
   trip_cost?: number | null;
   vehicle_cost?: number | null;

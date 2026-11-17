@@ -68,6 +68,8 @@ type Row = {
   vehicleDay?: VehicleDayState;
   /** Đang chọn Xe nội bộ hay Xe 3-PL (xe 3PL không cảnh báo trùng xe, không đếm chuyến) */
   vehicleSource?: VehicleSource;
+  /** Nhà thầu 3PL chọn trong khung Xe 3-PL: lưu cả khi chưa chọn xe ("" / không có = không đổi) */
+  carrierSupplierId?: string;
   /** keep = chuyến đã có, giữ giá đang lưu (sửa tay được); quote = tìm giá theo bảng giá như lúc tạo */
   priceMode: "keep" | "quote";
   /** Các thông tin dưới chỉ có ở chuyến đã có khi sửa đơn */
@@ -347,6 +349,7 @@ export function OrderForm({
     containerNo: normalizeContainerNo(s.containerNo),
     vehicleId: s.vehicleId,
     driverId: s.driverId,
+    carrierSupplierId: s.vehicleSource === "3pl" ? (s.carrierSupplierId ?? "") : "",
     priceListId: s.priceListId,
     unitPrice: moneyOut(s.unitPrice),
     pricingUnit: s.pricingUnit,
@@ -916,6 +919,7 @@ function ShipmentEditor({
                   value={row.vehicleId}
                   disabled={!canAssign}
                   onSourceChange={(src) => onChange(src === "3pl" ? { vehicleSource: src, vehicleDay: undefined } : { vehicleSource: src })}
+                  onSupplierChange={(sid) => onChange({ carrierSupplierId: sid })}
                   onChange={(v) => {
                     onChange({ vehicleId: v });
                     if (v) {

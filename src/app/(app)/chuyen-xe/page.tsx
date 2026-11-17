@@ -13,7 +13,7 @@ import { addDaysYMD, formatVND, startOfDayVN } from "@/lib/format";
 import { SHIPMENT_STATUS } from "@/lib/status";
 import { TONE_BADGE } from "@/lib/tones";
 import type { ShipmentListRow } from "@/lib/shipments";
-import { advRefLabels, applyShipmentFilters, parseShipmentFilters, shipmentCustomFields, type ShipmentFilters } from "@/lib/shipments-query";
+import { advRefLabels, applyShipmentFilters, carrierName, carrierOptions, parseShipmentFilters, shipmentCustomFields, type ShipmentFilters } from "@/lib/shipments-query";
 import { PageHeader } from "@/components/layout/page-header";
 import { CompactDensity } from "@/components/layout/compact-density";
 import { Card } from "@/components/ui/card";
@@ -56,15 +56,20 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   // Chuyến hủy không hiện ở Quản lý chuyến: xem và khôi phục ở danh sách Chuyến hủy
   if (f.tt === "cancelled") redirect(`/dieu-phoi/chuyen-huy?${new URLSearchParams({ tu: f.tu, den: f.den }).toString()}`);
   const canEdit = me.permissions.has("shipments.update") || me.permissions.has("dispatch.update");
+  // Lọc, gom chuyến theo nhà xe 3PL: chỉ người có quyền xem 3PL (tài khoản khách không thấy)
+  const canView3pl = me.permissions.has("carriers.view");
+  if (!canView3pl) f.pl = "";
+  let listQ = applyShipmentFilters(supabase.from("shipment_list").select("*", { count: "exact" }), f).neq("status", "cancelled");
+  // Lọc "Chỉ chuyến 3PL": xếp theo nhà xe trước để gom chuyến từng nhà xe
+  if (f.pl === "3pl") listQ = listQ.order("carrier_name");
 
-  const [listRes, sumRes, view, advLabels] = await Promise.all([
-    applyShipmentFilters(supabase.from("shipment_list").select("*", { count: "exact" }), f)
-      .neq("status", "cancelled")
+  const [listRes, sumRes, view, advLabels, carriers, plName] = await Promise.all([
+    listQ
       .order("pickup_at", { ascending: false })
       .order("shipment_code", { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1),
     // Đếm theo trạng thái và cộng tiền trên toàn bộ kết quả lọc (không theo trang)
-    f.adv.length
+    f.adv.length || f.pl
       ? summarize(supabase, f)
       : supabase.rpc("shipment_list_summary", {
           p_from: startOfDayVN(f.tu),
@@ -74,6 +79,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         }),
     loadTableView(supabase, "shipment_grid", me.id),
     advRefLabels(supabase, f.adv, [...SHIPMENT_ADV_FIELDS, ...custom.adv]),
+    canView3pl ? carrierOptions(supabase, f) : Promise.resolve(null),
+    canView3pl && f.pl ? carrierName(supabase, f.pl) : Promise.resolve(""),
   ]);
   if (listRes.error) throw listRes.error;
   if (sumRes.error) throw sumRes.error;
@@ -117,7 +124,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   const href = (p: Partial<ShipmentFilters> & { trang?: number }) => {
     const merged = { ...f, ...p };
     const q = new URLSearchParams();
-    for (const k of ["tu", "den", "tt", "kh", "q"] as const) if (merged[k]) q.set(k, merged[k]);
+    for (const k of ["tu", "den", "tt", "kh", "pl", "q"] as const) if (merged[k]) q.set(k, merged[k]);
     for (const a of merged.adv) q.append("a", a);
     if (p.trang && p.trang > 1) q.set("trang", String(p.trang));
     return `/chuyen-xe?${q.toString()}`;
@@ -161,12 +168,12 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
                 </Link>
               </Button>
             ) : null}
-            {me.permissions.has("shipments.export") ? <ExportShipmentsButton params={{ tu: f.tu, den: f.den, tt: f.tt, kh: f.kh, q: f.q, a: f.adv }} /> : null}
+            {me.permissions.has("shipments.export") ? <ExportShipmentsButton params={{ tu: f.tu, den: f.den, tt: f.tt, kh: f.kh, pl: f.pl, q: f.q, a: f.adv }} /> : null}
           </>
         }
       />
       {me.permissions.has("reports.view") ? <ReportLinks /> : null}
-      <ShipmentFilterBar filters={f} />
+      <ShipmentFilterBar filters={f} carriers={carriers} carrierName={plName} />
       <div className={`mb-3 grid grid-cols-2 gap-2 ${money.other ? "sm:grid-cols-3 lg:grid-cols-6" : "sm:grid-cols-5"}`}>
         <Sum label="Phí vận chuyển" hint="Đơn giá × (1 + % dầu) + phụ thu vé + hạ xa, BOT + neo xe" value={money.transport} />
         <Sum label="Phí chi hộ" hint="Hạ + nâng + cược cont" value={money.pass_through} />
@@ -189,7 +196,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
             <Ban className="size-4 text-destructive" /> Chuyến hủy ({cancelledCount})
           </Link>
         </div>
-        <ShipmentGrid rows={rows} canEdit={canEdit} view={view} adv={f.adv} advLabels={advLabels} customDefs={custom.defs} customAdv={custom.adv} canAddField={me.permissions.has("fields.configure")} canSeeProfit={canSeeProfit} canFillDriver={canFillDriver} canSetOrder={me.permissions.has("dispatch.update") || me.permissions.has("dispatch.create")} canAssign={me.permissions.has("dispatch.update")} />
+        <ShipmentGrid rows={rows} canEdit={canEdit} view={view} adv={f.adv} advLabels={advLabels} customDefs={custom.defs} customAdv={custom.adv} canAddField={me.permissions.has("fields.configure")} canSeeProfit={canSeeProfit} canFillDriver={canFillDriver} canSetOrder={me.permissions.has("dispatch.update") || me.permissions.has("dispatch.create")} canAssign={me.permissions.has("dispatch.update")} show3pl={canView3pl} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-sm text-muted-foreground">
           <span>
             {total === 0 ? "Không có chuyến phù hợp" : `Dòng ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} / ${total} chuyến`}
