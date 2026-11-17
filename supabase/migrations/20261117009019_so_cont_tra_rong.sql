@@ -1,5 +1,5 @@
 -- =============================================================================
--- GHA 9017: Chống nhập nhầm cont khi trả rỗng / cược cont (LE, 17/11/2026)
+-- GHA 9019: Chống nhập nhầm cont khi trả rỗng / cược cont (LE, 17/11/2026)
 --   * Hai cont cùng điểm nhận, điểm giao: app tài xế hiện SỐ CONT to trên thẻ và trong ô nhập để tài xế
 --     đối chiếu với hóa đơn.
 --   * Chuyến chưa có số cont: tài xế phải nhập số cont (đúng chuẩn ISO 6346: 4 chữ + 7 số, số cuối là số

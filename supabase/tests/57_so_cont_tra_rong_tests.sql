@@ -1,5 +1,5 @@
 -- =============================================================================
--- Kiểm thử 9017: hai cont cùng điểm nhận / giao, chống nhập nhầm cont khi trả rỗng / cược
+-- Kiểm thử 9019: hai cont cùng điểm nhận / giao, chống nhập nhầm cont khi trả rỗng / cược
 -- =============================================================================
 \set ON_ERROR_STOP 1
 \set QUIET 1

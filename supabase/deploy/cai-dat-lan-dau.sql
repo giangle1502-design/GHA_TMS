@@ -25271,9 +25271,9 @@ comment on view public.statement_shipment_fees is 'Từng loại phí của chuy
 revoke all on public.statement_customers, public.statement_shipment_list, public.statement_shipment_fees from anon;
 grant select on public.statement_customers, public.statement_shipment_list, public.statement_shipment_fees to authenticated;
 
--- >>> 20261117009017_so_cont_tra_rong.sql
+-- >>> 20261117009019_so_cont_tra_rong.sql
 -- =============================================================================
--- GHA 9017: Chống nhập nhầm cont khi trả rỗng / cược cont (LE, 17/11/2026)
+-- GHA 9019: Chống nhập nhầm cont khi trả rỗng / cược cont (LE, 17/11/2026)
 --   * Hai cont cùng điểm nhận, điểm giao: app tài xế hiện SỐ CONT to trên thẻ và trong ô nhập để tài xế
 --     đối chiếu với hóa đơn.
 --   * Chuyến chưa có số cont: tài xế phải nhập số cont (đúng chuẩn ISO 6346: 4 chữ + 7 số, số cuối là số
