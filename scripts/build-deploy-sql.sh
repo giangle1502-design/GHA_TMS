@@ -201,3 +201,5 @@ upgrade nang-cap-kg-moi-bao.sql "Số KG/bao trong danh mục mã hàng, số ba
   supabase/migrations/20261116009015_kg_moi_bao.sql
 upgrade nang-cap-khach-xem-bang-ke.sql "Tài khoản khách chỉ xem / tải bảng kê, gắn một tài khoản với nhiều khách hàng (chặn ở RLS)" "to_regclass('public.user_customers') is not null" \
   supabase/migrations/20261116009016_khach_xem_bang_ke.sql
+upgrade nang-cap-so-cont-tra-rong.sql "Chống nhập nhầm cont khi trả rỗng, cược cont: hiện / bắt nhập số cont, chặn trùng số hóa đơn" "to_regprocedure('private.container_no_valid(text)') is not null" \
+  supabase/migrations/20261117009019_so_cont_tra_rong.sql

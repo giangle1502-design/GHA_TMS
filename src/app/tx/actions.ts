@@ -134,6 +134,7 @@ const containerSchema = z.object({
   depositAmount: money,
   depositRef: ref,
   state: z.enum(["returned", "kept"]).nullable(),
+  containerNo: z.string().trim().max(20).nullable(),
 });
 
 /** Trả rỗng / cược cont (4 ô). Phí của cả chuỗi vỏ ghi về chuyến đầu của chuỗi. */
@@ -150,6 +151,7 @@ export async function saveContainer(input: z.input<typeof containerSchema>): Pro
       p_deposit_amount: d.depositAmount,
       p_deposit_ref: d.depositRef || null,
       p_state: d.state,
+      p_container_no: d.containerNo || null,
     },
     "Không lưu được trả rỗng / cược cont.",
   );

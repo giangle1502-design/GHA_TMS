@@ -9,6 +9,7 @@ import { PlateForm } from "./plate-form";
 import { AcceptButton, ChangeVehicleButton, CompleteButton, FindNextButton, StartButton } from "./trip-actions";
 import { AddExpenseButton, AddSheetButton, type ExpenseCategory } from "./expense-forms";
 import { ContainerCard, type ContainerInfo } from "./container-card";
+import { formatContainerNo } from "@/lib/container-no";
 
 export const dynamic = "force-dynamic";
 
@@ -151,6 +152,9 @@ function TripCard({ t, categories, settings }: { t: Trip; categories: ExpenseCat
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="font-mono text-base font-semibold">{t.shipment_code}</div>
+          {t.container?.container_no ? (
+            <div data-trip-container className="font-mono text-lg font-bold tracking-wider text-primary">Cont {formatContainerNo(t.container.container_no)}</div>
+          ) : null}
           {t.trip_rank ? <div className="text-sm font-semibold text-primary">Chuyến thứ {t.trip_rank} trong ngày</div> : null}
           <div className="text-sm text-muted-foreground">Tài xế: {t.driver_name}</div>
         </div>
