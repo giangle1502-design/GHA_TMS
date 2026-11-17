@@ -153,7 +153,7 @@ export function CompleteButton({
       if (!completed) {
         if (photoRequired && !files.length) return setError("Chụp ít nhất 1 ảnh hàng đã giao hoặc phiếu ký nhận.");
         if (result !== "full" && !note.trim()) return setError("Ghi lý do giao thiếu / không giao được.");
-        const badCont = cont ? containerError(cont, !container?.next_code) : null;
+        const badCont = cont ? containerError(cont, !container?.next_code, container?.container_no ?? null) : null;
         if (badCont) return setError(badCont);
       }
       if (!expenseMode && askExpense) return setError('Chọn "Có chi phí" và nhập chi phí, hoặc chọn "Không phát sinh chi phí".');
@@ -291,9 +291,9 @@ export function CompleteButton({
           )}
           {container && cont && !completed ? (
             <div data-complete-container className="space-y-2 rounded-xl border p-3">
-              <div className="text-sm font-semibold">Trả rỗng & cược cont{container.container_no ? ` · ${container.container_no}` : ""}</div>
+              <div className="text-sm font-semibold">Trả rỗng & cược cont</div>
               <ContainerOrigin c={container} />
-              <ContainerFields id={`done-${shipmentId}`} value={cont} onChange={setCont} askState={!container.next_code} canReturn={!container.next_code} />
+              <ContainerFields id={`done-${shipmentId}`} value={cont} onChange={setCont} askState={!container.next_code} canReturn={!container.next_code} knownNo={container.container_no} />
             </div>
           ) : null}
           <div hidden={completed || !askExpense}>
