@@ -10,7 +10,13 @@ import { shipmentCustomAdvFields } from "@/lib/shipments";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { SHIPMENT_ADV_FIELDS, SHIPMENT_DATETIME_FIELDS } from "@/lib/shipments";
 
-export type ShipmentFilters = { tu: string; den: string; tt: string; kh: string; q: string; adv: string[]; extraAdv?: AdvField[] };
+/** pl = lọc nhà xe 3PL: id nhà xe, "3pl" (mọi chuyến 3PL), "noi-bo" (chuyến xe nội bộ), "" (tất cả) */
+export type ShipmentFilters = { tu: string; den: string; tt: string; kh: string; q: string; pl: string; adv: string[]; extraAdv?: AdvField[] };
+
+/** Giá trị hợp lệ của bộ lọc nhà xe 3PL */
+export function parseCarrierFilter(v: string | undefined): string {
+  return v && (v === "3pl" || v === "noi-bo" || isUuid(v)) ? v : "";
+}
 
 type SP = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -29,6 +35,7 @@ export function parseShipmentFilters(raw: SP, extraAdv: AdvField[] = []): Shipme
     den,
     tt: sp.tt === "tre" || sp.tt === "cho-duyet" || sp.tt === "tat-ca" || SHIPMENT_STATUS.some((s) => s.value === sp.tt) ? sp.tt! : "",
     kh: sp.kh && isUuid(sp.kh) ? sp.kh : "",
+    pl: parseCarrierFilter(sp.pl),
     q: sanitizeSearch(sp.q ?? ""),
     adv: parseConditions(raw.a, [...SHIPMENT_ADV_FIELDS, ...extraAdv]).map(encodeCondition),
     extraAdv,
@@ -40,6 +47,10 @@ export function parseShipmentFilters(raw: SP, extraAdv: AdvField[] = []): Shipme
 export function applyShipmentFilters(query: any, f: ShipmentFilters, opts: { status?: boolean } = {}) {
   let q = query.gte("pickup_at", startOfDayVN(f.tu)).lt("pickup_at", startOfDayVN(addDaysYMD(f.den, 1)));
   if (f.kh) q = q.eq("customer_id", f.kh);
+  // Nhà xe 3PL (cột carrier_supplier_id của view, SQL 9018; người không xem được 3PL luôn thấy trống)
+  if (f.pl === "3pl") q = q.not("carrier_supplier_id", "is", null);
+  else if (f.pl === "noi-bo") q = q.is("carrier_supplier_id", null);
+  else if (f.pl) q = q.eq("carrier_supplier_id", f.pl);
   if (f.q) {
     q = q.or(["shipment_code", "order_code", "customer_name", "plate_number", "driver_name", "pickup_name", "delivery_name", "plan_code", "empty_return_name", "offroute_return_name"].map((c) => `${c}.ilike.*${f.q}*`).join(","));
   }
@@ -58,6 +69,38 @@ export function applyShipmentFilters(query: any, f: ShipmentFilters, opts: { sta
     else q = q.eq("status", f.tt);
   }
   return q;
+}
+
+export type CarrierOption = { id: string; name: string; count: number };
+
+/**
+ * Nhà xe 3PL có chuyến trong khoảng ngày đang xem (để chọn ở bộ lọc 3PL), kèm số chuyến.
+ * CSDL chưa chạy SQL 9018 (chưa có cột carrier_*) thì trả về null để ẩn ô lọc.
+ */
+export async function carrierOptions(supabase: SupabaseClient, f: Pick<ShipmentFilters, "tu" | "den">): Promise<CarrierOption[] | null> {
+  const { data, error } = await supabase
+    .from("shipment_list")
+    .select("carrier_supplier_id, carrier_name")
+    .gte("pickup_at", startOfDayVN(f.tu))
+    .lt("pickup_at", startOfDayVN(addDaysYMD(f.den, 1)))
+    .neq("status", "cancelled")
+    .not("carrier_supplier_id", "is", null)
+    .limit(5000);
+  if (error) return null;
+  const m = new Map<string, CarrierOption>();
+  for (const r of (data ?? []) as { carrier_supplier_id: string; carrier_name: string | null }[]) {
+    const o = m.get(r.carrier_supplier_id) ?? { id: r.carrier_supplier_id, name: r.carrier_name ?? "(không tên)", count: 0 };
+    o.count++;
+    m.set(o.id, o);
+  }
+  return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+}
+
+/** Tên nhà xe đang lọc (khi nhà xe không có chuyến trong khoảng ngày nên không có trong danh sách chọn) */
+export async function carrierName(supabase: SupabaseClient, id: string): Promise<string> {
+  if (!isUuid(id)) return "";
+  const { data } = await supabase.from("suppliers").select("name").eq("id", id).maybeSingle();
+  return (data?.name as string | undefined) ?? "";
 }
 
 /** Trường bổ sung của chuyến mà người dùng được xem: định nghĩa cột + trường tìm kiếm nâng cao */

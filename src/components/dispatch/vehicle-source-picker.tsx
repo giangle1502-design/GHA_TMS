@@ -19,6 +19,7 @@ export function VehicleSourcePicker({
   initialLabel,
   onChange,
   onSourceChange,
+  onSupplierChange,
   disabled,
   invalid,
 }: {
@@ -30,6 +31,8 @@ export function VehicleSourcePicker({
   onChange: (id: string, label: string) => void;
   /** Báo nguồn đang chọn (để ẩn cảnh báo trùng xe, số chuyến khi là xe 3PL) */
   onSourceChange?: (source: VehicleSource) => void;
+  /** Báo nhà thầu 3PL người dùng chọn (để lưu chỉ định 3PL khi chưa chọn xe); "" = bỏ chọn / chuyển sang xe nội bộ */
+  onSupplierChange?: (supplierId: string) => void;
   disabled?: boolean;
   invalid?: boolean;
 }) {
@@ -82,6 +85,7 @@ export function VehicleSourcePicker({
     if (s === source) return;
     setSource(s);
     notify.current?.(s);
+    onSupplierChange?.(s === "3pl" ? supplier.id : "");
     // Đổi nguồn thì bỏ xe đã chọn ở nguồn kia
     if (value) {
       checked.current = "";
@@ -92,6 +96,7 @@ export function VehicleSourcePicker({
   function pickSupplier(id: string, label: string) {
     if (id === supplier.id) return;
     setSupplier({ id, label });
+    onSupplierChange?.(id);
     // Đổi nhà thầu thì bỏ xe của nhà thầu cũ
     if (value) {
       checked.current = "";
@@ -156,7 +161,9 @@ export function VehicleSourcePicker({
       />
       {source === "3pl" ? (
         <p className="text-xs text-muted-foreground">
-          {supplier.id ? "Chỉ hiện xe của nhà thầu đã chọn. Chưa có xe thì gõ số xe rồi bấm Thêm mới (xe tự gắn nhà thầu này)." : "Chọn nhà thầu 3PL trước, sau đó chọn xe."} Xe 3PL không tính số chuyến, thứ tự xe, tạm ứng, chi phí tài xế.
+          {supplier.id
+            ? "Chỉ hiện xe của nhà thầu đã chọn. Chưa biết số xe thì để trống: chuyến vẫn lưu nhà thầu, số xe nhập sau. Chưa có xe trong danh mục thì gõ số xe rồi bấm Thêm mới (xe tự gắn nhà thầu này)."
+            : "Chọn nhà thầu 3PL trước, sau đó chọn xe (có thể chọn xe sau)."} Xe 3PL không tính số chuyến, thứ tự xe, tạm ứng, chi phí tài xế.
         </p>
       ) : null}
     </div>

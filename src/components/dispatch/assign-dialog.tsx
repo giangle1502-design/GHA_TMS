@@ -132,6 +132,8 @@ export function AssignDialog({
   const assigned = Boolean(driverId);
   const day = todayVN(new Date(pickupAt));
   const set3 = (patch: Partial<Form3pl>) => setF3((x) => ({ ...x, ...patch }));
+  // Chỉ chọn nhà xe, chưa có số xe / tài xế: lưu nhà xe trước, số xe nhập sau
+  const onlyCarrier = ![f3.plate, f3.driverName, f3.driverPhone, f3.nationalId, f3.licenseNo].some((x) => x.trim());
   return (
     <>
       <Button variant={assigned ? "ghost" : "outline"} size="sm" className={compact ? "h-7 px-2" : undefined} onClick={() => onOpenChange(true)}>
@@ -157,7 +159,10 @@ export function AssignDialog({
               {f3.supplierName && f3.supplierId ? (
                 <div className="flex items-center gap-2 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-violet-900">
                   <Truck className="size-4 shrink-0" />
-                  <span className="font-semibold">3-PL {f3.supplierName}</span>
+                  <span className="min-w-0 flex-1 truncate font-semibold">3-PL {f3.supplierName}</span>
+                  <button type="button" className="shrink-0 text-xs text-primary underline-offset-2 hover:underline" onClick={() => set3({ supplierId: "", supplierName: "" })}>
+                    Đổi nhà xe
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-1.5">
@@ -193,8 +198,12 @@ export function AssignDialog({
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Xe, tài xế 3PL tự lưu theo nhà xe, lần sau gõ đúng số xe hoặc SĐT là dùng lại. Không tính số chuyến, thứ tự xe, tạm ứng, lương.
+                Chưa biết số xe thì để trống các ô: chuyến lưu nhà xe trước (vẫn ở Nháp), số xe nhập sau ở cột Số xe trên bảng hoặc bấm Đổi. Xe, tài xế 3PL tự
+                lưu theo nhà xe, lần sau gõ đúng số xe hoặc SĐT là dùng lại. Không tính số chuyến, thứ tự xe, tạm ứng, lương.
               </p>
+              <button type="button" className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => setMode("internal")}>
+                Chuyến chạy xe công ty? Chọn xe nội bộ
+              </button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -233,7 +242,7 @@ export function AssignDialog({
             )}
             {mode === "3pl" ? (
               <Button disabled={pending || !f3.supplierId} onClick={() => save()}>
-                {pending ? <Loader2 className="animate-spin" /> : null} Giao cho 3-PL
+                {pending ? <Loader2 className="animate-spin" /> : null} {onlyCarrier ? "Lưu nhà xe 3PL" : "Giao cho 3-PL"}
               </Button>
             ) : (
               <Button

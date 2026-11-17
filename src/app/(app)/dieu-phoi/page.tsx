@@ -12,7 +12,7 @@ import { TONE_BADGE } from "@/lib/tones";
 import { isLate, SHIPMENT_ADV_FIELDS, type ShipmentListRow } from "@/lib/shipments";
 import { isUuid } from "@/lib/entities/record";
 import { loadTableView } from "@/lib/entities/server";
-import { advRefLabels, applyShipmentFilters, parseShipmentFilters, shipmentCustomFields } from "@/lib/shipments-query";
+import { advRefLabels, applyShipmentFilters, carrierName, carrierOptions, parseShipmentFilters, shipmentCustomFields } from "@/lib/shipments-query";
 import { loadFreeVehicles } from "@/lib/free-vehicles";
 import { dispatchExtraColumns } from "@/lib/dispatch-columns";
 import { PageHeader } from "@/components/layout/page-header";
@@ -63,15 +63,20 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const single = f.tu === f.den;
   const totalDays = Math.round((Date.parse(f.den) - Date.parse(f.tu)) / 86400000) + 1;
   const advFields = [...SHIPMENT_ADV_FIELDS, ...custom.adv];
+  // Lọc, sắp xếp theo nhà xe 3PL: chỉ người có quyền xem 3PL (tài khoản khách không thấy)
+  const canView3pl = me.permissions.has("carriers.view");
+  if (!canView3pl) f.pl = "";
 
   // Chuyến hủy không hiện ở Điều phối: xem và khôi phục ở danh sách Chuyến hủy
   let listQ = applyShipmentFilters(supabase.from("shipment_list").select("*"), { ...f, tt: "" }).neq("status", "cancelled");
+  // Lọc "Chỉ chuyến 3PL": xếp theo nhà xe trước để gom chuyến từng nhà xe
+  if (f.pl === "3pl") listQ = listQ.order("carrier_name");
   if (xe) listQ = listQ.eq("vehicle_id", xe);
   if (tx) listQ = listQ.eq("driver_id", tx);
   let cancelQ = applyShipmentFilters(supabase.from("shipment_list").select("id", { count: "exact", head: true }), { ...f, tt: "" }).eq("status", "cancelled");
   if (xe) cancelQ = cancelQ.eq("vehicle_id", xe);
   if (tx) cancelQ = cancelQ.eq("driver_id", tx);
-  const [listRes, upcomingRes, free, view, advLabels, approvalRes, delegationRes, attPendingRes, routeGapRes, cancelRes] = await Promise.all([
+  const [listRes, upcomingRes, free, view, advLabels, approvalRes, delegationRes, attPendingRes, routeGapRes, cancelRes, carriers, plName] = await Promise.all([
     listQ.order("pickup_at").order("shipment_code").limit(MAX_ROWS),
     // Chuyến chưa phân công ở ngoài khoảng ngày đang xem (từ hôm nay trở đi)
     supabase
@@ -97,6 +102,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     supabase.rpc("attendance_pending_count"),
     supabase.rpc("route_pay_gap_count"),
     cancelQ,
+    canView3pl ? carrierOptions(supabase, f) : Promise.resolve(null),
+    canView3pl && f.pl ? carrierName(supabase, f.pl) : Promise.resolve(""),
   ]);
   const cancelledCount = cancelRes.count ?? 0;
   // Lỗi (ví dụ DB chưa nâng cấp chấm công) thì bỏ qua, không chặn màn Điều phối
@@ -110,6 +117,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const upcoming = (await attachContainerNo(supabase, (upcomingRes.data ?? []) as ShipmentListRow[])).filter(
     (r) =>
       (!f.kh || r.customer_id === f.kh) &&
+      (!f.pl || (f.pl === "3pl" ? Boolean(r.carrier_supplier_id) : f.pl === "noi-bo" ? !r.carrier_supplier_id : r.carrier_supplier_id === f.pl)) &&
       (!term || [r.shipment_code, r.order_code, r.customer_name, r.pickup_name, r.delivery_name, r.notes].some((v) => v?.toLowerCase().includes(term))),
   );
   // Chuyến đã giao (chờ quyết toán, đã đóng) không còn việc điều phối: ẩn khỏi danh sách mặc định, xem ở tab trạng thái
@@ -134,7 +142,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const tableProps = { view, extraColumns: extras.columns, extraValues: extras.values, canAddField: me.permissions.has("fields.configure") };
   const counts = Object.fromEntries(SHIPMENT_STATUS.filter((s) => s.value !== "cancelled").map((s) => [s.value, all.filter((r) => r.status === s.value).length]));
   const freeCount = free.filter((v) => v.free_days > 0).length;
-  const filtered = Boolean(f.kh || xe || tx || f.q || f.adv.length);
+  const filtered = Boolean(f.kh || xe || tx || f.pl || f.q || f.adv.length);
 
   const canCreate = me.permissions.has("dispatch.create");
   const canAssign = me.permissions.has("dispatch.update");
@@ -155,6 +163,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     if (f.kh) q.set("kh", f.kh);
     if (xe) q.set("xe", xe);
     if (tx) q.set("tx", tx);
+    if (f.pl) q.set("pl", f.pl);
     if (f.q) q.set("q", f.q);
     for (const a of f.adv) q.append("a", a);
     const t = p.tt ?? tab;
@@ -176,6 +185,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   })();
   const tabLabel =
     tab === "tat-ca" ? "Tất cả" : tab === "tre" ? "Trễ giờ giao" : tab === "cho-duyet" ? "Chờ GĐ duyệt / bị từ chối" : (SHIPMENT_STATUS.find((s) => s.value === tab)?.label ?? tab);
+  const plLabel = !f.pl ? "" : f.pl === "3pl" ? "Chuyến 3PL" : f.pl === "noi-bo" ? "Xe nội bộ" : `3PL ${carriers?.find((c) => c.id === f.pl)?.name ?? plName}`;
   const rangeText = single ? `ngày ${formatDate(f.tu)}${f.tu === today ? " (hôm nay)" : ""}` : `từ ${formatDate(f.tu)} đến ${formatDate(f.den)} (${totalDays} ngày)`;
 
   return (
@@ -257,7 +267,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
         </div>
       ) : null}
 
-      <DispatchFilterBar filters={{ tu: f.tu, den: f.den, kh: f.kh, xe, tx, q: f.q, adv: f.adv, xem }} today={today} advFields={advFields} advLabels={advLabels} />
+      <DispatchFilterBar
+        filters={{ tu: f.tu, den: f.den, kh: f.kh, xe, tx, q: f.q, adv: f.adv, xem, pl: f.pl }}
+        today={today}
+        advFields={advFields}
+        advLabels={advLabels}
+        carriers={xem ? null : carriers}
+        carrierName={plName}
+      />
 
       <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Chế độ xem">
         <ViewLink href={href({ xem: "", tt: "" })} active={!xem} icon={<ListChecks className="size-4" />} label="Chuyến" count={active.length} />
@@ -310,10 +327,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             canAssign={canAssign}
             canCancel={canCancel}
             canFillDriver={canFillDriver}
+            show3pl={canView3pl}
             showDate={!single}
             exportName={{
               filename: `dieu-phoi-${single ? f.tu : `${f.tu}_${f.den}`}`,
-              title: `ĐIỀU PHỐI – Chuyến nhận hàng ${rangeText}${tab ? ` – ${tabLabel}` : ""}`,
+              title: `ĐIỀU PHỐI – Chuyến nhận hàng ${rangeText}${plLabel ? ` – ${plLabel}` : ""}${tab ? ` – ${tabLabel}` : ""}`,
             }}
             emptyText={f.q ? "Không có chuyến phù hợp với từ khóa." : filtered ? "Không có chuyến phù hợp với bộ lọc." : all.length === 0 ? `Chưa có chuyến nào nhận hàng ${rangeText}.` : !tab ? "Các chuyến đã giao xong, xem ở tab Đã giao – chờ quyết toán hoặc Đã đóng." : "Không có chuyến ở trạng thái này."}
           />
@@ -327,7 +345,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
             <CardDescription>Ngoài khoảng ngày đang xem, từ hôm nay trở đi, tối đa 30 chuyến gần nhất.</CardDescription>
           </CardHeader>
           <CardContent className="mt-4 border-t p-0">
-            <DispatchTable {...tableProps} toolbar={false} rows={upcoming} canAssign={canAssign} canCancel={canCancel} showDate />
+            <DispatchTable {...tableProps} toolbar={false} show3pl={canView3pl} rows={upcoming} canAssign={canAssign} canCancel={canCancel} showDate />
           </CardContent>
         </Card>
       ) : null}

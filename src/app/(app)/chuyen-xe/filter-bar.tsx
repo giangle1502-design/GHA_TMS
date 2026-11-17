@@ -6,15 +6,25 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { ReferenceSelect } from "@/components/entities/reference-select";
 import { monthRangeYMD, todayVN } from "@/lib/format";
+import { CarrierFilter, type CarrierOption } from "@/components/dispatch/carrier-filter";
 
-type Filters = { tu: string; den: string; tt: string; kh: string; q: string; adv: string[] };
+type Filters = { tu: string; den: string; tt: string; kh: string; q: string; pl: string; adv: string[] };
 
-export function ShipmentFilterBar({ filters }: { filters: Filters }) {
+export function ShipmentFilterBar({
+  filters,
+  carriers = null,
+  carrierName,
+}: {
+  filters: Filters;
+  /** Nhà xe 3PL để lọc (null = không hiện ô lọc: người không có quyền xem 3PL) */
+  carriers?: CarrierOption[] | null;
+  carrierName?: string;
+}) {
   const [v, setV] = useState(filters);
   const router = useRouter();
   function apply(next = v) {
     const q = new URLSearchParams();
-    for (const k of ["tu", "den", "tt", "kh", "q"] as const) if (next[k]) q.set(k, next[k]);
+    for (const k of ["tu", "den", "tt", "kh", "pl", "q"] as const) if (next[k]) q.set(k, next[k]);
     for (const a of next.adv) q.append("a", a);
     router.push(`/chuyen-xe?${q.toString()}`);
   }
@@ -25,7 +35,11 @@ export function ShipmentFilterBar({ filters }: { filters: Filters }) {
   }
   return (
     <form
-      className="mb-3 grid gap-2 rounded-lg border bg-card p-3 sm:grid-cols-2 lg:grid-cols-[repeat(2,10rem)_minmax(12rem,1fr)_minmax(12rem,1fr)_auto] lg:items-end"
+      className={
+        carriers
+          ? "mb-3 grid gap-2 rounded-lg border bg-card p-3 sm:grid-cols-2 lg:grid-cols-[repeat(2,10rem)_minmax(12rem,1fr)_minmax(10rem,14rem)_minmax(12rem,1fr)_auto] lg:items-end"
+          : "mb-3 grid gap-2 rounded-lg border bg-card p-3 sm:grid-cols-2 lg:grid-cols-[repeat(2,10rem)_minmax(12rem,1fr)_minmax(12rem,1fr)_auto] lg:items-end"
+      }
       onSubmit={(e) => {
         e.preventDefault();
         apply();
@@ -49,6 +63,24 @@ export function ShipmentFilterBar({ filters }: { filters: Filters }) {
         </Label>
         <ReferenceSelect id="f-kh" refKey="customers" value={v.kh} allowQuickCreate={false} onChange={(id) => setV({ ...v, kh: id })} />
       </div>
+      {carriers ? (
+        <div className="space-y-1">
+          <Label htmlFor="f-pl" className="text-xs text-muted-foreground">
+            Nhà xe 3PL
+          </Label>
+          <CarrierFilter
+            id="f-pl"
+            value={v.pl}
+            options={carriers}
+            selectedName={carrierName}
+            onChange={(pl) => {
+              const next = { ...v, pl };
+              setV(next);
+              apply(next);
+            }}
+          />
+        </div>
+      ) : null}
       <div className="space-y-1">
         <Label htmlFor="f-q" className="text-xs text-muted-foreground">
           Tìm mã chuyến, mã đơn, biển số, tài xế, địa điểm
@@ -58,7 +90,7 @@ export function ShipmentFilterBar({ filters }: { filters: Filters }) {
       <Button type="submit" className="sm:col-span-2 lg:col-span-1">
         <Search /> Lọc
       </Button>
-      <div className="flex flex-wrap gap-1.5 sm:col-span-2 lg:col-span-5">
+      <div className={carriers ? "flex flex-wrap gap-1.5 sm:col-span-2 lg:col-span-6" : "flex flex-wrap gap-1.5 sm:col-span-2 lg:col-span-5"}>
         <Button type="button" size="sm" variant="outline" onClick={() => pickMonth(0)}>
           Tháng này
         </Button>

@@ -66,8 +66,12 @@ export async function exportShipments(sp: Record<string, string | string[] | und
     const supabase = await createClient();
     const custom = await shipmentCustomFields(supabase, me.permissions);
     const f = parseShipmentFilters(sp, custom.adv);
-    const { data, error } = await applyShipmentFilters(supabase.from("shipment_list").select("*"), f)
-      .neq("status", "cancelled")
+    const canView3pl = me.permissions.has("carriers.view");
+    if (!canView3pl) f.pl = "";
+    let q = applyShipmentFilters(supabase.from("shipment_list").select("*"), f).neq("status", "cancelled");
+    // Lọc "Chỉ chuyến 3PL": gom theo nhà xe
+    if (f.pl === "3pl") q = q.order("carrier_name");
+    const { data, error } = await q
       .order("pickup_at")
       .order("shipment_code")
       .limit(EXPORT_LIMIT + 1);
@@ -94,6 +98,7 @@ export async function exportShipments(sp: Record<string, string | string[] | und
       { header: "Ngày giao dự kiến", key: "expected_delivery_at", width: 14 },
       { header: "Loại xe", key: "vehicle_type_name", width: 18 },
       { header: "Biển số", key: "plate_number", width: 12 },
+      ...(canView3pl ? [{ header: "Nhà xe 3PL", key: "carrier_name", width: 22 }] : []),
       { header: "Tài xế", key: "driver_name", width: 22 },
       { header: "Số lượng", key: "quantity", width: 10 },
       { header: "Đơn vị tính", key: "pricing_unit", width: 11 },

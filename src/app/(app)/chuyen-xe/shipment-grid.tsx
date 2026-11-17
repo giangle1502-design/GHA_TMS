@@ -55,6 +55,8 @@ type Col = {
   defaultHidden?: boolean;
   /** Cột lời/lỗ: chỉ hiện với người có quyền xem chi phí hoặc báo cáo */
   profit?: boolean;
+  /** Cột nhà xe 3PL: chỉ người có quyền xem 3PL */
+  only3pl?: boolean;
   render: (r: ShipmentListRow) => ReactNode;
 };
 
@@ -123,6 +125,13 @@ const COLS: Col[] = [
   { key: "vehicle_type_name", label: "Loại xe", width: 120, render: (r) => r.vehicle_type_name },
   { key: "container_no", label: "Số cont", width: 120, render: (r) => r.container_no },
   { key: "plate_number", label: "Biển số", width: 110, render: (r) => r.plate_number },
+  {
+    key: "carrier_name",
+    label: "Nhà xe 3PL",
+    width: 140,
+    only3pl: true,
+    render: (r) => (r.carrier_name ? <span className="font-medium text-violet-700 dark:text-violet-300">{r.carrier_name}</span> : null),
+  },
   { key: "driver_name", label: "Tài xế", width: 150, render: (r) => r.driver_name },
   { key: "quantity", label: "SL", width: 70, align: "right", edit: "quantity", render: (r) => formatNumber(r.quantity) },
   { key: "pricing_unit", label: "ĐVT", width: 76, render: (r) => PRICING_UNITS[r.pricing_unit] ?? r.pricing_unit },
@@ -237,6 +246,7 @@ export function ShipmentGrid({
   canFillDriver = false,
   canSetOrder = false,
   canAssign = false,
+  show3pl = false,
 }: {
   rows: ShipmentListRow[];
   canEdit: boolean;
@@ -254,6 +264,8 @@ export function ShipmentGrid({
   canSetOrder?: boolean;
   /** Đổi số xe ngay trên bảng (quyền phân công chuyến) */
   canAssign?: boolean;
+  /** Hiện cột Nhà xe 3PL */
+  show3pl?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -281,7 +293,7 @@ export function ShipmentGrid({
   const dropDef = useMemo(() => customDefs.find((d) => DROP_OFF_RE.test(d.label.normalize("NFC"))), [customDefs]);
   const allCols = useMemo<Col[]>(
     () => [
-      ...COLS.filter((c) => canSeeProfit || !c.profit).map((c) => (c.key === "route_label" && dropDef ? { ...c, render: (r: ShipmentListRow) => routeWithDropOff(r, dropDef) } : c)),
+      ...COLS.filter((c) => (canSeeProfit || !c.profit) && (show3pl || !c.only3pl)).map((c) => (c.key === "route_label" && dropDef ? { ...c, render: (r: ShipmentListRow) => routeWithDropOff(r, dropDef) } : c)),
       ...customDefs.map((d) => ({
         key: `cf_${d.key}`,
         label: d.label,
@@ -292,7 +304,7 @@ export function ShipmentGrid({
         render: (r: ShipmentListRow) => formatValue(d, d.type === "formula" ? computeFormula(d.formula, formulaVars("shipments", r as unknown as Record<string, unknown>, r.custom_fields)) : r.custom_fields?.[d.key]),
       })),
     ],
-    [customDefs, canSeeProfit, dropDef],
+    [customDefs, canSeeProfit, dropDef, show3pl],
   );
 
   const columns = useMemo<ColumnDef<ShipmentListRow>[]>(
