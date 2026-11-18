@@ -6,7 +6,7 @@ import { Loader2, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ItemsEditor, itemsPayload, newItem, type ItemLine } from "@/app/(app)/dieu-phoi/tao-don/items-editor";
-import { saveShipmentItems } from "@/app/(app)/dieu-phoi/actions";
+import { saveDeliveryMethod, saveShipmentItems } from "@/app/(app)/dieu-phoi/actions";
 import { applyLayout, formatValue } from "@/lib/entities/record";
 import { computeFormula } from "@/lib/formula";
 import { formatNumber } from "@/lib/format";
@@ -32,6 +32,7 @@ export function ItemsCard({
   fieldRows,
   canEdit,
   canAddField,
+  deliveryMethod,
 }: {
   shipmentId: string;
   items: ShipmentItem[];
@@ -40,6 +41,8 @@ export function ItemsCard({
   fieldRows: CustomFieldRow[];
   canEdit: boolean;
   canAddField: boolean;
+  /** Hình thức giao (Pallet / Xá…); undefined = CSDL chưa nâng cấp 9021 */
+  deliveryMethod?: string;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<ItemLine[] | null>(null);
@@ -72,6 +75,7 @@ export function ItemsCard({
         ) : null}
       </CardHeader>
       <CardContent className="space-y-3">
+        {deliveryMethod !== undefined ? <DeliveryMethodLine key={deliveryMethod} shipmentId={shipmentId} value={deliveryMethod} canEdit={canEdit} /> : null}
         {editing ? (
           <>
             <ItemsEditor value={editing} onChange={setEditing} fields={fields} layout={layout} canAddField={canAddField} fieldRows={fieldRows} idPrefix="ct-it-" />
@@ -141,5 +145,52 @@ export function ItemsCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Hình thức giao của chuyến: tài xế thấy trên app để biết xuống hàng nhanh (pallet) hay chậm (xá) */
+function DeliveryMethodLine({ shipmentId, value, canEdit }: { shipmentId: string; value: string; canEdit: boolean }) {
+  const router = useRouter();
+  const [v, setV] = useState(value);
+  const [pending, start] = useTransition();
+  if (!canEdit)
+    return value ? (
+      <p className="text-sm">
+        Hình thức giao: <strong>{value}</strong>
+      </p>
+    ) : null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <label htmlFor={`dm-${shipmentId}`}>Hình thức giao (hiện trên app tài xế):</label>
+      <input
+        id={`dm-${shipmentId}`}
+        list="delivery-methods"
+        value={v}
+        maxLength={100}
+        onChange={(e) => setV(e.target.value)}
+        placeholder="Pallet, Xá…"
+        className="h-8 w-40 rounded-md border bg-background px-2"
+      />
+      <datalist id="delivery-methods">
+        <option value="Pallet" />
+        <option value="Xá" />
+      </datalist>
+      {v.trim() !== value.trim() ? (
+        <Button
+          size="sm"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              const r = await saveDeliveryMethod({ shipmentId, method: v });
+              if (!r.ok) return void toast.error(r.error);
+              toast.success("Đã lưu hình thức giao.");
+              router.refresh();
+            })
+          }
+        >
+          {pending ? <Loader2 className="animate-spin" /> : <Save />} Lưu
+        </Button>
+      ) : null}
+    </div>
   );
 }

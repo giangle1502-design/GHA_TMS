@@ -48,11 +48,23 @@ type Ctx = {
   columns: ImportColumn[];
 };
 
+/** Toàn bộ địa điểm (máy chủ trả tối đa 1,000 dòng mỗi lần nên đọc từng trang) */
+async function allLocations(supabase: Supa) {
+  const data: { id: string; code: string | null; name: string; status: string }[] = [];
+  for (let p = 0; p < 50; p++) {
+    const r = await supabase.from("locations").select("id, code, name, status").order("id").range(p * 1000, p * 1000 + 999);
+    if (r.error) return { data, error: r.error };
+    data.push(...((r.data ?? []) as typeof data));
+    if ((r.data ?? []).length < 1000) break;
+  }
+  return { data, error: null };
+}
+
 /** Danh mục cần tra cứu + cột của file mẫu (cột phí theo loại phí đang dùng, xếp theo nhóm phí nếu có) */
 async function loadContext(supabase: Supa, perms: Set<string>): Promise<Ctx> {
   const [cus, loc, vt, veh, drv, ft, fg, dt, cf] = await Promise.all([
     supabase.from("customers").select("id, code, name, status").limit(10000),
-    supabase.from("locations").select("id, code, name, status").limit(10000),
+    allLocations(supabase),
     supabase.from("vehicle_types").select("id, code, name").limit(1000),
     supabase.from("vehicles").select("id, plate_number, vehicle_type_id, assigned_driver_id, ownership_type, status, archived_at").limit(5000),
     supabase.from("drivers").select("id, code, full_name, phone, status, archived_at").limit(5000),

@@ -839,6 +839,21 @@ export async function saveShipmentItems(input: z.input<typeof itemsInput>): Prom
   }, "Đã lưu hàng hóa của chuyến.");
 }
 
+const methodInput = z.object({ shipmentId: uuid, method: z.string().trim().max(100, "Hình thức giao tối đa 100 ký tự") });
+
+/** Sửa hình thức giao của chuyến (Pallet / Xá…): hiện trên app tài xế */
+export async function saveDeliveryMethod(input: z.input<typeof methodInput>): Promise<ActionResult> {
+  return runAction(async () => {
+    await requirePermission("dispatch.create", "dispatch.update");
+    const p = methodInput.safeParse(input);
+    if (!p.success) throw new ActionError(p.error.issues[0]?.message ?? "Dữ liệu không hợp lệ");
+    const supabase = await createClient();
+    const { error } = await supabase.from("shipments").update({ delivery_method: p.data.method || null }).eq("id", p.data.shipmentId);
+    if (error) throw error;
+    revalidatePath(`/chuyen-xe/${p.data.shipmentId}`);
+  }, "Đã lưu hình thức giao.");
+}
+
 const feesInput = z.object({ shipmentId: uuid, fees: feesSchema });
 
 /** Sửa các khoản phí thu khách của chuyến ở trang chi tiết */

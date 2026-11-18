@@ -70,7 +70,23 @@ type Trip = {
   offroute_return_address?: string | null;
   /** Trả rỗng & cược cont (chuyến chở container, xe nội bộ) */
   container?: ContainerInfo | null;
+  /** Hình thức giao (Pallet / Xá…) và hàng hóa của chuyến (9021) */
+  delivery_method?: string | null;
+  goods?: Goods[];
 };
+type Goods = { item_code: string | null; item_name: string | null; quantity: number | null; unit: string | null };
+
+/** Gợi ý thời gian xuống hàng theo hình thức giao */
+function methodHint(m: string): string {
+  const p = m
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase();
+  if (/pallet|palet|kien/.test(p)) return "xuống hàng nhanh";
+  if (/\bxa\b|hang xa|bao/.test(p)) return "xuống hàng lâu (bốc tay)";
+  return "";
+}
 
 const RESULT_LABEL: Record<string, string> = { full: "Giao đủ", partial: "Giao thiếu", failed: "Không giao được" };
 
@@ -81,13 +97,16 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
   const me = token ? ((await supabase.rpc("driver_link_me", { p_token: token })).data as { plate: string; driver_name: string | null } | null) : null;
   if (!me) return <PlateForm />;
 
-  const [{ data, error }, fin, cfg, flagRes, contRes] = await Promise.all([
+  const [{ data, error }, fin, cfg, flagRes, contRes, goodsRes] = await Promise.all([
     supabase.rpc("driver_link_trips", { p_token: token }),
     supabase.rpc("driver_link_categories", { p_token: token }),
     supabase.rpc("driver_app_settings"),
     supabase.rpc("driver_link_trip_flags", { p_token: token }),
     supabase.rpc("driver_link_containers", { p_token: token }),
+    supabase.rpc("driver_link_goods", { p_token: token }),
   ]);
+  // Hình thức giao + hàng hóa (CSDL chưa nâng cấp 9021 thì không hiện)
+  const goods = new Map(((goodsRes.data ?? []) as { shipment_id: string; delivery_method: string | null; items: Goods[] }[]).map((g) => [g.shipment_id, g]));
   // Trả rỗng & cược cont theo chuyến (CSDL chưa nâng cấp 9008 thì không hiện)
   const containers = new Map(((contRes.data ?? []) as ContainerInfo[]).map((c) => [c.shipment_id, c]));
   if (error) throw error;
@@ -98,6 +117,8 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
     pod_photo_required: flags.get(t.shipment_id)?.pod_photo_required ?? true,
     sheet_count: Number(flags.get(t.shipment_id)?.sheet_count ?? 0),
     container: containers.get(t.shipment_id) ?? null,
+    delivery_method: goods.get(t.shipment_id)?.delivery_method ?? null,
+    goods: goods.get(t.shipment_id)?.items ?? [],
   }));
   const settings = parseDriverAppSettings(cfg.data);
   const categories = ((fin.data as { categories?: ExpenseCategory[] } | null)?.categories ?? []) as ExpenseCategory[];
@@ -171,6 +192,30 @@ function TripCard({ t, categories, settings }: { t: Trip; categories: ExpenseCat
 
       <Place label="Điểm nhận" name={t.pickup_name} address={t.pickup_address} contact={t.pickup_contact} phone={t.pickup_phone} maps={t.pickup_maps_url} gate={t.pickup_gate_instructions} />
       <Place label="Điểm giao" name={t.delivery_name} address={t.delivery_address} contact={t.delivery_contact} phone={t.delivery_phone} maps={t.delivery_maps_url} gate={t.delivery_gate_instructions} />
+
+      {t.delivery_method || t.goods?.length ? (
+        <div data-trip-goods className="mt-3 space-y-1.5 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+          {t.delivery_method ? (
+            <div data-delivery-method>
+              Hình thức giao: <strong className="text-base uppercase">{t.delivery_method}</strong>
+              {methodHint(t.delivery_method) ? <span className="text-muted-foreground"> · {methodHint(t.delivery_method)}</span> : null}
+            </div>
+          ) : null}
+          {t.goods?.length ? (
+            <ul className="space-y-0.5">
+              {t.goods.map((g, i) => (
+                <li key={i} className="flex justify-between gap-3">
+                  <span className="font-medium">{g.item_code || g.item_name || "Hàng hóa"}</span>
+                  <span className="tabular-nums">
+                    {g.quantity !== null && g.quantity !== undefined ? formatNumber(Number(g.quantity)) : "—"}
+                    {g.unit ? ` ${g.unit}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
 
       {t.empty_return_name || t.offroute_return_name ? (
         <div className="mt-3 space-y-1 rounded-xl bg-muted px-3 py-2 text-sm">
