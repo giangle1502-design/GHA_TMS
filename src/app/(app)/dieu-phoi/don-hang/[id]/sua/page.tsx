@@ -13,6 +13,7 @@ import { formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { parseDriverAppSettings } from "@/lib/driver-link/settings";
+import { stockTargetOptions } from "@/lib/inventory/actions";
 import { OrderForm, type EditOrderInit, type EditShipmentInit } from "../../../tao-don/order-form";
 
 export const metadata: Metadata = { title: "Sửa đơn hàng" };
@@ -245,6 +246,7 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
     shipments,
   };
 
+  const stockRes = await stockTargetOptions({ orderId: o.id });
   return (
     <>
       <Link href={`/dieu-phoi/don-hang/${o.id}`} className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -268,6 +270,7 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
       ) : (
         <OrderForm
           podPhotoDefault={podPhotoDefault}
+          stock={stockRes.ok ? stockRes.data : null}
           closeHref={`/dieu-phoi/don-hang/${o.id}`}
           edit={edit}
           canCreate={o.status === "open" && me.permissions.has("dispatch.create")}

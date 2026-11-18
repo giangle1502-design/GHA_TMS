@@ -28,6 +28,8 @@ export type SuggestionRow = {
   customer_name: string | null;
   is_completed: boolean;
   customer_id: string | null;
+  /** Đơn / chuyến chọn Nhập / Xuất kho GHA nhưng chưa chọn vị trí GHA1 / GHA2 */
+  needs_bin?: boolean | null;
   items: { product_id: string | null; item_code: string | null; item_name: string | null; quantity: number | null; unit: string | null }[];
 };
 
@@ -122,7 +124,12 @@ export function ShipmentSuggestions(props: { tu: string; den: string; rows: Sugg
                   </td>
                   <td className="px-2 py-1.5">
                     <Badge variant={KIND[r.kind]?.variant ?? "info"}>{KIND[r.kind]?.label ?? r.kind}</Badge>
-                    {!r.is_completed ? <div className="mt-1 text-xs text-muted-foreground">Tự lập khi chuyến hoàn thành</div> : null}
+                    {r.needs_bin ? (
+                      <Link href={`/chuyen-xe/${r.shipment_id}#lam-thay`} className="mt-1 block text-xs text-amber-700 underline">
+                        Chưa chọn vị trí
+                      </Link>
+                    ) : null}
+                    {!r.is_completed && !r.needs_bin ? <div className="mt-1 text-xs text-muted-foreground">Tự lập khi chuyến hoàn thành</div> : null}
                   </td>
                   <td className="px-2 py-1.5">
                     {r.pickup_name} → {r.delivery_name}

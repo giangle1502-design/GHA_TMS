@@ -22,6 +22,8 @@ import { formatNumber, formatVND, todayVN } from "@/lib/format";
 import { parseNumberVN, systemLabel, systemSettingsOf } from "@/lib/entities/record";
 import { PRICING_UNITS } from "@/lib/status";
 import { VehicleSourcePicker, type VehicleSource } from "@/components/dispatch/vehicle-source-picker";
+import { setStockTarget, type StockTargetOptions } from "@/lib/inventory/actions";
+import { StockTargetSelect } from "@/components/inventory/stock-target-select";
 import { createOrder, customerDefaultPayer, quoteShipment, updateOrderFull, vehicleDefaultDriver, type QuoteResult } from "../actions";
 import { shipmentStatus } from "@/lib/status";
 import { normalizeContainerNo } from "@/lib/shipment-container";
@@ -258,7 +260,10 @@ export function OrderForm({
   closeHref,
   podPhotoDefault = true,
   duplicateOf,
+  stock,
 }: {
+  /** Ô "Kho GHA" (nhập vào / xuất từ GHA1, GHA2): chỉ người có quyền lập phiếu kho */
+  stock?: StockTargetOptions | null;
   /** Sửa đơn: mở sẵn một chuyến mới giống chuyến này (nút Nhân bản ở trang chuyến / Quản lý chuyến) */
   duplicateOf?: string;
   /** Đơn mới mặc định tích "Khách yêu cầu chụp chứng từ" */
@@ -305,6 +310,13 @@ export function OrderForm({
   };
   const [orderDate, setOrderDate] = useState(edit?.orderDate ?? todayVN());
   const [notes, setNotes] = useState(edit?.notes ?? "");
+  const [stockValue, setStockValue] = useState(stock?.value ?? "");
+  /** Lưu ô Kho GHA sau khi lưu đơn; lỗi chỉ cảnh báo (đơn đã lưu) */
+  const saveStock = async (orderId: string) => {
+    if (!stock || stockValue === stock.value) return;
+    const r = await setStockTarget({ orderId, value: stockValue });
+    if (!r.ok) toast.warning(`Đã lưu đơn nhưng chưa lưu được vị trí kho GHA: ${r.error}`, { duration: 15000 });
+  };
   const [orderCustom, setOrderCustom] = useState<Record<string, unknown>>(() =>
     edit
       ? pick(
@@ -402,6 +414,7 @@ export function OrderForm({
         if (err) fileErrors.push(`Chuyến ${i + 1}: ${err}`);
       }
       if (fileErrors.length) toast.warning(fileErrors.join(" "), { duration: 15000 });
+      await saveStock(e.id);
       const extra = [r.data.created ? `thêm ${r.data.created} chuyến` : "", r.data.cancelled ? `hủy ${r.data.cancelled} chuyến` : ""].filter(Boolean).join(", ");
       toast.success(`Đã lưu đơn ${e.code}${extra ? ` (${extra})` : ""}.`);
       if (r.data.warning) toast.warning(r.data.warning, { duration: 15000 });
@@ -431,6 +444,7 @@ export function OrderForm({
         otherOrders: rows.flatMap((s) => (s.vehicleId ? (s.vehicleDay?.others ?? []) : [])),
       });
       if (!r.ok || !r.data) return void toast.error(r.ok ? "Không lưu được đơn hàng" : r.error);
+      if (!order) await saveStock(r.data.order_id);
       const fileErrors: string[] = [];
       for (const [i, s] of rows.entries()) {
         const sid = r.data.shipments[i]?.id;
@@ -522,6 +536,15 @@ export function OrderForm({
                 ),
               }}
             />
+            {stock ? (
+              <div className="grid gap-1.5 sm:max-w-md">
+                <Label htmlFor="order-stock">Kho GHA (vị trí GHA1 / GHA2)</Label>
+                <StockTargetSelect id="order-stock" bins={stock.bins} value={stockValue} onChange={setStockValue} />
+                <p className="text-xs text-muted-foreground">
+                  Hàng về bãi GHA chọn Nhập, lấy hàng ở bãi GHA chọn Xuất. Khi chuyến hoàn thành tự lập phiếu kho vào vị trí này; chưa chọn vị trí thì hỏi lúc bấm Hoàn thành.
+                </p>
+              </div>
+            ) : null}
             {canAddField ? <AddFieldButton module="transport_orders" customRows={orderFieldRows} label="Thêm trường cho đơn hàng" /> : null}
           </CardContent>
         </Card>

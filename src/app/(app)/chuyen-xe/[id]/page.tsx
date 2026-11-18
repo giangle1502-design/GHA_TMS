@@ -28,6 +28,8 @@ import { CustomFieldsCard } from "./custom-fields-card";
 import { formulaVars } from "@/lib/entities/definitions";
 import { TripCostsCard, type TripCost } from "./trip-costs-card";
 import { ActForDriver } from "./act-for-driver";
+import { ShipmentStockTarget } from "./stock-target";
+import { stockTargetOptions } from "@/lib/inventory/actions";
 import { EditShipmentDialog } from "./edit-shipment-dialog";
 import { QuickFreightButton } from "@/components/dispatch/quick-freight-dialog";
 import { ItemsCard, type ShipmentItem } from "./items-card";
@@ -292,6 +294,9 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   const canActForDriver =
     me.permissions.has("dispatch.update") && Boolean(s.driver_id) && ["assigned", "accepted", "in_transit"].includes(s.status) && !approvalBlocked;
   // Chuyến chạy nhà xe 3PL: xe thuê ngoài, xe có nhà xe, hoặc chuyến đã ghi nhà xe 3PL
+  // Kho GHA của chuyến (chỉ người có quyền lập phiếu kho; CSDL chưa nâng cấp 9026 thì ẩn)
+  const stockRes = s.status !== "cancelled" && s.status !== "rejected" ? await stockTargetOptions({ shipmentId: s.id }) : null;
+  const stock = stockRes?.ok ? stockRes.data : null;
   const is3pl = x.vehicle?.ownership_type === "outsourced" || Boolean(x.vehicle?.supplier_id) || Boolean(x.carrier_supplier_id);
 
   return (
@@ -744,6 +749,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                 driverName={s.driver_name ?? ""}
                 outsourced={is3pl}
                 canUpload={me.permissions.has("documents.create")}
+                stock={stock}
               />
             ) : me.permissions.has("dispatch.update") && approvalBlocked && s.driver_id ? (
               <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
@@ -751,6 +757,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                 {s.dispatch_approval === "rejected" ? " (chuyến đang bị từ chối, sửa rồi Gửi duyệt lại)" : " (chuyến đang Chờ GĐ duyệt)"}.
               </p>
             ) : null}
+            {stock ? <ShipmentStockTarget key={stock.value} shipmentId={s.id} stock={stock} /> : null}
             {x.photo_skip_reason ? (
               <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-900">
                 Hoàn thành khi chưa có ảnh, chứng từ. Lý do: <b>{x.photo_skip_reason}</b>. Bấm nút Chứng từ ở trên để tải bổ sung.

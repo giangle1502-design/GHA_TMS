@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label, NativeSelect, Textarea } from "@/components/ui/input";
 import { actForDriver } from "@/app/(app)/dieu-phoi/actions";
 import { uploadStaffDocuments, type StaffFile } from "@/components/finance/upload";
+import { StockTargetSelect } from "@/components/inventory/stock-target-select";
+import { setStockTarget, type StockTargetOptions } from "@/lib/inventory/actions";
 
 const RESULTS = [
   { value: "full", label: "Giao đủ" },
@@ -15,10 +17,19 @@ const RESULTS = [
   { value: "failed", label: "Không giao được" },
 ] as const;
 
-type Props = { shipmentId: string; code: string; status: string; driverName: string; outsourced: boolean; canUpload: boolean };
+type Props = {
+  shipmentId: string;
+  code: string;
+  status: string;
+  driverName: string;
+  outsourced: boolean;
+  canUpload: boolean;
+  /** Kho GHA của chuyến (người có quyền lập phiếu kho): hỏi GHA1 / GHA2 khi hoàn thành */
+  stock?: StockTargetOptions | null;
+};
 
 /** Điều phối làm thay tài xế các bước trên điện thoại: nhận đơn → bắt đầu chạy → hoàn thành */
-export function ActForDriver({ shipmentId, code, status, driverName, outsourced, canUpload }: Props) {
+export function ActForDriver({ shipmentId, code, status, driverName, outsourced, canUpload, stock }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -55,6 +66,7 @@ export function ActForDriver({ shipmentId, code, status, driverName, outsourced,
           code={code}
           outsourced={outsourced}
           canUpload={canUpload}
+          stock={stock ?? null}
           onClose={(done) => {
             setOpen(false);
             if (done) router.refresh();
@@ -65,7 +77,25 @@ export function ActForDriver({ shipmentId, code, status, driverName, outsourced,
   );
 }
 
-function CompleteDialog({ shipmentId, code, outsourced, canUpload, onClose }: { shipmentId: string; code: string; outsourced: boolean; canUpload: boolean; onClose: (done: boolean) => void }) {
+function CompleteDialog({
+  shipmentId,
+  code,
+  outsourced,
+  canUpload,
+  stock,
+  onClose,
+}: {
+  shipmentId: string;
+  code: string;
+  outsourced: boolean;
+  canUpload: boolean;
+  stock: StockTargetOptions | null;
+  onClose: (done: boolean) => void;
+}) {
+  const [stockValue, setStockValue] = useState(stock?.value ?? "");
+  const [stockSaved, setStockSaved] = useState(false);
+  // Đơn / chuyến chọn Nhập / Xuất kho GHA mà chưa có vị trí: bắt buộc chọn GHA1 / GHA2
+  const stockNeedsBin = /^(receipt|issue):$/.test(stockValue);
   const [files, setFiles] = useState<StaffFile[]>([]);
   const [docType, setDocType] = useState<StaffFile["docType"]>("delivery_note");
   const [result, setResult] = useState<(typeof RESULTS)[number]["value"]>("full");
@@ -83,6 +113,12 @@ function CompleteDialog({ shipmentId, code, outsourced, canUpload, onClose }: { 
       if (!files.length && !uploaded && !skipReason.trim()) return setError("Tải ít nhất 1 ảnh hàng hoặc phiếu ký nhận, hoặc ghi lý do chưa có chứng từ.");
       if (result !== "full" && !note.trim()) return setError("Ghi lý do giao thiếu / không giao được.");
       if (!outsourced && !expenseMode) return setError('Chọn "Có chi phí" hoặc "Không phát sinh chi phí".');
+      if (stock && stockNeedsBin) return setError("Chọn vị trí kho GHA1 / GHA2 cho hàng nhập / xuất kho.");
+      if (stock && stockValue !== stock.value && !stockSaved) {
+        const k = await setStockTarget({ shipmentId, value: stockValue });
+        if (!k.ok) return setError(`Chưa lưu được vị trí kho: ${k.error}`);
+        setStockSaved(true);
+      }
       if (files.length && !uploaded) {
         const u = await uploadStaffDocuments("shipment", shipmentId, files);
         if (!u.ok) return setError(u.error);
@@ -215,6 +251,27 @@ function CompleteDialog({ shipmentId, code, outsourced, canUpload, onClose }: { 
             {expenseMode === "has" ? <p className="mt-1 text-xs text-muted-foreground">Sau khi lưu, nhập từng khoản ở mục Chi phí chuyến bằng nút &quot;Nhập chi phí&quot;. Hóa đơn chi phí không bắt buộc.</p> : null}
           </div>
         )}
+
+        {stock && (stock.value || stock.viaLocation || stock.needsBin) ? (
+          <div className={`space-y-1.5 rounded-lg border p-2 ${stockNeedsBin ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30" : ""}`}>
+            <Label htmlFor="act-stock">Kho GHA {stockNeedsBin ? "(bắt buộc chọn vị trí)" : ""}</Label>
+            <StockTargetSelect
+              id="act-stock"
+              bins={stock.bins}
+              value={stockValue}
+              onChange={setStockValue}
+              disabled={stockSaved}
+              allowPending={false}
+              emptyLabel={stock.viaLocation ? "Theo địa điểm gắn với kho" : "Chưa chọn"}
+            />
+            <p className="text-xs text-muted-foreground">Hoàn thành chuyến tự lập phiếu nhập / xuất kho vào vị trí này.</p>
+          </div>
+        ) : stock ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="act-stock">Kho GHA (nếu hàng nhập về / lấy ở bãi GHA)</Label>
+            <StockTargetSelect id="act-stock" bins={stock.bins} value={stockValue} onChange={setStockValue} disabled={stockSaved} allowPending={false} emptyLabel="Không chọn" />
+          </div>
+        ) : null}
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <DialogFooter>
