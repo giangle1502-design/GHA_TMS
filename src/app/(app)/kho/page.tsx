@@ -7,6 +7,7 @@ import { CompactDensity } from "@/components/layout/compact-density";
 import { EntityListSection } from "@/components/entities/entity-list-section";
 import { monthRangeYMD, todayVN } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { loadTableView } from "@/lib/entities/server";
 import { StockReport, type StockRow, type BinOption } from "./stock-report";
 import { ShipmentSuggestions, type SuggestionRow } from "./shipment-suggestions";
 
@@ -51,11 +52,17 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     if (tab === "bao-cao") {
       const bin = UUID.test(one(sp.vt)) ? one(sp.vt) : "";
       const byBin = one(sp.gop) !== "1";
-      const { data, error } = await supabase.rpc("stock_balance_report", { p_from: tu, p_to: den, p_bin_id: bin || null, p_by_bin: byBin });
+      const [{ data, error }, view, cardView] = await Promise.all([
+        supabase.rpc("stock_balance_report", { p_from: tu, p_to: den, p_bin_id: bin || null, p_by_bin: byBin }),
+        loadTableView(supabase, "stock_balance", me.id),
+        loadTableView(supabase, "stock_card", me.id),
+      ]);
       if (error) throw error;
-      body = <StockReport tu={tu} den={den} bin={bin} byBin={byBin} bins={bins} rows={(data ?? []) as StockRow[]} canCreate={canCreate} />;
+      body = (
+        <StockReport tu={tu} den={den} bin={bin} byBin={byBin} bins={bins} rows={(data ?? []) as StockRow[]} canCreate={canCreate} view={view} cardView={cardView} />
+      );
     } else {
-      const [sugRes, whRes] = await Promise.all([
+      const [sugRes, whRes, sugView] = await Promise.all([
         supabase
           .from("stock_shipment_suggestions")
           .select("*")
@@ -64,10 +71,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
           .order("trip_date", { ascending: false })
           .limit(1000),
         supabase.from("warehouses").select("id, location_id").eq("is_active", true),
+        loadTableView(supabase, "stock_suggestions", me.id),
       ]);
       if (sugRes.error) throw sugRes.error;
       const linked = bins.some((b) => b.has_location) || (whRes.data ?? []).some((w) => (w as { location_id: string | null }).location_id);
-      body = <ShipmentSuggestions tu={tu} den={den} rows={(sugRes.data ?? []) as SuggestionRow[]} bins={bins} linked={linked} canCreate={canCreate} />;
+      body = <ShipmentSuggestions tu={tu} den={den} rows={(sugRes.data ?? []) as SuggestionRow[]} bins={bins} linked={linked} canCreate={canCreate} view={sugView} />;
     }
   } else {
     body = <EntityListSection entityKey={tab} searchParams={sp} revalidate="/kho" />;
