@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { formatDate, formatNumber } from "@/lib/format";
 import { StockVoucherDialog, type StockKind, type StockVoucherPrefill } from "@/components/inventory/stock-voucher-dialog";
 import type { BinOption } from "./stock-report";
+import { ReportGrid, type ReportColumn } from "@/components/grid/report-grid";
+import type { TableViewConfig } from "@/lib/entities/types";
 
 export type SuggestionRow = {
   shipment_id: string;
@@ -48,7 +50,7 @@ const STATUS: Record<string, string> = {
 };
 
 /** Chuyến có điểm nhận / điểm giao là kho GHA mà chưa lập phiếu kho: bấm Lập phiếu để điền sẵn mã hàng, số lượng, vị trí */
-export function ShipmentSuggestions(props: { tu: string; den: string; rows: SuggestionRow[]; bins: BinOption[]; linked: boolean; canCreate: boolean }) {
+export function ShipmentSuggestions(props: { tu: string; den: string; rows: SuggestionRow[]; bins: BinOption[]; linked: boolean; canCreate: boolean; view: TableViewConfig | null }) {
   const router = useRouter();
   const [tu, setTu] = useState(props.tu);
   const [den, setDen] = useState(props.den);
@@ -72,13 +74,93 @@ export function ShipmentSuggestions(props: { tu: string; den: string; rows: Sugg
     };
   }
 
+  const columns: ReportColumn<SuggestionRow>[] = [
+    { key: "trip_date", label: "Ngày", width: 100, kind: "date", value: (r) => r.trip_date, render: (r) => formatDate(r.trip_date) },
+    {
+      key: "shipment_code",
+      label: "Chuyến",
+      width: 140,
+      value: (r) => r.shipment_code,
+      render: (r) => (
+        <span>
+          <Link href={`/chuyen-xe/${r.shipment_id}`} className="font-medium text-primary hover:underline">
+            {r.shipment_code}
+          </Link>{" "}
+          <span className="text-xs text-muted-foreground">{STATUS[r.status] ?? r.status}</span>
+        </span>
+      ),
+    },
+    {
+      key: "kind",
+      label: "Gợi ý",
+      width: 150,
+      value: (r) => `${KIND[r.kind]?.label ?? r.kind}${r.needs_bin ? " · chưa chọn vị trí" : ""}`,
+      render: (r) => (
+        <span className="flex flex-wrap items-center gap-1">
+          <Badge variant={KIND[r.kind]?.variant ?? "info"}>{KIND[r.kind]?.label ?? r.kind}</Badge>
+          {r.needs_bin ? (
+            <Link href={`/chuyen-xe/${r.shipment_id}#lam-thay`} className="text-xs text-amber-700 underline">
+              Chưa chọn vị trí
+            </Link>
+          ) : !r.is_completed ? (
+            <span className="text-xs text-muted-foreground">tự lập khi xong</span>
+          ) : null}
+        </span>
+      ),
+    },
+    { key: "route", label: "Điểm nhận → Điểm giao", width: 260, value: (r) => `${r.pickup_name ?? ""} → ${r.delivery_name ?? ""}` },
+    { key: "vehicle", label: "Xe / cont", width: 160, value: (r) => [r.plate_number, r.container_no].filter(Boolean).join(" · ") },
+    { key: "order_code", label: "Đơn hàng", width: 120, value: (r) => r.order_code },
+    { key: "customer_name", label: "Khách hàng", width: 180, value: (r) => r.customer_name },
+    {
+      key: "items",
+      label: "Hàng hóa",
+      width: 240,
+      value: (r) => r.items.map((i) => `${i.item_code ?? i.item_name}: ${formatNumber(i.quantity)} ${i.unit ?? ""}`).join("; "),
+      render: (r) =>
+        r.items.length ? (
+          r.items.map((i, k) => (
+            <span key={k} className={i.product_id ? "" : "text-destructive"}>
+              {k ? "; " : ""}
+              {i.item_code ?? i.item_name}: {formatNumber(i.quantity)} {i.unit}
+            </span>
+          ))
+        ) : (
+          <span className="text-muted-foreground">Chưa có mã hàng</span>
+        ),
+    },
+    ...(props.canCreate
+      ? [
+          {
+            key: "action",
+            label: "Lập phiếu",
+            width: 110,
+            value: () => "",
+            render: (r: SuggestionRow) => (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7"
+                onClick={() => {
+                  setOpenKey(r.shipment_id);
+                  setOpen(prefillFor(r));
+                }}
+              >
+                <ClipboardPlus /> Lập phiếu
+              </Button>
+            ),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <>
       {!props.linked ? (
         <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-          Chưa gắn kho với địa điểm nào. Vào tab <Link href="/kho?tab=warehouses" className="underline">Kho</Link> (hoặc{" "}
-          <Link href="/kho?tab=warehouse_bins" className="underline">Vị trí kho</Link>), sửa Kho GHA, chọn ô <b>Địa điểm trong danh mục</b> là điểm nhận / điểm giao
-          của kho GHA trên chuyến xe. Sau đó chuyến giao tới kho GHA hiện ở đây để lập phiếu nhập, chuyến lấy hàng ở kho GHA để lập phiếu xuất.
+          Chưa gắn kho với địa điểm nào: chỉ chuyến của đơn đã chọn ô <b>Kho GHA</b> hiện ở đây. Muốn nhận cả chuyến theo địa điểm, vào tab{" "}
+          <Link href="/kho?tab=warehouses" className="underline">Kho</Link> (hoặc <Link href="/kho?tab=warehouse_bins" className="underline">Vị trí kho</Link>),
+          chọn ô <b>Địa điểm trong danh mục</b> là điểm nhận / điểm giao của kho GHA.
         </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border bg-card p-3">
@@ -93,80 +175,20 @@ export function ShipmentSuggestions(props: { tu: string; den: string; rows: Sugg
         <Button variant="outline" className="h-9" onClick={() => router.push(`/kho?tab=chuyen&tu=${tu}&den=${den}`)} disabled={tu === props.tu && den === props.den}>
           Xem
         </Button>
-        <p className="text-sm text-muted-foreground">
-          {props.rows.length} chuyến chưa có phiếu. Chuyến qua kho GHA tự lập phiếu khi hoàn thành (tài xế đã xong / đã đóng) và tự ẩn khỏi đây; chưa hoàn thành thì chưa cộng / trừ tồn. Chỉ bấm Lập phiếu khi cần ghi khác (VD hàng chưa có mã).
-        </p>
+        <p className="text-sm text-muted-foreground">Chuyến đã lập phiếu tự ẩn khỏi danh sách này.</p>
       </div>
-      {props.rows.length ? (
-        <div className="overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full min-w-[960px] text-sm [&_td]:border-r [&_td:last-child]:border-r-0 [&_th]:border-r [&_th:last-child]:border-r-0">
-            <thead className="bg-muted text-left text-xs">
-              <tr>
-                <th className="px-2 py-2">Ngày</th>
-                <th className="px-2 py-2">Chuyến</th>
-                <th className="px-2 py-2">Gợi ý</th>
-                <th className="px-2 py-2">Điểm nhận → Điểm giao</th>
-                <th className="px-2 py-2">Xe / cont</th>
-                <th className="px-2 py-2">Khách hàng</th>
-                <th className="px-2 py-2">Hàng hóa</th>
-                <th className="px-2 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {props.rows.map((r) => (
-                <tr key={r.shipment_id} className="border-t align-top">
-                  <td className="px-2 py-1.5 whitespace-nowrap">{formatDate(r.trip_date)}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">
-                    <Link href={`/chuyen-xe/${r.shipment_id}`} className="font-medium text-primary hover:underline">
-                      {r.shipment_code}
-                    </Link>
-                    <div className="text-xs text-muted-foreground">{STATUS[r.status] ?? r.status}</div>
-                  </td>
-                  <td className="px-2 py-1.5">
-                    <Badge variant={KIND[r.kind]?.variant ?? "info"}>{KIND[r.kind]?.label ?? r.kind}</Badge>
-                    {r.needs_bin ? (
-                      <Link href={`/chuyen-xe/${r.shipment_id}#lam-thay`} className="mt-1 block text-xs text-amber-700 underline">
-                        Chưa chọn vị trí
-                      </Link>
-                    ) : null}
-                    {!r.is_completed && !r.needs_bin ? <div className="mt-1 text-xs text-muted-foreground">Tự lập khi chuyến hoàn thành</div> : null}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    {r.pickup_name} → {r.delivery_name}
-                  </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{[r.plate_number, r.container_no].filter(Boolean).join(" · ")}</td>
-                  <td className="px-2 py-1.5">{r.customer_name}</td>
-                  <td className="px-2 py-1.5">
-                    {r.items.length
-                      ? r.items.map((i, k) => (
-                          <div key={k} className={i.product_id ? "" : "text-destructive"}>
-                            {i.item_code ?? i.item_name}: {formatNumber(i.quantity)} {i.unit}
-                          </div>
-                        ))
-                      : <span className="text-muted-foreground">Chưa có mã hàng</span>}
-                  </td>
-                  <td className="px-2 py-1.5">
-                    {props.canCreate ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setOpenKey(r.shipment_id);
-                          setOpen(prefillFor(r));
-                        }}
-                      >
-                        <ClipboardPlus /> Lập phiếu
-                      </Button>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : props.linked ? (
-        <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">Không có chuyến qua kho GHA nào chưa lập phiếu trong kỳ này.</div>
-      ) : null}
+      <div className="rounded-lg border bg-card">
+        <ReportGrid
+          tableKey="stock_suggestions"
+          rows={props.rows}
+          columns={columns}
+          view={props.view}
+          getRowId={(r) => r.shipment_id}
+          defaultPinned={["trip_date", "shipment_code"]}
+          searchPlaceholder="Tìm chuyến, xe, cont, mã hàng…"
+          emptyText="Không có chuyến qua kho GHA nào chưa lập phiếu trong kỳ này."
+        />
+      </div>
       {open ? (
         <StockVoucherDialog key={openKey} open onOpenChange={(o) => !o && setOpen(null)} onDone={() => router.refresh()} prefill={open} />
       ) : null}

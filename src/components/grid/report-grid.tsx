@@ -54,7 +54,15 @@ export function ReportGrid<T>({
   toolbar,
   onExport,
   onPrint,
+  onRowClick,
+  rowTitle,
+  footer,
 }: {
+  /** Bấm một dòng (ví dụ mở thẻ kho) */
+  onRowClick?: (r: T) => void;
+  rowTitle?: string;
+  /** Dòng tổng cuối bảng: giá trị theo key cột cho các dòng đang lọc (cột không có thì để trống) */
+  footer?: (rows: T[]) => Partial<Record<string, ReactNode>> | null;
   tableKey: string;
   rows: T[];
   columns: ReportColumn<T>[];
@@ -159,6 +167,7 @@ export function ReportGrid<T>({
     return col.getIsPinned() ? { ...size, position: "sticky", left: col.getStart("left"), zIndex: header ? 30 : 10 } : size;
   }
   const tall = rowHeight !== null && rowHeight >= 52;
+  const foot = footer && filtered.length ? footer(filtered) : null;
 
   return (
     <>
@@ -293,7 +302,13 @@ export function ReportGrid<T>({
             </thead>
             <tbody>
               {table.getRowModel().rows.map((row) => (
-                <tr key={row.id} style={rowHeight ? { height: rowHeight } : undefined} className="group">
+                <tr
+                  key={row.id}
+                  style={rowHeight ? { height: rowHeight } : undefined}
+                  className={cn("group", onRowClick && "cursor-pointer")}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  title={rowTitle}
+                >
                   {row.getVisibleCells().map((cell, ci) => {
                     const c = meta(cell.column);
                     return (
@@ -330,6 +345,24 @@ export function ReportGrid<T>({
                 </tr>
               ))}
             </tbody>
+            {foot ? (
+              <tfoot className="sticky bottom-0 z-20">
+                <tr>
+                  {table.getVisibleLeafColumns().map((col) => {
+                    const c = meta(col);
+                    return (
+                      <td
+                        key={col.id}
+                        style={pinStyle(col)}
+                        className={cn("truncate border-t-2 border-r bg-muted px-2 py-2 font-semibold whitespace-nowrap", c.align === "right" && "text-right tabular-nums")}
+                      >
+                        {foot[col.id] ?? ""}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tfoot>
+            ) : null}
           </table>
         </div>
       )}
