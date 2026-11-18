@@ -22,6 +22,7 @@ export type StockVoucherPrefill = {
   partner?: string;
   notes?: string;
   shipment_id?: string;
+  owner_customer_id?: string | null;
   /** Tiêu đề phụ (VD: Chuyến SHD-000123 · Kho VAP → Kho GHA) */
   source?: string;
   lines?: { product_id: string | null; quantity: number | null; label?: string }[];
@@ -81,6 +82,7 @@ export function StockVoucherDialog({
   const [refNo, setRefNo] = useState(prefill?.ref_no ?? "");
   const [partner, setPartner] = useState(prefill?.partner ?? "");
   const [note, setNote] = useState(prefill?.notes ?? "");
+  const [owner, setOwner] = useState(prefill?.owner_customer_id ?? "");
   const [lines, setLines] = useState<Line[]>(() =>
     prefill?.lines?.length ? prefill.lines.map((l) => newLine({ product: l.product_id ?? "", qty: l.quantity, label: l.label })) : [newLine()],
   );
@@ -90,17 +92,17 @@ export function StockVoucherDialog({
   const outgoing = kind === "issue" || kind === "transfer";
 
   // Tồn hiện có tại vị trí xuất (đến ngày phiếu) để cảnh báo xuất quá tồn
-  const stockKey = `${bin}|${date}`;
+  const stockKey = `${bin}|${date}|${owner}`;
   useEffect(() => {
     if (!open || !outgoing || !bin) return;
     let live = true;
-    stockOnHand(bin, date).then((r) => {
-      if (live && r.ok) setStock({ key: `${bin}|${date}`, data: r.data ?? {} });
+    stockOnHand(bin, date, owner).then((r) => {
+      if (live && r.ok) setStock({ key: `${bin}|${date}|${owner}`, data: r.data ?? {} });
     });
     return () => {
       live = false;
     };
-  }, [open, outgoing, bin, date]);
+  }, [open, outgoing, bin, date, owner]);
   const onHand = outgoing && bin && stock?.key === stockKey ? stock.data : null;
 
   const unmatched = lines.filter((l) => !l.product && l.label);
@@ -123,6 +125,7 @@ export function StockVoucherDialog({
         partner,
         notes: note,
         shipment_id: prefill?.shipment_id ?? "",
+        owner_customer_id: owner,
         lines: ok.map((l) => ({ product_id: l.product, quantity: l.qty! })),
       });
       if (!r.ok) {
@@ -175,6 +178,9 @@ export function StockVoucherDialog({
               <Input id="sv-no" className="h-9" value={voucherNo} maxLength={50} onChange={(e) => setVoucherNo(e.target.value)} />
             </Field>
           )}
+          <Field label="Công ty chủ hàng" htmlFor="sv-owner" help="VD Việt An Pha. Để trống thì lấy theo chủ hàng của mã hàng. Tồn kho tách theo công ty.">
+            <ReferenceSelect id="sv-owner" refKey="customers" value={owner} onChange={(v) => setOwner(v)} />
+          </Field>
           <Field label="Số chứng từ" htmlFor="sv-ref" help="VD: số PXK, phiếu chuyển kho Ecount, số chuyến.">
             <Input id="sv-ref" className="h-9" value={refNo} maxLength={100} onChange={(e) => setRefNo(e.target.value)} />
           </Field>

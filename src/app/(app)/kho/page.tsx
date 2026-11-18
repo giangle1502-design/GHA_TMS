@@ -23,13 +23,17 @@ const TABS = [
   { key: "stock_entries", label: "Phiếu nhập, xuất, tồn đầu kỳ" },
   { key: "warehouse_bins", label: "Vị trí kho" },
   { key: "warehouses", label: "Kho" },
+  { key: "warehouse_bin_suppliers", label: "3PL xem tồn kho" },
 ];
 
 /** Kho GHA (nội bộ): tồn đầu kỳ, phiếu nhập, xuất, chuyển vị trí GHA1 ↔ GHA2, báo cáo xuất nhập tồn để đối chiếu hàng (LE 18/11/2026) */
 export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
   const me = await requirePagePermission("inventory.view");
   const sp = await searchParams;
-  const tab = TABS.find((t) => t.key === one(sp.tab))?.key ?? "bao-cao";
+  const canCreate0 = me.permissions.has("inventory.create");
+  // Người chỉ có quyền xem (VD tài khoản nhà xe 3PL) chỉ thấy báo cáo tồn
+  const tabs = canCreate0 ? TABS : TABS.filter((t) => t.key === "bao-cao");
+  const tab = tabs.find((t) => t.key === one(sp.tab))?.key ?? "bao-cao";
   const month = monthRangeYMD(todayVN());
   let tu = YMD.test(one(sp.tu)) ? one(sp.tu) : month.tu;
   let den = YMD.test(one(sp.den)) ? one(sp.den) : month.den;
@@ -74,10 +78,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
       <CompactDensity />
       <PageHeader
         title="Kho GHA nhập xuất tồn"
-        description="Theo dõi hàng trong Kho GHA theo vị trí GHA1, GHA2: nhập tồn đầu kỳ một lần lúc bắt đầu theo dõi, sau đó lập phiếu nhập / xuất (hoặc lập từ chuyến xe giao tới, lấy hàng ở kho GHA), xem báo cáo xuất nhập tồn theo kỳ để đối chiếu. Chỉ tài khoản nội bộ GHA thấy phần này."
+        description={
+          canCreate0
+            ? "Theo dõi hàng trong Kho GHA theo vị trí GHA1, GHA2 và theo công ty chủ hàng: nhập tồn đầu kỳ một lần, sau đó chuyến giao tới / lấy hàng ở kho GHA tự lập phiếu nhập / xuất khi chuyến hoàn thành. Báo cáo xuất nhập tồn theo kỳ để đối chiếu. Tài khoản khách hàng không thấy phần này."
+            : "Tồn kho của vị trí được cấp quyền xem."
+        }
       />
       <div className="mb-4 flex gap-1 overflow-x-auto border-b">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <Link
             key={t.key}
             href={`/kho?tab=${t.key}`}

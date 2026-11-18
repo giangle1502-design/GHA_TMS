@@ -23,6 +23,7 @@ export type StockRow = {
   product_code: string;
   product_name: string;
   unit: string | null;
+  owner_customer_id: string | null;
   owner_name: string | null;
   opening_qty: number;
   in_qty: number;
@@ -40,6 +41,8 @@ export function StockReport(props: { tu: string; den: string; bin: string; byBin
   const [den, setDen] = useState(props.den);
   const [q, setQ] = useState("");
   const [onlyStock, setOnlyStock] = useState(false);
+  const [owner, setOwner] = useState("");
+  const owners = useMemo(() => [...new Map(props.rows.map((r) => [r.owner_customer_id ?? "", r.owner_name ?? "Chưa ghi công ty"])).entries()], [props.rows]);
   const [dialog, setDialog] = useState<StockKind | null>(null);
   const [card, setCard] = useState<StockRow | null>(null);
 
@@ -65,9 +68,10 @@ export function StockReport(props: { tu: string; den: string; bin: string; byBin
     return props.rows.filter(
       (r) =>
         (!onlyStock || n(r.closing_qty) !== 0) &&
+        (!owner || (r.owner_customer_id ?? "-") === owner) &&
         (!term || `${r.product_code} ${r.product_name} ${r.owner_name ?? ""} ${r.bin_code ?? ""}`.toLowerCase().includes(term)),
     );
-  }, [props.rows, q, onlyStock]);
+  }, [props.rows, q, onlyStock, owner]);
   const units = [...new Set(shown.map((r) => r.unit ?? ""))];
   const sameUnit = units.length === 1;
   const sum = (k: keyof StockRow) => shown.reduce((a, r) => a + n(r[k]), 0);
@@ -80,7 +84,7 @@ export function StockReport(props: { tu: string; den: string; bin: string; byBin
       filename: `Xuat-nhap-ton-kho-GHA-${props.tu}-${props.den}.xlsx`,
       sheet: "Xuất nhập tồn",
       title: "BÁO CÁO XUẤT NHẬP TỒN KHO GHA",
-      subtitle: `${period} · ${binLabel}`,
+      subtitle: `${period} · ${binLabel}${owner ? ` · ${owners.find(([id]) => (id || "-") === owner)?.[1] ?? ""}` : ""}`,
       columns: [
         ...(props.byBin ? [{ label: "Vị trí", width: 10 }] : []),
         { label: "Mã hàng", width: 16 },
@@ -147,6 +151,17 @@ export function StockReport(props: { tu: string; den: string; bin: string; byBin
             {props.bins.map((b) => (
               <option key={b.id} value={b.id}>
                 Chỉ {b.code} · {b.warehouse_name}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="k-cty">Công ty chủ hàng</Label>
+          <NativeSelect id="k-cty" className="h-9 min-w-44" value={owner} onChange={(e) => setOwner(e.target.value)}>
+            <option value="">-- Tất cả công ty --</option>
+            {owners.map(([id, name]) => (
+              <option key={id || "-"} value={id || "-"}>
+                {name}
               </option>
             ))}
           </NativeSelect>
@@ -220,7 +235,7 @@ export function StockReport(props: { tu: string; den: string; bin: string; byBin
               <tbody>
                 {shown.map((r) => (
                   <tr
-                    key={`${r.bin_id ?? r.warehouse_id}-${r.product_id}`}
+                    key={`${r.bin_id ?? r.warehouse_id}-${r.owner_customer_id ?? ""}-${r.product_id}`}
                     className="cursor-pointer border-t hover:bg-muted/40"
                     onClick={() => setCard(r)}
                     title="Bấm để xem thẻ kho (từng phiếu nhập, xuất)"
@@ -284,7 +299,7 @@ function StockCardDialog({ row, tu, den, byBin, onClose }: { row: StockRow; tu: 
   const [loading, start] = useTransition();
   useEffect(() => {
     start(async () => {
-      const r = await stockCard({ productId: row.product_id, binId: byBin ? row.bin_id : null, warehouseId: row.warehouse_id, tu, den });
+      const r = await stockCard({ productId: row.product_id, binId: byBin ? row.bin_id : null, warehouseId: row.warehouse_id, ownerId: row.owner_customer_id, tu, den });
       if (!r.ok) {
         toast.error(r.error);
         setErr(r.error);
@@ -300,7 +315,7 @@ function StockCardDialog({ row, tu, den, byBin, onClose }: { row: StockRow; tu: 
               Thẻ kho: {row.product_code} · {row.product_name}
             </div>
             <div className="text-sm text-muted-foreground">
-              {byBin ? `Vị trí ${row.bin_code}` : row.warehouse_name} · Từ {formatDate(tu)} đến {formatDate(den)} · ĐVT {row.unit}
+              {byBin ? `Vị trí ${row.bin_code}` : row.warehouse_name} · {row.owner_name} · Từ {formatDate(tu)} đến {formatDate(den)} · ĐVT {row.unit}
             </div>
           </div>
           <Button variant="ghost" size="icon" aria-label="Đóng" onClick={onClose}>

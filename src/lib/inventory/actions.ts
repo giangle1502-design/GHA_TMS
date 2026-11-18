@@ -19,6 +19,7 @@ const voucherSchema = z
     partner: z.string().trim().max(300).optional().default(""),
     notes: z.string().trim().max(1000).optional().default(""),
     shipment_id: z.string().optional().default(""),
+    owner_customer_id: z.string().optional().default(""),
     lines: z
       .array(z.object({ product_id: uuid, quantity: z.number().positive("Số lượng phải lớn hơn 0").max(1e12) }))
       .min(1, "Phiếu chưa có mã hàng nào")
@@ -40,7 +41,8 @@ export async function createStockVoucher(input: StockVoucherInput): Promise<Acti
     const { lines, ...h } = parsed.data;
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("create_stock_voucher", {
-      p_header: { ...h, to_bin_id: h.kind === "transfer" ? h.to_bin_id : "", shipment_id: uuid.safeParse(h.shipment_id).success ? h.shipment_id : "" },
+      p_header: { ...h, to_bin_id: h.kind === "transfer" ? h.to_bin_id : "", shipment_id: uuid.safeParse(h.shipment_id).success ? h.shipment_id : "",
+        owner_customer_id: uuid.safeParse(h.owner_customer_id).success ? h.owner_customer_id : "" },
       p_lines: lines,
     });
     if (error) throw error;
@@ -50,7 +52,7 @@ export async function createStockVoucher(input: StockVoucherInput): Promise<Acti
 }
 
 /** Tồn hiện có của một vị trí đến ngày (để cảnh báo khi xuất quá tồn): { product_id: số lượng } */
-export async function stockOnHand(binId: string, date?: string): Promise<ActionResult<Record<string, number>>> {
+export async function stockOnHand(binId: string, date?: string, ownerId?: string): Promise<ActionResult<Record<string, number>>> {
   return runAction(async () => {
     await requirePermission("inventory.view");
     if (!uuid.safeParse(binId).success) return {};
@@ -59,10 +61,11 @@ export async function stockOnHand(binId: string, date?: string): Promise<ActionR
       p_from: "2000-01-01",
       p_to: date && YMD.test(date) ? date : todayVN(),
       p_bin_id: binId,
+      p_customer_id: ownerId && uuid.safeParse(ownerId).success ? ownerId : null,
     });
     if (error) throw error;
     const out: Record<string, number> = {};
-    for (const r of (data ?? []) as { product_id: string; closing_qty: number }[]) out[r.product_id] = Number(r.closing_qty);
+    for (const r of (data ?? []) as { product_id: string; closing_qty: number }[]) out[r.product_id] = (out[r.product_id] ?? 0) + Number(r.closing_qty);
     return out;
   });
 }
@@ -80,7 +83,7 @@ export type StockCardLine = {
 };
 
 /** Thẻ kho: phát sinh của một mã hàng tại một vị trí (hoặc cả kho) trong kỳ, kèm tồn lũy kế */
-export async function stockCard(input: { productId: string; binId?: string | null; warehouseId?: string | null; tu: string; den: string }): Promise<
+export async function stockCard(input: { productId: string; binId?: string | null; warehouseId?: string | null; ownerId?: string | null; tu: string; den: string }): Promise<
   ActionResult<{ opening: number; lines: StockCardLine[] }>
 > {
   return runAction(async () => {
@@ -103,6 +106,8 @@ export async function stockCard(input: { productId: string; binId?: string | nul
       .limit(20000);
     if (binIds) q = q.in("bin_id", binIds.length ? binIds : ["00000000-0000-0000-0000-000000000000"]);
     if (!byBin) q = q.neq("kind", "transfer");
+    if (input.ownerId && uuid.safeParse(input.ownerId).success) q = q.eq("owner_customer_id", input.ownerId);
+    else q = q.is("owner_customer_id", null);
     const { data, error } = await q;
     if (error) throw error;
     const moves = (data ?? []) as { entry_id: string; entry_date: string; kind: string; voucher_no: string; qty_in: number; qty_out: number }[];

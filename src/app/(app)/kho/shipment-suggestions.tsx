@@ -26,6 +26,8 @@ export type SuggestionRow = {
   order_voucher_no: string | null;
   order_ref_no: string | null;
   customer_name: string | null;
+  is_completed: boolean;
+  customer_id: string | null;
   items: { product_id: string | null; item_code: string | null; item_name: string | null; quantity: number | null; unit: string | null }[];
 };
 
@@ -62,6 +64,7 @@ export function ShipmentSuggestions(props: { tu: string; den: string; rows: Sugg
       ref_no: [r.shipment_code, r.order_voucher_no].filter(Boolean).join(" · ").slice(0, 100),
       partner: [r.plate_number, r.container_no].filter(Boolean).join(" · "),
       shipment_id: r.shipment_id,
+      owner_customer_id: r.customer_id,
       source: `chuyến ${r.shipment_code} · ${r.pickup_name ?? ""} → ${r.delivery_name ?? ""}`,
       lines: r.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity ? Number(i.quantity) : null, label: [i.item_code, i.item_name].filter(Boolean).join(" · ") })),
     };
@@ -89,7 +92,7 @@ export function ShipmentSuggestions(props: { tu: string; den: string; rows: Sugg
           Xem
         </Button>
         <p className="text-sm text-muted-foreground">
-          {props.rows.length} chuyến chưa lập phiếu. Chuyến đã lập phiếu tự ẩn khỏi danh sách này.
+          {props.rows.length} chuyến chưa có phiếu. Chuyến qua kho GHA tự lập phiếu khi hoàn thành (tài xế đã xong / đã đóng) và tự ẩn khỏi đây; chưa hoàn thành thì chưa cộng / trừ tồn. Chỉ bấm Lập phiếu khi cần ghi khác (VD hàng chưa có mã).
         </p>
       </div>
       {props.rows.length ? (
@@ -119,6 +122,7 @@ export function ShipmentSuggestions(props: { tu: string; den: string; rows: Sugg
                   </td>
                   <td className="px-2 py-1.5">
                     <Badge variant={KIND[r.kind]?.variant ?? "info"}>{KIND[r.kind]?.label ?? r.kind}</Badge>
+                    {!r.is_completed ? <div className="mt-1 text-xs text-muted-foreground">Tự lập khi chuyến hoàn thành</div> : null}
                   </td>
                   <td className="px-2 py-1.5">
                     {r.pickup_name} → {r.delivery_name}
