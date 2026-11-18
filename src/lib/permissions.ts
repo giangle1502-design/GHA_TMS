@@ -33,6 +33,7 @@ export const MODULE_ACTIONS = {
   carriers: ["view"],
   overhead: ["view", "create", "update", "delete", "export"],
   statements: ["view", "export"],
+  inventory: ["view", "create", "update", "delete", "export"],
 } as const;
 
 type ModuleActions = typeof MODULE_ACTIONS;
@@ -77,6 +78,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   carriers: "Nhà xe 3-PL",
   overhead: "Chi phí ngoài chuyến, báo cáo thuế",
   statements: "Bảng kê cước (tài khoản khách)",
+  inventory: "Kho GHA (nhập xuất tồn)",
 };
 
 export const ACTION_LABELS: Record<string, string> = {

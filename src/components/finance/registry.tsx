@@ -7,6 +7,7 @@ import { CreateLeaveDialog, HandoverRowActions, LeaveRowActions } from "@/compon
 import { CreateTaskDialog, TaskRowActions } from "@/components/tasks/task-dialogs";
 import { CreatePurchaseRequestDialog, PurchaseRowActions } from "./purchase-dialogs";
 import { PlanTick } from "@/components/plans/plan-tick";
+import { CreateStockVoucherDialog } from "@/components/inventory/stock-voucher-dialog";
 import { BillingRowActions, CarrierRowActions, PayableRowActions, PaymentRowActions, PayrollRowActions, ReceivableRowActions } from "./payroll-debt-actions";
 
 /** Biểu mẫu nghiệp vụ thay cho biểu mẫu chung khi bấm "Tạo …" trên bảng (EntityDef.createAction) */
@@ -19,6 +20,7 @@ export const CREATE_ACTIONS: Record<string, ComponentType<CreateActionProps>> = 
   leave: CreateLeaveDialog,
   task: CreateTaskDialog,
   purchase_request: CreatePurchaseRequestDialog,
+  stock_voucher: CreateStockVoucherDialog,
 };
 
 /** Nút thao tác trên từng dòng (EntityDef.rowActions) */

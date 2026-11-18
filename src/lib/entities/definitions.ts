@@ -184,6 +184,107 @@ export const VAT_RATE_OPTIONS = [
   { value: "KKKNT", label: "KKKNT (không kê khai, tính nộp)" },
 ];
 
+/** Kho GHA – nhập, xuất, tồn (GHA 9024, LE 18/11/2026). Chỉ tài khoản nội bộ (quyền inventory.*), khách hàng không thấy. */
+export const STOCK_KIND_OPTIONS: Option[] = [
+  { value: "opening", label: "Tồn đầu kỳ", tone: "purple" },
+  { value: "receipt", label: "Nhập kho", tone: "green" },
+  { value: "issue", label: "Xuất kho", tone: "amber" },
+  { value: "transfer", label: "Chuyển vị trí", tone: "blue" },
+];
+
+const WAREHOUSES: EntityDef = {
+  key: "warehouses",
+  table: "warehouses",
+  label: "Kho",
+  singular: "kho",
+  perm: "inventory",
+  hasExport: true,
+  autoCode: true,
+  search: ["code", "name", "address"],
+  defaultSort: { key: "sort_order" },
+  labelCols: ["name"],
+  activeFilter: { col: "is_active", value: true },
+  fields: [
+    code(true, { help: "Để trống thì tự đặt mã KHO01…" }),
+    { key: "name", label: "Tên kho", type: "text", required: true, list: true, maxLength: 150, placeholder: "VD: Kho GHA" },
+    {
+      key: "location_id", label: "Địa điểm trong danh mục", type: "reference", ref: "locations", list: true,
+      help: "Điểm nhận / điểm giao ứng với kho này. Chuyến giao tới địa điểm này được gợi ý lập phiếu nhập, chuyến lấy hàng ở đây được gợi ý lập phiếu xuất.",
+    },
+    { key: "address", label: "Địa chỉ", type: "text", list: true, wide: true, maxLength: 500 },
+    { ...sortOrder, list: true },
+    isActive,
+    notes,
+  ],
+};
+
+const WAREHOUSE_BINS: EntityDef = {
+  key: "warehouse_bins",
+  table: "warehouse_bins",
+  label: "Vị trí kho",
+  singular: "vị trí",
+  perm: "inventory",
+  hasExport: true,
+  autoCode: true,
+  search: ["code", "name"],
+  defaultSort: { key: "sort_order" },
+  labelCols: ["code", "name"],
+  quickFields: ["warehouse_id", "code", "name"],
+  activeFilter: { col: "is_active", value: true },
+  fields: [
+    { key: "warehouse_id", label: "Kho", type: "reference", ref: "warehouses", required: true, list: true, filter: true },
+    code(true, { help: "Mã vị trí, VD GHA1, GHA2. Để trống thì tự đặt VT01…" }),
+    { key: "name", label: "Tên vị trí", type: "text", required: true, list: true, maxLength: 150, placeholder: "VD: Vị trí GHA1" },
+    {
+      key: "location_id", label: "Địa điểm trong danh mục", type: "reference", ref: "locations", list: true,
+      help: "Không bắt buộc. Nếu điểm nhận / điểm giao trên chuyến ghi riêng vị trí này thì chọn ở đây để gợi ý đúng vị trí khi lập phiếu từ chuyến.",
+    },
+    { ...sortOrder, list: true },
+    isActive,
+    notes,
+  ],
+};
+
+const STOCK_ENTRIES: EntityDef = {
+  key: "stock_entries",
+  table: "stock_entries",
+  label: "Phiếu nhập, xuất kho",
+  singular: "dòng phiếu kho",
+  perm: "inventory",
+  hasExport: true,
+  createAction: "stock_voucher",
+  statusTabs: "kind",
+  search: ["voucher_no", "ref_no", "partner", "notes"],
+  defaultSort: { key: "entry_date", desc: true },
+  labelCols: ["voucher_no"],
+  importExamples: [
+    { entry_date: "31/10/2026", kind: "Tồn đầu kỳ", bin_id: "GHA1", product_id: "HDPEF1", quantity: "125,000" },
+    { entry_date: "31/10/2026", kind: "Tồn đầu kỳ", bin_id: "GHA2", product_id: "HDPEF1", quantity: "50,000" },
+    { entry_date: "05/11/2026", kind: "Nhập kho", voucher_no: "PN-2611-001", bin_id: "GHA1", product_id: "HDPEF1", quantity: "25,500", ref_no: "PCK261103004" },
+    { entry_date: "06/11/2026", kind: "Xuất kho", bin_id: "GHA1", product_id: "HDPEF1", quantity: "10,000", ref_no: "PXK0001" },
+  ],
+  fields: [
+    { key: "entry_date", label: "Ngày", type: "date", required: true, list: true, defaultValue: "today" },
+    {
+      key: "kind", label: "Loại phiếu", type: "select", required: true, list: true, filter: true, defaultValue: "receipt", options: STOCK_KIND_OPTIONS,
+      help: "Tồn đầu kỳ: số hàng đang có trong kho lúc bắt đầu theo dõi. Chuyển vị trí: chuyển hàng giữa GHA1 và GHA2.",
+    },
+    {
+      key: "voucher_no", label: "Số phiếu", type: "text", list: true, maxLength: 50, placeholder: "Để trống để tự sinh",
+      help: "Để trống thì tự đặt: PN-2611-001 (nhập), PX-… (xuất), CK-… (chuyển), DK-261031 (tồn đầu kỳ theo ngày). Nhiều dòng cùng số phiếu là một phiếu.",
+    },
+    { key: "bin_id", label: "Vị trí", type: "reference", ref: "warehouse_bins", required: true, list: true, filter: true, help: "Vị trí nhập vào / xuất ra. Chuyển vị trí: vị trí chuyển đi." },
+    { key: "to_bin_id", label: "Chuyển tới vị trí", type: "reference", ref: "warehouse_bins", list: true, showIf: { field: "kind", in: ["transfer"] } },
+    { key: "product_id", label: "Mã hàng", type: "reference", ref: "products", required: true, list: true, filter: true },
+    { key: "quantity", label: "Số lượng", type: "number", required: true, min: 0, list: true },
+    { key: "unit", label: "ĐVT", type: "text", list: true, maxLength: 30, placeholder: "Theo mã hàng", help: "Để trống thì lấy theo danh mục mã hàng." },
+    { key: "owner_customer_id", label: "Chủ hàng", type: "reference", ref: "customers", list: true, filter: true, help: "Để trống thì lấy theo chủ hàng của mã hàng." },
+    { key: "ref_no", label: "Số chứng từ", type: "text", list: true, maxLength: 100, placeholder: "VD: số PXK, phiếu chuyển kho Ecount, shipment" },
+    { key: "partner", label: "Người / đơn vị giao, nhận", type: "text", list: true, maxLength: 300 },
+    notes,
+  ],
+};
+
 /** Sổ hóa đơn bán ra (GHA xuất cho khách) / mua vào (nhà cung cấp xuất cho GHA), GHA 9012 */
 const DIRECTION_OPTIONS: Option[] = [
   { value: "purchase", label: "Mua vào (chi phí)", tone: "amber" },
@@ -1907,6 +2008,9 @@ export const ENTITIES: Record<string, EntityDef> = {
   },
   // ---------------------------------------------------------------- Sổ hóa đơn bán ra / mua vào, cân đối thuế (GHA 9012)
   tax_invoices: TAX_INVOICE,
+  warehouses: WAREHOUSES,
+  warehouse_bins: WAREHOUSE_BINS,
+  stock_entries: STOCK_ENTRIES,
   tax_invoice_categories: TAX_INVOICE_CATEGORIES,
   report_tax_invoice_month: {
     key: "report_tax_invoice_month",
