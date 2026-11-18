@@ -89,6 +89,8 @@ export function homePathFor(user: CurrentUser): string {
   if (user.permissions.has("dashboard.view")) return "/tong-quan";
   // Tài khoản khách chỉ xem bảng kê
   if (user.permissions.has("statements.view") && !user.permissions.has("shipments.view")) return "/chuyen-xe/bang-ke";
+  // Tài khoản nhà xe 3PL: trang đăng ký xe
+  if (user.permissions.has("carrier_portal.use") && !user.permissions.has("dispatch.view")) return "/nha-xe";
   if (user.isDriver) return "/tx";
   return "/tai-khoan";
 }

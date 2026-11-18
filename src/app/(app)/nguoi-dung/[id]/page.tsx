@@ -14,6 +14,7 @@ import { formatDateTime } from "@/lib/format";
 import { UserRolesForm } from "./user-roles-form";
 import { OverrideForm, RemoveOverrideButton } from "./override-form";
 import { UserCustomersForm } from "./user-customers-form";
+import { UserSuppliersForm } from "./user-suppliers-form";
 
 export const metadata: Metadata = { title: "Phân quyền người dùng" };
 
@@ -23,7 +24,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   if (!z.uuid().safeParse(id).success) notFound();
   const supabase = await createClient();
 
-  const [{ data: profile }, { data: roles }, { data: userRoles }, { data: overrides }, { data: rolePerms }, { data: links }, { data: customers }] = await Promise.all([
+  const [{ data: profile }, { data: roles }, { data: userRoles }, { data: overrides }, { data: rolePerms }, { data: links }, { data: customers }, supLinksRes, suppliersRes] = await Promise.all([
     supabase.from("profiles").select("id, email, full_name, phone, status, created_at").eq("id", id).maybeSingle(),
     supabase.from("roles").select("id, code, name").order("sort_order"),
     supabase.from("user_roles").select("role_id, granted_at").eq("user_id", id),
@@ -31,6 +32,9 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     supabase.from("role_permissions").select("role_id, permission_code"),
     supabase.from("user_customers").select("customer_id").eq("user_id", id),
     supabase.from("customers").select("id, code, name").eq("status", "active").order("code").limit(3000),
+    // Bảng user_suppliers có từ SQL 9030 (hoặc 9025): chưa chạy thì bỏ qua
+    supabase.from("user_suppliers").select("supplier_id").eq("user_id", id),
+    supabase.from("suppliers").select("id, code, name, custom_fields").eq("status", "active").order("name").limit(2000),
   ]);
   if (!profile) notFound();
 
@@ -38,6 +42,14 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const isTargetSuper = (roles ?? []).some((r) => r.code === "super_admin" && roleIds.has(r.id));
   const isTargetCustomer = (roles ?? []).some((r) => (r.code === "customer_statement" || r.code === "customer_admin") && roleIds.has(r.id));
   const linkedIds = (links ?? []).map((l) => l.customer_id as string);
+  const isTarget3pl = (roles ?? []).some((r) => r.code === "carrier_3pl" && roleIds.has(r.id));
+  const supplierIds = supLinksRes.error ? [] : (supLinksRes.data ?? []).map((l) => l.supplier_id as string);
+  const supplierOptions = ((suppliersRes.data ?? []) as { id: string; code: string; name: string; custom_fields: Record<string, unknown> | null }[]).map((s) => ({
+    id: s.id,
+    code: s.code,
+    name: s.name,
+    is3pl: ["3pl", "carrier"].includes(String(s.custom_fields?.supplier_kind ?? "")),
+  }));
   const meSuper = me.roles.some((r) => r.code === "super_admin");
   const isSelf = me.id === profile.id;
   const canConfigure = me.permissions.has("users.configure") && !isSelf && (!isTargetSuper || meSuper);
@@ -138,6 +150,23 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
                 selected={linkedIds}
                 canConfigure={canConfigure && !isTargetSuper}
               />
+            </CardContent>
+          </Card>
+        ) : null}
+        {isTarget3pl || supplierIds.length ? (
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Nhà xe 3PL được gắn</CardTitle>
+              <CardDescription>
+                Tài khoản nhà xe 3PL chỉ thấy các chuyến GHA chỉ định cho nhà xe được tích (trang Nhà xe 3PL đăng ký xe), không thấy cước, đơn giá, chuyến của nhà xe khác.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {supLinksRes.error ? (
+                <p className="text-sm text-warning">Cơ sở dữ liệu chưa nâng cấp Cổng nhà xe 3PL. Chạy file SQL 9030 rồi tải lại trang.</p>
+              ) : (
+                <UserSuppliersForm userId={profile.id} suppliers={supplierOptions} selected={supplierIds} canConfigure={canConfigure && !isTargetSuper} />
+              )}
             </CardContent>
           </Card>
         ) : null}

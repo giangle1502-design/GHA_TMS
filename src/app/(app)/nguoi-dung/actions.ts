@@ -122,6 +122,31 @@ export async function setUserCustomers(userId: string, customerIds: string[]): P
   }, "Đã lưu khách hàng được xem.");
 }
 
+/** Gắn tài khoản nhà xe 3PL với các nhà xe: tài khoản chỉ thấy chuyến GHA chỉ định cho các nhà xe này */
+export async function setUserSuppliers(userId: string, supplierIds: string[]): Promise<ActionResult> {
+  return runAction(async () => {
+    const me = await requirePermission("users.configure");
+    const id = uuid.parse(userId);
+    if (id === me.id) throw new ActionError("Không được tự thay đổi nhà xe của chính mình.");
+    const wanted = new Set(z.array(uuid).max(200).parse(supplierIds));
+    const supabase = await createClient();
+    const { data: current, error: e1 } = await supabase.from("user_suppliers").select("supplier_id").eq("user_id", id);
+    if (e1) throw e1;
+    const have = new Set((current ?? []).map((r) => r.supplier_id as string));
+    const toAdd = [...wanted].filter((c) => !have.has(c));
+    const toRemove = [...have].filter((c) => !wanted.has(c));
+    if (toAdd.length) {
+      const { error } = await supabase.from("user_suppliers").insert(toAdd.map((supplier_id) => ({ user_id: id, supplier_id })));
+      if (error) throw error;
+    }
+    if (toRemove.length) {
+      const { error } = await supabase.from("user_suppliers").delete().eq("user_id", id).in("supplier_id", toRemove);
+      if (error) throw error;
+    }
+    revalidatePath(`/nguoi-dung/${id}`);
+  }, "Đã lưu nhà xe 3PL được gắn.");
+}
+
 const overrideSchema = z.object({
   userId: uuid,
   permission: z.enum(ALL_PERMISSIONS as [string, ...string[]]),
