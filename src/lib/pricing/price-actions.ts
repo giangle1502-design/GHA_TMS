@@ -170,7 +170,7 @@ export async function getShipmentPriceOptions(shipmentId: string): Promise<Actio
       .filter((c) => !c.customer_id || c.customer_id === customerId)
       // Bảng riêng của khách hàng lên trước bảng nội bộ dùng chung
       .sort((a, b) => Number(Boolean(b.customer_id)) - Number(Boolean(a.customer_id)))
-      .map(({ customer, ...c }) => ({ ...c, fuel_pct_included: Number(c.fuel_pct_included), customer_name: customer?.name ?? null }));
+      .map(({ customer, ...c }) => ({ ...c, default_fuel_pct: Number(c.default_fuel_pct), customer_name: customer?.name ?? null }));
 
     const routePrices = ((plRes.error ? [] : plRes.data) ?? []) as RoutePriceOption[];
 

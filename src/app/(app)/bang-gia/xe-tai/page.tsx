@@ -29,7 +29,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ i
     <>
       <PageHeader
         title="Bảng giá xe tải"
-        description="Cước theo khoảng km × trọng tải, phí bốc xếp theo trọng tải và hệ số hỗ trợ dầu theo giá dầu. Đơn giá chưa dầu = Giá trong bảng ÷ (1 + % dầu đã gồm); Cước = Đơn giá × (1 + % hỗ trợ dầu). Giá nội bộ: tài khoản khách hàng không xem được."
+        description="Đơn giá CHƯA hỗ trợ dầu theo khoảng km × trọng tải, phí bốc xếp theo trọng tải và hệ số hỗ trợ dầu theo giá dầu. Cước = Đơn giá × (1 + % hỗ trợ dầu). Giá nội bộ: tài khoản khách hàng không xem được."
       />
       <PriceNav active="xe-tai" />
       {missing ? (

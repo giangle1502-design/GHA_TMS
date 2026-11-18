@@ -9,7 +9,7 @@ import { Input, Label, NativeSelect } from "@/components/ui/input";
 import { TruckRateMatrix } from "@/components/pricing/truck-rate-matrix";
 import { cn } from "@/lib/utils";
 import { formatDate, formatNumber } from "@/lib/format";
-import { basePrice, quoteTruck, toNum } from "@/lib/truck-rate";
+import { quoteTruck, toNum } from "@/lib/truck-rate";
 import { getShipmentPriceOptions, type PriceOptions } from "@/lib/pricing/price-actions";
 
 type Tab = "cont" | "truck" | "route";
@@ -176,17 +176,17 @@ export function PricePanel({ shipmentId, fuel, onChoose }: { shipmentId: string;
                 ) : null}
               </div>
             ) : null}
-            <p className="text-xs text-muted-foreground">Bảng hiện đơn giá CHƯA dầu (giá trong bảng ÷ {formatNumber(1 + card.fuel_pct_included / 100)}). Bấm vào ô bất kỳ để lấy giá ô đó.</p>
+            <p className="text-xs text-muted-foreground">Bảng hiện đơn giá CHƯA hỗ trợ dầu. Bấm vào ô bất kỳ để lấy giá ô đó; % dầu lấy theo giá dầu nhập ở trên (để trống thì dùng % dầu mặc định của bảng giá).</p>
             <div className="max-h-[40vh] overflow-auto">
               <TruckRateMatrix
                 card={card}
                 mode="base"
-                fuelPct={quote?.fuelPct ?? card.fuel_pct_included}
+                fuelPct={quote?.fuelPct ?? card.default_fuel_pct}
                 highlight={quote && quote.distanceIndex >= 0 && quote.weightIndex >= 0 ? { di: quote.distanceIndex, wi: quote.weightIndex } : null}
                 onPick={(i, j) => {
                   const raw = card.prices[i]?.[j];
                   if (raw === null || raw === undefined) return;
-                  choose(basePrice(raw, card.fuel_pct_included), quote?.fuelPct ?? card.fuel_pct_included, `${card.name}: ${card.distance_bands[i].label}, ${card.weight_bands[j].label}`);
+                  choose(raw, quote?.fuelPct ?? card.default_fuel_pct, `${card.name}: ${card.distance_bands[i].label}, ${card.weight_bands[j].label}`);
                 }}
               />
             </div>
