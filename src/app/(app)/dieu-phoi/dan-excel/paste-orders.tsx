@@ -57,6 +57,14 @@ type Name = { kind: AliasKind; raw: string; key: string; rows: number; auto: Mat
 const ENTITY_OF: Record<AliasKind, string> = { customer: "customers", location: "locations", product: "products" };
 type QuickMeta = { customRows: CustomFieldRow[]; canCreate: boolean };
 
+/** Ngày hôm nay + n ngày (YYYY-MM-DD, giờ máy người dùng) */
+function ymdOf(addDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + addDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const rangeLabel = (f: { from: string; to: string }) => (f.from === f.to ? `ngày ${dmy(f.from)}` : `từ ${dmy(f.from)} đến ${dmy(f.to)}`);
+
 /** Đầu tháng → cuối tháng hiện tại (YYYY-MM-DD) */
 function thisMonth(): { from: string; to: string } {
   const d = new Date();
@@ -97,7 +105,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
   const [rowLoc, setRowLoc] = useState<Map<string, string>>(new Map());
   /** File Excel (sheet COST CONT) đã đọc + bộ lọc Nhà vận chuyển / ngày giao */
   const [sheet, setSheet] = useState<SheetData | null>(null);
-  const [sheetFilter, setSheetFilter] = useState<CarrierFilter>(() => ({ carrier: "GHA", ...thisMonth(), onlyPending: false }));
+  const [sheetFilter, setSheetFilter] = useState<CarrierFilter>(() => ({ carrier: "GHA", from: ymdOf(0), to: ymdOf(0), onlyPending: false }));
   const [fileState, setFileState] = useState<{ busy: boolean; error: string }>({ busy: false, error: "" });
 
   const byId = useMemo(() => {
@@ -151,7 +159,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
   /** Lọc sheet COST CONT theo Nhà vận chuyển + ngày giao rồi đưa vào ô dán (kèm dòng tiêu đề) */
   const applySheet = (data: SheetData, f: CarrierFilter) => {
     setSheetFilter(f);
-    const { rows: picked } = filterCostCont(data, f);
+    // Bắt buộc có khoảng ngày giao: không lọc ngày thì dễ tạo nhầm đơn của ngày khác
+    const { rows: picked } = f.from && f.to ? filterCostCont(data, f) : { rows: [] };
     setRowLoc(new Map());
     setOrderNos(new Map());
     read(picked.length ? toTSV(data.header, picked) : "", null, "theo_doi");
@@ -168,6 +177,12 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       setFileState({ busy: false, error: e instanceof Error ? e.message : "Không đọc được file" });
     }
   };
+  /** Đổi bộ lọc: đã có file thì lọc lại ngay */
+  const changeFilter = (f: CarrierFilter) => {
+    if (sheet) applySheet(sheet, f);
+    else setSheetFilter(f);
+  };
+  const setDates = (from: string, to: string) => changeFilter({ ...sheetFilter, from, to });
   const sheetStats = useMemo(() => (sheet ? { ...filterCostCont(sheet, sheetFilter), carriers: carrierValues(sheet) } : null), [sheet, sheetFilter]);
 
   const imageFrom = (dt: DataTransfer | null) => [...(dt?.files ?? [])].find((f) => f.type.startsWith("image/"));
@@ -271,6 +286,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       else if (!delivery.id) errors.push(`Chưa chọn điểm giao cho "${delivery.raw}"`);
       if (pickup.id && pickup.id === delivery.id) errors.push("Điểm lấy cont và điểm giao trùng nhau");
       if (r.ma_hang && !product.id) errors.push(`Chưa ghép mã hàng "${r.ma_hang}"`);
+      if (sheet && date && (date < sheetFilter.from || date > sheetFilter.to)) errors.push(`Ngày giao ${dmy(date)} ngoài khoảng đã chọn (${rangeLabel(sheetFilter)}): không tạo`);
       if (!r.ngay_giao) errors.push(template === "theo_doi" ? "Thiếu Ngày giao" : "Thiếu Ngày");
       else if (!date) errors.push(`Ngày giao "${r.ngay_giao}" không đúng dạng dd/mm/yyyy`);
       if (r.so_luong && qty === null) errors.push(`Số lượng "${r.so_luong}" không phải số`);
@@ -306,7 +322,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     return out.map((x) => ({ ...x, orderNo: no.get(x.i) ?? null }));
     // pick đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template, rowLoc]);
+  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template, rowLoc, sheet, sheetFilter]);
 
   const errorCount = rows.filter((x) => x.errors.length).length;
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
@@ -440,10 +456,53 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3 text-sm">
+          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3 text-sm" data-cost-cont>
+            <p className="font-medium">Nhập từ file Excel (sheet COST CONT): chỉ tạo đơn cho dòng Nhà vận chuyển (cột AA) = {sheetFilter.carrier} có Ngày giao (cột M) trong khoảng chọn dưới đây.</p>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-0.5 text-xs font-medium">
+                Ngày giao từ
+                <input
+                  type="date"
+                  aria-label="Ngày giao từ"
+                  value={sheetFilter.from}
+                  onChange={(e) => setDates(e.target.value, sheetFilter.to && e.target.value > sheetFilter.to ? e.target.value : sheetFilter.to)}
+                  className="h-9 rounded border border-primary bg-background px-1 text-sm"
+                />
+              </label>
+              <label className="flex flex-col gap-0.5 text-xs font-medium">
+                đến ngày
+                <input
+                  type="date"
+                  aria-label="Ngày giao đến"
+                  value={sheetFilter.to}
+                  onChange={(e) => setDates(sheetFilter.from && e.target.value < sheetFilter.from ? e.target.value : sheetFilter.from, e.target.value)}
+                  className="h-9 rounded border border-primary bg-background px-1 text-sm"
+                />
+              </label>
+              <div className="flex gap-1">
+                <Button size="sm" variant="outline" onClick={() => setDates(ymdOf(0), ymdOf(0))}>
+                  Hôm nay
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDates(ymdOf(1), ymdOf(1))}>
+                  Ngày mai
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDates(thisMonth().from, thisMonth().to)}>
+                  Cả tháng này
+                </Button>
+              </div>
+              <label className="flex h-9 items-center gap-1.5">
+                <input type="checkbox" checked={sheetFilter.onlyPending} onChange={(e) => changeFilter({ ...sheetFilter, onlyPending: e.target.checked })} />
+                Chỉ dòng Chưa giao
+              </label>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
-              <label className={cn("inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 font-medium hover:bg-muted", fileState.busy && "pointer-events-none opacity-50")}>
-                <FileSpreadsheet className="size-4 text-emerald-700" /> Nhập file Excel (sheet COST CONT)…
+              <label
+                className={cn(
+                  "inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 font-medium hover:bg-muted",
+                  (fileState.busy || !sheetFilter.from || !sheetFilter.to) && "pointer-events-none opacity-50",
+                )}
+              >
+                <FileSpreadsheet className="size-4 text-emerald-700" /> {sheet ? "Chọn file khác…" : "Chọn file Excel…"}
                 <input
                   type="file"
                   accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
@@ -456,6 +515,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                   }}
                 />
               </label>
+              {!sheetFilter.from || !sheetFilter.to ? <span className="text-destructive">Chọn đủ ngày giao từ, đến trước.</span> : null}
               {fileState.busy ? (
                 <span className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" /> Đang đọc file…
@@ -464,19 +524,17 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                 <span className="text-muted-foreground">
                   {sheet.fileName} · sheet {sheet.sheet} · {sheet.rows.length.toLocaleString("en-US")} dòng
                 </span>
-              ) : (
-                <span className="text-muted-foreground">Chỉ lấy các dòng có Nhà vận chuyển (cột AA) = GHA để tạo đơn.</span>
-              )}
+              ) : null}
               {fileState.error ? <span className="text-destructive">{fileState.error}</span> : null}
             </div>
-            {sheet && sheetStats ? (
-              <div className="flex flex-wrap items-end gap-3">
-                <label className="flex flex-col gap-0.5 text-xs">
-                  Nhà vận chuyển (cột AA)
+            {sheet && sheetStats && sheetFilter.from && sheetFilter.to ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-1 text-xs">
+                  Nhà vận chuyển
                   <select
                     aria-label="Nhà vận chuyển"
                     value={sheetStats.carriers.find((c) => matchKey(c.value) === matchKey(sheetFilter.carrier))?.value ?? sheetFilter.carrier}
-                    onChange={(e) => applySheet(sheet, { ...sheetFilter, carrier: e.target.value })}
+                    onChange={(e) => changeFilter({ ...sheetFilter, carrier: e.target.value })}
                     className="h-8 rounded border bg-background px-1 text-sm"
                   >
                     {sheetStats.carriers.some((c) => matchKey(c.value) === matchKey(sheetFilter.carrier)) ? null : <option value={sheetFilter.carrier}>{sheetFilter.carrier} (0 dòng)</option>}
@@ -487,22 +545,10 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-col gap-0.5 text-xs">
-                  Ngày giao từ
-                  <input type="date" aria-label="Ngày giao từ" value={sheetFilter.from} onChange={(e) => applySheet(sheet, { ...sheetFilter, from: e.target.value })} className="h-8 rounded border bg-background px-1 text-sm" />
-                </label>
-                <label className="flex flex-col gap-0.5 text-xs">
-                  đến
-                  <input type="date" aria-label="Ngày giao đến" value={sheetFilter.to} onChange={(e) => applySheet(sheet, { ...sheetFilter, to: e.target.value })} className="h-8 rounded border bg-background px-1 text-sm" />
-                </label>
-                <label className="flex h-8 items-center gap-1.5 text-sm">
-                  <input type="checkbox" checked={sheetFilter.onlyPending} onChange={(e) => applySheet(sheet, { ...sheetFilter, onlyPending: e.target.checked })} />
-                  Chỉ dòng Chưa giao
-                </label>
-                <span className="flex h-8 items-center text-sm" data-cost-cont-count>
-                  Lấy <strong className="mx-1">{sheetStats.rows.length}</strong> / {sheetStats.carrierRows} dòng {sheetFilter.carrier}
-                  {sheetStats.noDate ? ` (${sheetStats.noDate} dòng không có ngày giao bị bỏ qua)` : ""}
-                </span>
+                <Badge variant={sheetStats.rows.length ? "info" : "warning"} data-cost-cont-count>
+                  {sheetStats.rows.length} dòng {sheetFilter.carrier} giao {rangeLabel(sheetFilter)} (trong {sheetStats.carrierRows} dòng {sheetFilter.carrier} của file)
+                </Badge>
+                {sheetStats.noDate ? <span className="text-xs text-muted-foreground">{sheetStats.noDate} dòng không có ngày giao: bỏ qua</span> : null}
               </div>
             ) : null}
           </div>
@@ -510,6 +556,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
             value={text}
             onChange={(e) => read(e.target.value, unsure)}
             onPaste={(e) => {
+              // Dán dữ liệu mới: không còn là dữ liệu lọc từ file
+              setSheet(null);
               const img = imageFrom(e.clipboardData);
               if (img && !e.clipboardData.getData("text/plain")) {
                 e.preventDefault();
@@ -581,7 +629,14 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
               <Badge variant={headerRow === null ? "warning" : "success"}>
                 {headerRow === null ? "Không có dòng tiêu đề: hiểu theo thứ tự cột mặc định" : "Đã nhận ra dòng tiêu đề"}
               </Badge>
-              <Button size="sm" variant="ghost" onClick={() => read("")}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setSheet(null);
+                  read("");
+                }}
+              >
                 <X /> Xóa
               </Button>
             </div>
