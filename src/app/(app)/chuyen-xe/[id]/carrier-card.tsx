@@ -82,7 +82,7 @@ export function CarrierCard(props: {
             props.costs.map((c) => (
               <Line
                 key={c.line_no}
-                label={`${c.fee_type?.is_loading ? "Bốc xếp" : CARRIER_KIND_LABEL[c.cost_kind]}${vendorName(c) ? ` (${vendorName(c)})` : ""} · ${c.description}${c.quantity != null && c.unit_price != null ? ` · ${formatNumber(c.quantity)} × ${formatNumber(c.unit_price)}` : ""}${c.ref_no ? ` · số ${c.ref_no}` : ""}${c.note ? ` (${c.note})` : ""}`}
+                label={`${c.fee_type?.is_loading ? "Bốc xếp" : CARRIER_KIND_LABEL[c.cost_kind]}${vendorName(c) ? ` (${vendorName(c)})` : ""} · ${c.description}${c.quantity != null && c.unit_price != null ? ` · ${formatNumber(c.quantity)} × ${formatNumber(c.unit_price)}` : ""}${c.cost_kind === "freight" && c.fuel_pct ? ` + ${formatNumber(Number(c.fuel_pct))}% dầu` : ""}${c.ref_no ? ` · số ${c.ref_no}` : ""}${c.note ? ` (${c.note})` : ""}`}
                 value={formatVND(c.amount)}
               />
             ))

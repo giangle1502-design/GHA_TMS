@@ -15,6 +15,8 @@ const lineSchema = z.object({
   description: z.string().max(200).optional(),
   quantity: optNum,
   unitPrice: optNum,
+  /** % hỗ trợ dầu (chỉ dòng cước) */
+  fuelPct: z.number().min(0).max(100).nullable().optional(),
   amount: optNum,
   refNo: z.string().max(100).optional(),
   note: z.string().max(500).optional(),
@@ -53,6 +55,7 @@ export async function saveCarrierCosts(input: z.input<typeof costsSchema>): Prom
         description: l.description?.trim() || null,
         quantity: l.quantity ?? null,
         unit_price: l.unitPrice ?? null,
+        fuel_pct: l.kind === "freight" ? (l.fuelPct ?? null) : null,
         amount: l.amount ?? null,
         ref_no: l.refNo?.trim() || null,
         note: l.note?.trim() || null,
@@ -65,6 +68,19 @@ export async function saveCarrierCosts(input: z.input<typeof costsSchema>): Prom
     const r = data as { total: number; payable_code: string | null };
     return { total: Number(r.total), payable_code: r.payable_code };
   }, "Đã lưu chi phí 3PL của chuyến.");
+}
+
+/** % hỗ trợ dầu của nhà xe 3PL (danh mục Nhà cung cấp); null = không có hoặc CSDL chưa nâng cấp */
+export async function supplierFuelPct(supplierId: string): Promise<ActionResult<number | null>> {
+  return runAction(async () => {
+    await requirePermission("dispatch.update", "shipments.update", "receivables.create");
+    if (!uuid.safeParse(supplierId).success) return null;
+    const supabase = await createClient();
+    const { data, error } = await supabase.from("suppliers").select("fuel_support_pct").eq("id", supplierId).maybeSingle();
+    if (error) return null;
+    const v = (data as { fuel_support_pct?: number | string | null } | null)?.fuel_support_pct;
+    return v === null || v === undefined || Number(v) === 0 ? null : Number(v);
+  });
 }
 
 export type OpenCarrierPayable = {

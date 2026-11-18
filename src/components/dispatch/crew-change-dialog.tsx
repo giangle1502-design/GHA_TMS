@@ -51,6 +51,12 @@ export function CrewChangeDialog({
   const changed = vehicleChanged || driver.id !== (driverId ?? "");
   const [source, setSource] = useState<VehicleSource>("internal");
   const is3pl = source === "3pl";
+  /** Nhà xe 3PL đang chọn trong hộp (sửa chuyến đã chạy: sửa được nhà xe sai) */
+  const [supplierId, setSupplierId] = useState("");
+  /** Người dùng tự chuyển sang Xe nội bộ (để bỏ nhà xe 3PL của chuyến) */
+  const [toInternal, setToInternal] = useState(false);
+  // Sửa nhà xe chỉ ở chế độ "correct": 3PL có nhà xe → ghi nhà xe đó; tự chuyển sang xe nội bộ → bỏ nhà xe
+  const supplierInput = unaccept ? undefined : is3pl && supplierId ? supplierId : !is3pl && toInternal ? null : undefined;
   const blocked = unaccept && vehicleChanged && !is3pl && dayState.blocked;
 
   function save() {
@@ -58,7 +64,7 @@ export function CrewChangeDialog({
       const input = { shipmentId, vehicleId: vehicle.id, driverId: driver.id, reason };
       const r = unaccept
         ? await unacceptShipment({ ...input, ...(vehicleChanged && !is3pl ? { vehicleDayOrder: dayState.order, otherOrders: dayState.others } : {}) })
-        : await correctShipmentCrew(input);
+        : await correctShipmentCrew({ ...input, ...(supplierInput !== undefined ? { supplierId: supplierInput } : {}) });
       if (!r.ok) return void toast.error(r.error);
       toast.success(r.message);
       setOpen(false);
@@ -67,17 +73,17 @@ export function CrewChangeDialog({
     });
   }
 
-  const title = unaccept ? `Hủy nhận xe, đổi xe chuyến ${shipmentCode}` : `Sửa xe, tài xế chuyến ${shipmentCode}`;
+  const title = unaccept ? `Hủy nhận xe, đổi xe chuyến ${shipmentCode}` : `Sửa xe, tài xế, nhà thầu 3PL chuyến ${shipmentCode}`;
   return (
     <>
       <Button
         variant="ghost"
         size="sm"
         className={compact ? "h-7 px-2" : undefined}
-        title={unaccept ? "Tài xế đã nhận nhưng xe hư: hủy nhận, đổi sang xe khác" : "Sửa số xe / tên tài xế nhập sai (cả chuyến đã hoàn thành)"}
+        title={unaccept ? "Tài xế đã nhận nhưng xe hư: hủy nhận, đổi sang xe khác" : "Sửa số xe / tên tài xế / nhà thầu 3PL nhập sai (cả chuyến đã hoàn thành)"}
         onClick={() => setOpen(true)}
       >
-        {unaccept ? <RefreshCcw /> : <UserRoundPen />} {unaccept ? "Hủy nhận / đổi xe" : "Sửa xe, TX"}
+        {unaccept ? <RefreshCcw /> : <UserRoundPen />} {unaccept ? "Hủy nhận / đổi xe" : "Sửa xe, TX, 3PL"}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
@@ -86,13 +92,29 @@ export function CrewChangeDialog({
             <DialogDescription>
               {unaccept
                 ? "Dùng khi tài xế đã nhận (hoặc đang chạy) mà xe hư. Chuyến trở về \"Chờ tài xế nhận\" trên xe mới, tài xế nhập số xe mới trên điện thoại rồi bấm Nhận đơn. Giữ tài xế thì không phải Giám đốc duyệt lại."
-                : "Dùng khi nhập sai số xe hoặc tên tài xế. Trạng thái chuyến giữ nguyên; chi phí tài xế tự trả của chuyến (chưa vào bảng lương) chuyển theo tài xế đúng. Mọi lần sửa được ghi vào nhật ký."}
+                : "Dùng khi nhập sai số xe, tên tài xế hoặc nhà thầu 3PL (kể cả chuyến đã hoàn thành, đã đóng). Trạng thái chuyến giữ nguyên; chi phí tài xế tự trả của chuyến (chưa vào bảng lương) chuyển theo tài xế đúng. Mọi lần sửa được ghi vào nhật ký."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor={`cv-${mode}-${shipmentId}`}>{unaccept ? "Xe mới" : "Xe đúng"}</Label>
-              <VehicleSourcePicker id={`cv-${mode}-${shipmentId}`} shipmentId={shipmentId} value={vehicle.id} initialLabel={vehicle.label} onChange={(id, label) => setVehicle({ id, label })} onSourceChange={setSource} />
+              <VehicleSourcePicker
+                id={`cv-${mode}-${shipmentId}`}
+                shipmentId={shipmentId}
+                value={vehicle.id}
+                initialLabel={vehicle.label}
+                onChange={(id, label) => setVehicle({ id, label })}
+                onSourceChange={setSource}
+                multiCarrier={!unaccept}
+                onSupplierValue={setSupplierId}
+                onSupplierChange={(id) => setToInternal(!id && !unaccept)}
+              />
+              {!unaccept && is3pl ? (
+                <p className="text-xs text-muted-foreground">
+                  Đầu kéo, tài xế chạy cho nhiều 3PL: chọn đúng <b>Nhà thầu 3PL</b> của chuyến này ở bước 1 (xe giữ nguyên). Công nợ trả 3PL của chuyến chuyển theo nhà
+                  thầu mới; đã trả tiền nhà thầu cũ thì phải hủy phiếu chi trước.
+                </p>
+              ) : null}
               {unaccept && !is3pl ? (
                 <VehicleDayConflict vehicleId={vehicleChanged ? vehicle.id : ""} day={todayVN(new Date(pickupAt))} excludeShipmentId={shipmentId} onStateChange={setDayState} />
               ) : null}
@@ -117,8 +139,8 @@ export function CrewChangeDialog({
               Đóng
             </Button>
             <Button
-              disabled={pending || !vehicle.id || !driver.id || reason.trim().length < 3 || (!unaccept && !changed) || blocked}
-              title={!unaccept && !changed ? "Chọn xe hoặc tài xế khác để sửa" : blocked ? "Xe mới đã có chuyến cùng ngày: tích \"Vẫn giao cho xe này\" và nhập thứ tự" : undefined}
+              disabled={pending || !vehicle.id || !driver.id || reason.trim().length < 3 || (!unaccept && !changed && supplierInput === undefined) || blocked}
+              title={!unaccept && !changed && supplierInput === undefined ? "Chọn xe, tài xế hoặc nhà thầu 3PL khác để sửa" : blocked ? "Xe mới đã có chuyến cùng ngày: tích \"Vẫn giao cho xe này\" và nhập thứ tự" : undefined}
               onClick={save}
             >
               {pending ? <Loader2 className="animate-spin" /> : null} {unaccept ? "Hủy nhận, giao xe mới" : "Lưu sửa"}
