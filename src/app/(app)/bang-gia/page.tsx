@@ -3,6 +3,7 @@ import { requirePagePermission } from "@/lib/auth/session";
 import { PageHeader } from "@/components/layout/page-header";
 import { EntityListSection, resolveEntityTabs } from "@/components/entities/entity-list-section";
 import { PriceLookup } from "./price-lookup";
+import { PriceNav } from "@/components/pricing/price-nav";
 
 export const metadata: Metadata = { title: "Bảng giá" };
 
@@ -21,6 +22,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         description="Bảng giá cụ thể nhất được ưu tiên (khách hàng > loại xe > điểm nhận/giao), sau đó theo độ ưu tiên. Hai bảng giá cùng phạm vi, cùng độ ưu tiên không được trùng thời gian hiệu lực."
         actions={<PriceLookup />}
       />
+      <PriceNav active="tuyen" />
       {nav}
       {active ? <EntityListSection entityKey={active} searchParams={sp} revalidate="/bang-gia" /> : null}
     </>

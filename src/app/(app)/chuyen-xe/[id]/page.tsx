@@ -29,6 +29,7 @@ import { formulaVars } from "@/lib/entities/definitions";
 import { TripCostsCard, type TripCost } from "./trip-costs-card";
 import { ActForDriver } from "./act-for-driver";
 import { EditShipmentDialog } from "./edit-shipment-dialog";
+import { QuickFreightButton } from "@/components/dispatch/quick-freight-dialog";
 import { ItemsCard, type ShipmentItem } from "./items-card";
 import { FeesDialog, type ShipmentFee } from "./fees-dialog";
 import { ProfitCard, type ShipmentProfit } from "./profit-card";
@@ -333,6 +334,9 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                 shipmentIds={[s.id]}
                 canFill={me.permissions.has("dispatch.update") || (me.permissions.has("drivers.view_sensitive") && me.permissions.has("drivers.update"))}
               />
+            ) : null}
+            {(me.permissions.has("dispatch.update") || me.permissions.has("shipments.update")) && s.status !== "cancelled" ? (
+              <QuickFreightButton shipmentId={s.id} code={s.shipment_code} />
             ) : null}
             {(me.permissions.has("dispatch.update") || me.permissions.has("shipments.update")) && s.status !== "cancelled" ? <EditShipmentDialog s={s} /> : null}
             {canAssign ? (
