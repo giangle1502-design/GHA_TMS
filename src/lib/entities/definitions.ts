@@ -245,6 +245,28 @@ const WAREHOUSE_BINS: EntityDef = {
   ],
 };
 
+/** Nhà xe 3PL nào được xem tồn kho của vị trí nào (GHA 9025). Tài khoản nhà xe: vai trò "Nhà xe 3PL" + gắn nhà xe ở trang Người dùng */
+const WAREHOUSE_BIN_SUPPLIERS: EntityDef = {
+  key: "warehouse_bin_suppliers",
+  table: "warehouse_bin_suppliers",
+  label: "3PL xem tồn kho",
+  singular: "quyền xem tồn của 3PL",
+  perm: "inventory",
+  hasExport: false,
+  writePerm: "inventory.update",
+  search: ["notes"],
+  defaultSort: { key: "created_at", desc: true },
+  labelCols: ["bin_id"],
+  fields: [
+    { key: "bin_id", label: "Vị trí kho", type: "reference", ref: "warehouse_bins", required: true, list: true, filter: true },
+    {
+      key: "supplier_id", label: "Nhà xe 3PL", type: "reference", ref: "suppliers", required: true, list: true, filter: true,
+      help: "Tài khoản của nhà xe này (vai trò Nhà xe 3PL) chỉ xem được báo cáo tồn của vị trí đã chọn; không thấy cước, khách hàng hay dữ liệu khác.",
+    },
+    { key: "notes", label: "Ghi chú", type: "text", list: true, maxLength: 500 },
+  ],
+};
+
 const STOCK_ENTRIES: EntityDef = {
   key: "stock_entries",
   table: "stock_entries",
@@ -281,6 +303,13 @@ const STOCK_ENTRIES: EntityDef = {
     { key: "owner_customer_id", label: "Chủ hàng", type: "reference", ref: "customers", list: true, filter: true, help: "Để trống thì lấy theo chủ hàng của mã hàng." },
     { key: "ref_no", label: "Số chứng từ", type: "text", list: true, maxLength: 100, placeholder: "VD: số PXK, phiếu chuyển kho Ecount, shipment" },
     { key: "partner", label: "Người / đơn vị giao, nhận", type: "text", list: true, maxLength: 300 },
+    {
+      key: "source", label: "Nguồn", type: "select", list: true, filter: true, readOnly: true, hideInForm: true,
+      options: [
+        { value: "manual", label: "Lập tay", tone: "gray" },
+        { value: "auto", label: "Tự lập khi chuyến hoàn thành", tone: "teal" },
+      ],
+    },
     notes,
   ],
 };
@@ -2011,6 +2040,7 @@ export const ENTITIES: Record<string, EntityDef> = {
   warehouses: WAREHOUSES,
   warehouse_bins: WAREHOUSE_BINS,
   stock_entries: STOCK_ENTRIES,
+  warehouse_bin_suppliers: WAREHOUSE_BIN_SUPPLIERS,
   tax_invoice_categories: TAX_INVOICE_CATEGORIES,
   report_tax_invoice_month: {
     key: "report_tax_invoice_month",
