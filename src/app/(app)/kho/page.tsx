@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { loadTableView } from "@/lib/entities/server";
 import { StockReport, type StockRow, type BinOption } from "./stock-report";
 import { ShipmentSuggestions, type SuggestionRow } from "./shipment-suggestions";
+import { ContTrips, type ContTrip } from "./cont-trips";
 
 export const metadata: Metadata = { title: "Kho GHA nhập xuất tồn" };
 
@@ -19,6 +20,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 const UUID = /^[0-9a-f-]{36}$/i;
 
 const TABS = [
+  { key: "cont", label: "Cont về / đi trong ngày" },
   { key: "bao-cao", label: "Báo cáo xuất nhập tồn" },
   { key: "chuyen", label: "Chuyến qua kho chờ lập phiếu" },
   { key: "stock_entries", label: "Phiếu nhập, xuất, tồn đầu kỳ" },
@@ -34,22 +36,32 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const canCreate0 = me.permissions.has("inventory.create");
   // Người chỉ có quyền xem (VD tài khoản nhà xe 3PL) chỉ thấy báo cáo tồn
   const tabs = canCreate0 ? TABS : TABS.filter((t) => t.key === "bao-cao");
-  const tab = tabs.find((t) => t.key === one(sp.tab))?.key ?? "bao-cao";
-  const month = monthRangeYMD(todayVN());
+  // Thủ kho (không có quyền điều phối) mở thẳng danh sách cont về / đi hôm nay
+  const defaultTab = canCreate0 && !me.permissions.has("dispatch.view") ? "cont" : "bao-cao";
+  const tab = tabs.find((t) => t.key === one(sp.tab))?.key ?? defaultTab;
+  const month = tab === "cont" ? { tu: todayVN(), den: todayVN() } : monthRangeYMD(todayVN());
   let tu = YMD.test(one(sp.tu)) ? one(sp.tu) : month.tu;
   let den = YMD.test(one(sp.den)) ? one(sp.den) : month.den;
   if (den < tu) [tu, den] = [den, tu];
   const canCreate = me.permissions.has("inventory.create");
 
   let body: React.ReactNode = null;
-  if (tab === "bao-cao" || tab === "chuyen") {
+  if (tab === "bao-cao" || tab === "chuyen" || tab === "cont") {
     const supabase = await createClient();
     const binsRes = await supabase.from("warehouse_bins").select("id, code, name, warehouse_id, location_id, warehouses(name)").eq("is_active", true).order("sort_order").limit(500);
     if (binsRes.error) throw binsRes.error;
     const bins: BinOption[] = ((binsRes.data ?? []) as unknown as { id: string; code: string; name: string; warehouse_id: string; location_id: string | null; warehouses: { name: string } | null }[]).map(
       (b) => ({ id: b.id, code: b.code, name: b.name, warehouse_id: b.warehouse_id, warehouse_name: b.warehouses?.name ?? "", has_location: Boolean(b.location_id) }),
     );
-    if (tab === "bao-cao") {
+    if (tab === "cont") {
+      const cont = one(sp.cont).trim().slice(0, 30);
+      const [res, view] = await Promise.all([
+        supabase.rpc("stock_trips_by_date", { p_from: tu, p_to: den, p_container: cont || null }),
+        loadTableView(supabase, "stock_trips", me.id),
+      ]);
+      if (res.error) throw res.error;
+      body = <ContTrips tu={tu} den={den} cont={cont} rows={(res.data ?? []) as ContTrip[]} bins={bins} canCreate={canCreate} view={view} />;
+    } else if (tab === "bao-cao") {
       const bin = UUID.test(one(sp.vt)) ? one(sp.vt) : "";
       const byBin = one(sp.gop) !== "1";
       const [{ data, error }, view, cardView] = await Promise.all([
