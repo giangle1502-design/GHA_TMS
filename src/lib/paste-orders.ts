@@ -14,6 +14,8 @@ export type PasteField =
   | "ngay_khai"
   | "luong_khai"
   | "ma_hang"
+  | "tong_don"
+  | "hinh_thuc"
   | "so_luong"
   | "loai_cont"
   | "so_cont"
@@ -27,6 +29,10 @@ export type PasteField =
   | "phi_gia_han"
   | "hd_gia_han"
   | "diem_lay_cont"
+  | "hang_tau"
+  | "so_bill"
+  | "hang_cam"
+  | "phi_boc_xep"
   | "ghi_chu"
   // Ecount: phiếu chuyển kho / phiếu giao hàng
   | "so_sto"
@@ -43,7 +49,10 @@ export type PasteField =
 
 export type PasteColumn = { key: PasteField; label: string; aliases: string[] };
 
-/** Cột theo đúng thứ tự bảng theo dõi của GHA (dán không kèm dòng tiêu đề thì hiểu theo thứ tự này) */
+/**
+ * Cột theo đúng thứ tự sheet COST CONT (bảng theo dõi hàng) của GHA, từ cột A đến cột AA "Nhà vận chuyển".
+ * Dán không kèm dòng tiêu đề thì hiểu theo thứ tự này.
+ */
 export const PASTE_COLUMNS: PasteColumn[] = [
   { key: "bct", label: "BCT", aliases: ["bct", "so bct", "bo chung tu"] },
   { key: "phap_nhan", label: "Pháp nhân", aliases: ["phap nhan", "khach hang", "cong ty", "ma kh"] },
@@ -52,6 +61,8 @@ export const PASTE_COLUMNS: PasteColumn[] = [
   { key: "ngay_khai", label: "Ngày khai", aliases: ["ngay khai", "ngay to khai", "ngay tk"] },
   { key: "luong_khai", label: "Luồng khai", aliases: ["luong khai", "luong", "phan luong"] },
   { key: "ma_hang", label: "Mã hàng", aliases: ["ma hang", "san pham", "hang hoa"] },
+  { key: "tong_don", label: "Tổng đơn", aliases: ["tong don", "tong so luong", "tong sl"] },
+  { key: "hinh_thuc", label: "Hình thức giao", aliases: ["hinh thuc van chuyen", "hinh thuc giao", "hinh thuc giao hang", "hinh thuc", "pallet xa"] },
   { key: "so_luong", label: "Số lượng 1 cont", aliases: ["so luong 1 cont", "so luong", "sl", "trong luong", "kg"] },
   { key: "loai_cont", label: "Loại cont", aliases: ["loai cont", "loai", "loai c", "cont", "size"] },
   { key: "so_cont", label: "Số cont", aliases: ["so cont", "so container", "container", "cont no"] },
@@ -65,6 +76,11 @@ export const PASTE_COLUMNS: PasteColumn[] = [
   { key: "phi_gia_han", label: "Phí gia hạn", aliases: ["phi gia han"] },
   { key: "hd_gia_han", label: "Hóa đơn gia hạn", aliases: ["hoa don gia han", "hd gia han"] },
   { key: "diem_lay_cont", label: "Điểm lấy cont", aliases: ["diem lay cont", "lay cont", "noi lay cont", "diem nhan", "cang"] },
+  { key: "hang_tau", label: "Hãng tàu", aliases: ["hang tau"] },
+  { key: "so_bill", label: "Số Bill", aliases: ["so bill", "bill", "so bl", "bl"] },
+  { key: "hang_cam", label: "Hàng cầm", aliases: ["hang cam"] },
+  { key: "phi_boc_xep", label: "Phí bốc xếp", aliases: ["phi boc xep"] },
+  { key: "don_vi_vt", label: "Nhà vận chuyển", aliases: ["nha van chuyen", "don vi van tai", "nha xe"] },
   { key: "ghi_chu", label: "Ghi chú", aliases: ["ghi chu", "note"] },
 ];
 
@@ -236,9 +252,27 @@ export function detectColumns(
     }
   if (best) return { map: best.map, headerRow: best.headerRow, template: best.template };
   const t = templateOf(force ?? "theo_doi");
-  const order = t.columns.filter((c) => c.key !== "ghi_chu").map((c) => c.key);
+  let order = t.columns.filter((c) => c.key !== "ghi_chu").map((c) => c.key);
+  if (t.id === "theo_doi") order = pickTrackingOrder(rows, order);
   const width = Math.max(0, ...rows.map((r) => r.length));
   return { map: Array.from({ length: width }, (_, i) => order[i] ?? null), headerRow: null, template: t.id };
+}
+
+/**
+ * Không có dòng tiêu đề: bảng theo dõi bản cũ không có 2 cột "Tổng đơn", "Hình thức vận chuyển" (sheet COST CONT có).
+ * Chọn thứ tự cột nào mà Số cont / Ngày giao rơi đúng chỗ ở nhiều dòng hơn (bằng nhau thì theo COST CONT).
+ */
+function pickTrackingOrder(rows: string[][], order: PasteField[]): PasteField[] {
+  const old = order.filter((k) => k !== "tong_don" && k !== "hinh_thuc");
+  const score = (o: PasteField[]) => {
+    const ci = o.indexOf("so_cont");
+    const di = o.indexOf("ngay_giao");
+    return rows.reduce(
+      (n, r) => n + (/^[A-Z]{4}\s?\d{6,7}/i.test((r[ci] ?? "").trim()) ? 1 : 0) + (/^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test((r[di] ?? "").trim()) ? 1 : 0),
+      0,
+    );
+  };
+  return score(old) > score(order) ? old : order;
 }
 
 export type PasteRecord = Partial<Record<PasteField, string>>;
@@ -282,6 +316,11 @@ export function containerOf(r: PasteRecord): string {
   // (TEMU8427340 → TEXIU8427340) nên vẫn coi là số cont để báo lỗi số kiểm tra cho người dùng sửa
   return /^[A-Z]{4,6}\d{5,7}$/.test(x) && x.length >= 10 && x.length <= 12 ? x : "";
 }
+
+/** Hình thức giao (Pallet / Xá…): cột "Hình thức vận chuyển" của COST CONT, hoặc "Nhập/Xuất kiện" của Ecount */
+export const deliveryMethodOf = (r: PasteRecord) => (r.hinh_thuc || (kienXaIsMethod(r.kien_xa) ? r.kien_xa : "") || "").trim().slice(0, 100);
+/** Ô kiện/xá của Ecount là chữ (Kiện, Xá, Pallet) thì là hình thức giao; là số thì chỉ ghi chú */
+const kienXaIsMethod = (v: string | undefined) => !!v && /[a-zA-ZÀ-ỹ]/.test(v) && !/^[\d.,\s]+$/.test(v);
 
 /** Số tham chiếu để gộp đơn: số tờ khai / số phiếu chuyển kho / số phiếu giao hàng */
 export const groupRef = (r: PasteRecord) => (r.so_to_khai || r.so_phieu || r.pxk || "").trim();
@@ -410,11 +449,16 @@ export function tripNote(r: PasteRecord): string {
     r.ten_kh_nhan ? `Giao cho ${r.ten_kh_nhan}${r.ma_kh_nhan ? ` (${r.ma_kh_nhan})` : ""}` : "",
     d("kho_xuat", "Kho xuất"),
     d("kho_nhap", "Kho nhập"),
+    r.hinh_thuc ? `Hình thức giao ${r.hinh_thuc}` : "",
     r.loai_cont ? `Cont ${r.loai_cont}${/^\d+$/.test(r.loai_cont) ? "'" : ""}` : "",
     d("pxk", "PXK"),
+    d("tong_don", "Tổng đơn"),
+    d("hang_tau", "Hãng tàu"),
+    d("so_bill", "Bill"),
+    r.hang_cam && !/^khong$/.test(plain(r.hang_cam)) ? `Hàng cầm: ${r.hang_cam}` : "",
     d("don_vi_vt", "ĐVVT"),
+    r.kien_xa && !kienXaIsMethod(r.kien_xa) ? `Kiện/xá ${r.kien_xa}` : "",
     xe ? `Số xe ${xe}` : "",
-    d("kien_xa", "Kiện/xá"),
     d("luu_bai", "Lưu bãi đến"),
     d("ngay_gia_han", "Gia hạn đến"),
     d("luu_cont", "Lưu cont đến"),

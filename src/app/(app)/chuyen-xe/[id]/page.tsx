@@ -173,7 +173,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
     supabase.from("shipment_fees").select("line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, is_loading, fee_group:fee_groups(id, name, report_role, sort_order))").eq("shipment_id", id).order("line_no"),
     canExpenses ? supabase.from("shipment_profit").select("*").eq("shipment_id", id).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
-  const [carrierRes, payableRes, feeDocRes, sheetRes, lockRes] = await Promise.all([
+  const [carrierRes, payableRes, feeDocRes, sheetRes, lockRes, methodRes] = await Promise.all([
     canSeeCarrier
       ? supabase.from("shipment_carrier_costs").select("*, supplier:suppliers(name), fee_type:fee_types(name, is_loading)").eq("shipment_id", id).order("line_no")
       : Promise.resolve({ data: [], error: null }),
@@ -186,6 +186,8 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("entity_type", "shipment").eq("entity_id", id).eq("doc_type", "receipt").is("archived_at", null),
     // Số lần lưu chuyến (khóa sửa 0061; CSDL chưa nâng cấp thì không khóa)
     supabase.rpc("shipment_edit_status", { p_shipment_id: id }),
+    // Hình thức giao (9021; CSDL chưa nâng cấp thì không hiện)
+    supabase.from("shipments").select("delivery_method").eq("id", id).maybeSingle(),
   ]);
   const editRev = lockRes.error ? null : Number((lockRes.data as { rev?: number } | null)?.rev ?? 0);
   const sheetCount = sheetRes.count ?? 0;
@@ -791,6 +793,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
           fieldRows={itemFieldRows}
           canEdit={(me.permissions.has("dispatch.update") || me.permissions.has("dispatch.create")) && !["closed", "cancelled"].includes(s.status)}
           canAddField={me.permissions.has("fields.configure")}
+          deliveryMethod={methodRes.error ? undefined : ((methodRes.data as { delivery_method?: string | null } | null)?.delivery_method ?? "")}
         />
 
         {canExpenses ? (

@@ -24,22 +24,43 @@ async function loadAliases(supabase: Supa): Promise<{ aliases: SavedAlias[]; rea
   return { aliases: (r.data ?? []) as SavedAlias[], ready: true };
 }
 
+/**
+ * Đọc hết các dòng đang hoạt động của một danh mục. Máy chủ chỉ trả tối đa 1,000 dòng mỗi lần
+ * (trước đây danh sách địa điểm bị thiếu: có trên hệ thống nhưng ô chọn tìm không ra) nên đọc từng trang.
+ */
+async function loadAll(supabase: Supa, table: "customers" | "locations" | "products", cols: string, order: string): Promise<{ data: CatalogItem[]; error: unknown }> {
+  const out: CatalogItem[] = [];
+  for (let p = 0; p < 50; p++) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(cols)
+      .eq("status", "active")
+      .order(order)
+      .order("id")
+      .range(p * 1000, p * 1000 + 999);
+    if (error) return { data: out, error };
+    out.push(...((data ?? []) as unknown as CatalogItem[]));
+    if (!data || data.length < 1000) break;
+  }
+  return { data: out, error: null };
+}
+
 /** Danh mục để ghép tên (chỉ bản ghi đang hoạt động) + tên gọi khác đã ghi nhớ */
 export async function loadPasteCatalog(): Promise<ActionResult<PasteCatalog>> {
   return runAction(async () => {
     await requirePermission("dispatch.create");
     const supabase = await createClient();
     const [cus, loc, pro, al] = await Promise.all([
-      supabase.from("customers").select("id, code, name").eq("status", "active").order("name").limit(10000),
-      supabase.from("locations").select("id, code, name").eq("status", "active").order("name").limit(10000),
-      supabase.from("products").select("id, code, name, unit").eq("status", "active").order("code").limit(10000),
+      loadAll(supabase, "customers", "id, code, name", "name"),
+      loadAll(supabase, "locations", "id, code, name", "name"),
+      loadAll(supabase, "products", "id, code, name, unit", "code"),
       loadAliases(supabase),
     ]);
     for (const r of [cus, loc]) if (r.error) throw r.error;
     return {
-      customers: (cus.data ?? []) as CatalogItem[],
-      locations: (loc.data ?? []) as CatalogItem[],
-      products: pro.error ? [] : ((pro.data ?? []) as CatalogItem[]),
+      customers: cus.data,
+      locations: loc.data,
+      products: pro.error ? [] : pro.data,
       aliases: al.aliases,
       aliasesReady: al.ready,
     };
@@ -109,7 +130,9 @@ const tripInput = z.object({
   containerNo: z.string().max(30).regex(/^[A-Z0-9]*$/, "Số cont chỉ gồm chữ và số"),
   productCode: z.string().max(100),
   productName: z.string().max(300),
+  productUnit: z.string().max(30).default(""),
   quantity: z.number().min(0).max(1_000_000_000).nullable(),
+  deliveryMethod: z.string().max(100).default(""),
   note: z.string().max(1000),
 });
 const orderInput = z.object({
@@ -142,6 +165,7 @@ export async function commitPaste(input: z.input<typeof commitInput>): Promise<A
     const { orders, aliases } = parsed.data;
     const supabase = await createClient();
     const out: PasteOutcome = { orders: [], failed: [], warnings: [], aliasesSaved: 0 };
+    let methodMissing = false;
 
     for (const o of orders) {
       const rows = o.trips.map((t) => t.rowNo);
@@ -204,10 +228,20 @@ export async function commitPaste(input: z.input<typeof commitInput>): Promise<A
           const r = await supabase.from("shipments").update({ container_no: t.containerNo }).eq("id", s.id);
           if (r.error) out.warnings.push(`Chuyến ${s.shipment_code}: chưa ghi được số cont ${t.containerNo} (${toUserMessage(r.error)}).`);
         }
+        if (t.deliveryMethod.trim() && !methodMissing) {
+          const r = await supabase.from("shipments").update({ delivery_method: t.deliveryMethod.trim() }).eq("id", s.id);
+          if (r.error) {
+            // CSDL chưa chạy bản nâng cấp 9021: báo một lần, vẫn tạo đơn bình thường
+            if (/delivery_method/.test(r.error.message ?? "")) {
+              methodMissing = true;
+              out.warnings.push("Chưa lưu được Hình thức giao: cần chạy bản nâng cấp 9021 (file 9021_hinh_thuc_giao.sql). Hình thức giao vẫn được ghi trong ghi chú chuyến.");
+            } else out.warnings.push(`Chuyến ${s.shipment_code}: chưa ghi được hình thức giao (${toUserMessage(r.error)}).`);
+          }
+        }
         if (t.productCode || t.quantity !== null) {
           const r = await supabase.rpc("set_shipment_items", {
             p_shipment_id: s.id,
-            p_items: [{ item_code: t.productCode, item_name: t.productName, quantity: t.quantity ?? "", unit: "", note: "", custom_fields: {} }],
+            p_items: [{ item_code: t.productCode, item_name: t.productName, quantity: t.quantity ?? "", unit: t.productUnit, note: "", custom_fields: {} }],
           });
           if (r.error) out.warnings.push(`Chuyến ${s.shipment_code}: chưa ghi được mã hàng (${toUserMessage(r.error)}). Mở chi tiết chuyến để nhập.`);
         }

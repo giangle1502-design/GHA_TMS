@@ -34,7 +34,7 @@ const inserted: Record<string, unknown>[] = [];
 function q(table: string) {
   const api: Record<string, unknown> = {};
   const chain = () => api;
-  for (const m of ["select", "eq", "neq", "order", "limit", "gte", "lt", "in", "maybeSingle"]) api[m] = chain;
+  for (const m of ["select", "eq", "neq", "order", "limit", "range", "gte", "lt", "in", "maybeSingle"]) api[m] = chain;
   api.insert = (rows: Record<string, unknown>[]) => {
     inserted.push(...rows);
     return { select: () => Promise.resolve({ data: rows.map((r, i) => ({ id: `new${i}`, name: r.name })), error: null }) };

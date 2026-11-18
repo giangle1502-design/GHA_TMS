@@ -2,7 +2,9 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CheckCircle2, ClipboardPaste, ImageUp, Loader2, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { CheckCircle2, ClipboardPaste, FileSpreadsheet, ImageUp, Loader2, Plus, Save, Trash2, Upload, X } from "lucide-react";
+import { ReferenceSelect } from "@/components/entities/reference-select";
+import { carrierValues, filterCostCont, readCostContFile, toTSV, type CarrierFilter, type SheetData } from "@/lib/cost-cont-import";
 import { EntityFormDialog } from "@/components/entities/entity-form-dialog";
 import { getEntityMeta } from "@/lib/entities/actions";
 import type { CustomFieldRow } from "@/lib/entities/types";
@@ -17,6 +19,7 @@ import {
   TEMPLATES,
   containerOf,
   deliveryDisplay,
+  deliveryMethodOf,
   deliveryNames,
   groupRef,
   pickupNames,
@@ -54,6 +57,15 @@ type Name = { kind: AliasKind; raw: string; key: string; rows: number; auto: Mat
 const ENTITY_OF: Record<AliasKind, string> = { customer: "customers", location: "locations", product: "products" };
 type QuickMeta = { customRows: CustomFieldRow[]; canCreate: boolean };
 
+/** Đầu tháng → cuối tháng hiện tại (YYYY-MM-DD) */
+function thisMonth(): { from: string; to: string } {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return { from: `${y}-${p(m + 1)}-01`, to: `${y}-${p(m + 1)}-${p(new Date(y, m + 1, 0).getDate())}` };
+}
+
 export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog }) {
   /** Danh mục (tải lại sau khi người dùng bấm "Thêm mới") */
   const [catalog, setCatalog] = useState<PasteCatalog>(initialCatalog);
@@ -81,6 +93,12 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
   const [tplChoice, setTplChoice] = useState<PasteTemplate | "auto">("auto");
   const [template, setTemplate] = useState<PasteTemplate>("theo_doi");
   const [ocr, setOcr] = useState<{ busy: boolean; progress: number; error: string }>({ busy: false, progress: 0, error: "" });
+  /** Điểm nhận / điểm giao chọn tay theo từng dòng: "dòng|pickup" → id địa điểm (ưu tiên hơn ghép theo tên) */
+  const [rowLoc, setRowLoc] = useState<Map<string, string>>(new Map());
+  /** File Excel (sheet COST CONT) đã đọc + bộ lọc Nhà vận chuyển / ngày giao */
+  const [sheet, setSheet] = useState<SheetData | null>(null);
+  const [sheetFilter, setSheetFilter] = useState<CarrierFilter>(() => ({ carrier: "GHA", ...thisMonth(), onlyPending: false }));
+  const [fileState, setFileState] = useState<{ busy: boolean; error: string }>({ busy: false, error: "" });
 
   const byId = useMemo(() => {
     const m = new Map<string, CatalogItem>();
@@ -107,7 +125,10 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     const rows = parseTSV(t);
     const d = detectColumns(rows, tpl === "auto" ? undefined : tpl);
     setTemplate(d.template);
-    if (rows.length !== grid.length) setOrderNos(new Map());
+    if (rows.length !== grid.length) {
+      setOrderNos(new Map());
+      setRowLoc(new Map());
+    }
     setGrid(rows);
     setMap(d.map);
     setHeaderRow(d.headerRow);
@@ -127,6 +148,28 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       setOcr({ busy: false, progress: 0, error: e instanceof Error ? e.message : "Không đọc được ảnh" });
     }
   };
+  /** Lọc sheet COST CONT theo Nhà vận chuyển + ngày giao rồi đưa vào ô dán (kèm dòng tiêu đề) */
+  const applySheet = (data: SheetData, f: CarrierFilter) => {
+    setSheetFilter(f);
+    const { rows: picked } = filterCostCont(data, f);
+    setRowLoc(new Map());
+    setOrderNos(new Map());
+    read(picked.length ? toTSV(data.header, picked) : "", null, "theo_doi");
+  };
+  const readFile = async (file: File) => {
+    setFileState({ busy: true, error: "" });
+    try {
+      const data = await readCostContFile(file);
+      setSheet(data);
+      setTplChoice("auto");
+      applySheet(data, sheetFilter);
+      setFileState({ busy: false, error: "" });
+    } catch (e) {
+      setFileState({ busy: false, error: e instanceof Error ? e.message : "Không đọc được file" });
+    }
+  };
+  const sheetStats = useMemo(() => (sheet ? { ...filterCostCont(sheet, sheetFilter), carriers: carrierValues(sheet) } : null), [sheet, sheetFilter]);
+
   const imageFrom = (dt: DataTransfer | null) => [...(dt?.files ?? [])].find((f) => f.type.startsWith("image/"));
 
   const pick = (kind: AliasKind, raw: string | undefined): Pick => {
@@ -148,6 +191,16 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     const raw = display || raws.find((x) => x.trim()) || "";
     return { ...pick(kind, raw), raw };
   };
+
+  /** Điểm chọn tay ở dòng này (cột "chọn") thay cho kết quả ghép theo tên */
+  const withRowChoice = (p: Pick & { raw: string }, id: string | undefined): Pick & { raw: string } => (id ? { ...p, id, how: "manual", candidates: [] } : p);
+  const setRowChoice = (i: number, role: Role, id: string) =>
+    setRowLoc((m) => {
+      const n = new Map(m);
+      if (id) n.set(`${i}|${role}`, id);
+      else n.delete(`${i}|${role}`);
+      return n;
+    });
 
   // Danh sách tên khác nhau trong phần dán, để xem và chọn lại một lần cho mọi dòng
   const names: Name[] = useMemo(() => {
@@ -203,8 +256,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       const errors: string[] = [];
       const warnings: string[] = [];
       const customer = pick("customer", r.phap_nhan);
-      const pickup = pickFrom("location", pickupNames(r));
-      const delivery = pickFrom("location", deliveryNames(r), deliveryDisplay(r));
+      const pickup = withRowChoice(pickFrom("location", pickupNames(r)), rowLoc.get(`${i}|pickup`));
+      const delivery = withRowChoice(pickFrom("location", deliveryNames(r), deliveryDisplay(r)), rowLoc.get(`${i}|delivery`));
       const product = pick("product", r.ma_hang);
       const date = isoDate(r.ngay_giao);
       const cont = containerOf(r);
@@ -212,10 +265,10 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       const qty = parseQty(unsure && /^\d{1,3}(\.\d{3})+$/.test((r.so_luong ?? "").trim()) ? r.so_luong!.replace(/\./g, "") : r.so_luong);
       if (!r.phap_nhan) errors.push(template === "theo_doi" ? "Thiếu Pháp nhân" : "Thiếu Công ty");
       else if (!customer.id) errors.push(`Chưa ghép khách hàng "${r.phap_nhan}"`);
-      if (!pickup.raw) errors.push(template === "theo_doi" ? "Thiếu Điểm lấy cont" : "Thiếu Điểm đi / Kho xuất");
-      else if (!pickup.id) errors.push(`Chưa ghép điểm nhận "${pickup.raw}"`);
-      if (!delivery.raw) errors.push(template === "theo_doi" ? "Thiếu Điểm giao" : template === "ecount_ck" ? "Thiếu Điểm đến / Kho nhập" : "Thiếu khách hàng nhận");
-      else if (!delivery.id) errors.push(`Chưa ghép điểm giao "${delivery.raw}"`);
+      if (!pickup.raw && !pickup.id) errors.push(template === "theo_doi" ? "Thiếu Điểm lấy cont" : "Thiếu Điểm đi / Kho xuất");
+      else if (!pickup.id) errors.push(`Chưa chọn điểm nhận cho "${pickup.raw}"`);
+      if (!delivery.raw && !delivery.id) errors.push(template === "theo_doi" ? "Thiếu Điểm giao" : template === "ecount_ck" ? "Thiếu Điểm đến / Kho nhập" : "Thiếu khách hàng nhận");
+      else if (!delivery.id) errors.push(`Chưa chọn điểm giao cho "${delivery.raw}"`);
       if (pickup.id && pickup.id === delivery.id) errors.push("Điểm lấy cont và điểm giao trùng nhau");
       if (r.ma_hang && !product.id) errors.push(`Chưa ghép mã hàng "${r.ma_hang}"`);
       if (!r.ngay_giao) errors.push(template === "theo_doi" ? "Thiếu Ngày giao" : "Thiếu Ngày");
@@ -232,7 +285,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
         if (cols.length) warnings.push(`Ảnh đọc chưa chắc: ${cols.join(", ")}. Đối chiếu với ảnh, sửa trong ô dán nếu sai`);
       }
       if (looksScientific(r.so_to_khai)) warnings.push("Số tờ khai bị Excel đổi dạng 1.08E+11: định dạng cột là Text rồi copy lại");
-      return { i, r, customer, pickup, delivery, product, date, cont, qty, errors, warnings, group: "" };
+      return { i, r, customer, pickup, delivery, product, date, cont, qty, method: deliveryMethodOf(r), errors, warnings, group: "" };
     });
     // Đánh số đơn: tự gợi ý theo nhóm, người dùng sửa được ô "Đơn" (cùng số = một đơn)
     const nums = new Map<string, number>();
@@ -253,7 +306,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     return out.map((x) => ({ ...x, orderNo: no.get(x.i) ?? null }));
     // pick đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template]);
+  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template, rowLoc]);
 
   const errorCount = rows.filter((x) => x.errors.length).length;
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
@@ -335,8 +388,11 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
           deliveryLocationId: x.delivery.id!,
           containerNo: x.cont,
           productCode: p?.code ?? (x.r.ma_hang ?? "").slice(0, 100),
-          productName: "",
+          productName: p && p.name !== p.code ? p.name.slice(0, 300) : "",
+          // Số lượng 1 cont trong bảng theo dõi tính bằng kg (24,750 = 990 bao 25 kg)
+          productUnit: x.qty !== null ? "KG" : "",
           quantity: x.qty,
+          deliveryMethod: x.method,
           note: tripNote(x.r),
         };
       }),
@@ -361,6 +417,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
         setMap([]);
         setManual(new Map());
         setRemember(new Set());
+        setRowLoc(new Map());
       }
     });
   };
@@ -383,6 +440,72 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className={cn("inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 font-medium hover:bg-muted", fileState.busy && "pointer-events-none opacity-50")}>
+                <FileSpreadsheet className="size-4 text-emerald-700" /> Nhập file Excel (sheet COST CONT)…
+                <input
+                  type="file"
+                  accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
+                  className="hidden"
+                  data-cost-cont-file
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void readFile(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {fileState.busy ? (
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" /> Đang đọc file…
+                </span>
+              ) : sheet ? (
+                <span className="text-muted-foreground">
+                  {sheet.fileName} · sheet {sheet.sheet} · {sheet.rows.length.toLocaleString("en-US")} dòng
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Chỉ lấy các dòng có Nhà vận chuyển (cột AA) = GHA để tạo đơn.</span>
+              )}
+              {fileState.error ? <span className="text-destructive">{fileState.error}</span> : null}
+            </div>
+            {sheet && sheetStats ? (
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-0.5 text-xs">
+                  Nhà vận chuyển (cột AA)
+                  <select
+                    aria-label="Nhà vận chuyển"
+                    value={sheetStats.carriers.find((c) => matchKey(c.value) === matchKey(sheetFilter.carrier))?.value ?? sheetFilter.carrier}
+                    onChange={(e) => applySheet(sheet, { ...sheetFilter, carrier: e.target.value })}
+                    className="h-8 rounded border bg-background px-1 text-sm"
+                  >
+                    {sheetStats.carriers.some((c) => matchKey(c.value) === matchKey(sheetFilter.carrier)) ? null : <option value={sheetFilter.carrier}>{sheetFilter.carrier} (0 dòng)</option>}
+                    {sheetStats.carriers.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.value} ({c.rows.toLocaleString("en-US")} dòng)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-0.5 text-xs">
+                  Ngày giao từ
+                  <input type="date" aria-label="Ngày giao từ" value={sheetFilter.from} onChange={(e) => applySheet(sheet, { ...sheetFilter, from: e.target.value })} className="h-8 rounded border bg-background px-1 text-sm" />
+                </label>
+                <label className="flex flex-col gap-0.5 text-xs">
+                  đến
+                  <input type="date" aria-label="Ngày giao đến" value={sheetFilter.to} onChange={(e) => applySheet(sheet, { ...sheetFilter, to: e.target.value })} className="h-8 rounded border bg-background px-1 text-sm" />
+                </label>
+                <label className="flex h-8 items-center gap-1.5 text-sm">
+                  <input type="checkbox" checked={sheetFilter.onlyPending} onChange={(e) => applySheet(sheet, { ...sheetFilter, onlyPending: e.target.checked })} />
+                  Chỉ dòng Chưa giao
+                </label>
+                <span className="flex h-8 items-center text-sm" data-cost-cont-count>
+                  Lấy <strong className="mx-1">{sheetStats.rows.length}</strong> / {sheetStats.carrierRows} dòng {sheetFilter.carrier}
+                  {sheetStats.noDate ? ` (${sheetStats.noDate} dòng không có ngày giao bị bỏ qua)` : ""}
+                </span>
+              </div>
+            ) : null}
+          </div>
           <textarea
             value={text}
             onChange={(e) => read(e.target.value, unsure)}
@@ -614,7 +737,22 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                         onChange={(e) => setSkip(e.target.checked ? new Set() : new Set(rows.map((x) => x.i)))}
                       />
                     </th>
-                    {["Dòng", "Đơn", "Khách hàng", template === "theo_doi" ? "Số tờ khai" : "Số phiếu", "Mã hàng", "Số lượng", "Số cont", "Ngày giao", template === "theo_doi" ? "Điểm lấy cont" : "Điểm đi", template === "theo_doi" ? "Điểm giao" : "Điểm đến", "Kiểm tra"].map((h) => (
+                    {[
+                      "Dòng",
+                      "Đơn",
+                      "Khách hàng",
+                      template === "theo_doi" ? "Số tờ khai" : "Số phiếu",
+                      "Mã hàng",
+                      "Số lượng (kg)",
+                      "Hình thức giao",
+                      "Số cont",
+                      "Ngày giao",
+                      "Điểm nhận trong file",
+                      "Điểm nhận (chọn)",
+                      "Điểm giao trong file",
+                      "Điểm giao (chọn)",
+                      "Kiểm tra",
+                    ].map((h) => (
                       <th key={h} className="px-2 py-1.5 whitespace-nowrap">
                         {h}
                       </th>
@@ -670,10 +808,13 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{groupRef(x.r)}</td>
                       <Cell raw={x.r.ma_hang} id={x.product.id} byId={byId} codeOnly />
                       <td className="px-2 py-1 text-right tabular-nums">{x.qty !== null ? x.qty.toLocaleString("en-US") : x.r.so_luong}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">{x.method}</td>
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{x.cont}</td>
                       <td className="px-2 py-1 whitespace-nowrap">{x.date ? dmy(x.date) : x.r.ngay_giao}</td>
-                      <Cell raw={x.pickup.raw} id={x.pickup.id} byId={byId} />
-                      <Cell raw={x.delivery.raw} id={x.delivery.id} byId={byId} />
+                      <td className="max-w-48 px-2 py-1 font-medium">{x.pickup.raw || "—"}</td>
+                      <PlaceCell i={x.i} role="pickup" id={x.pickup.id} manual={rowLoc.has(`${x.i}|pickup`)} byId={byId} onChange={setRowChoice} />
+                      <td className="max-w-48 px-2 py-1 font-medium">{x.delivery.raw || "—"}</td>
+                      <PlaceCell i={x.i} role="delivery" id={x.delivery.id} manual={rowLoc.has(`${x.i}|delivery`)} byId={byId} onChange={setRowChoice} />
                       <td className="min-w-56 px-2 py-1 text-xs">
                         {x.errors.map((e) => (
                           <p key={e} className="text-destructive">
@@ -724,6 +865,43 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       ) : null}
       {catalog.aliasesReady ? <SavedAliases aliases={aliases} byId={byId} onDeleted={(id) => setAliases((a) => a.filter((x) => x.id !== id))} /> : null}
     </div>
+  );
+}
+
+/**
+ * Ô chọn điểm nhận / điểm giao của một dòng: tìm trong TOÀN BỘ danh mục địa điểm trên máy chủ (gõ tên, mã),
+ * không phụ thuộc gợi ý tự động. Không thêm tên trong file vào danh mục.
+ */
+function PlaceCell({
+  i,
+  role,
+  id,
+  manual,
+  byId,
+  onChange,
+}: {
+  i: number;
+  role: Role;
+  id: string | null;
+  manual: boolean;
+  byId: Map<string, CatalogItem>;
+  onChange: (i: number, role: Role, id: string) => void;
+}) {
+  const v = id && id !== RAW_KEEP ? id : "";
+  return (
+    <td className={cn("min-w-60 px-2 py-1", !v && "bg-destructive/10")} data-place-cell={`${i + 1}-${role}`}>
+      <ReferenceSelect
+        key={v}
+        id={`dx-${role}-${i}`}
+        refKey="locations"
+        value={v}
+        initialLabel={label(byId.get(v))}
+        invalid={!v}
+        allowQuickCreate={false}
+        onChange={(nv) => onChange(i, role, nv)}
+      />
+      {v && !manual ? <span className="text-[11px] text-muted-foreground">Tự ghép theo tên, bấm để đổi</span> : null}
+    </td>
   );
 }
 
