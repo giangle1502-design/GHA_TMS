@@ -39,6 +39,7 @@ import { CORRECT_CREW_STATUSES, UNACCEPT_STATUSES } from "@/lib/crew-change";
 import { VehicleOrderCell } from "./vehicle-order-cell";
 import { DeliveryDaysCell } from "./delivery-days-cell";
 import { DriverPayCell } from "./driver-pay-cell";
+import { FreightPriceCell, QuickFreightButton } from "./quick-freight-dialog";
 import { ContainerNoCell } from "./container-no-cell";
 import { VehiclePlateCell } from "./vehicle-plate-cell";
 import { CancelDialog, DeleteCancelledButton, RestoreShipmentButton } from "./cancel-dialog";
@@ -271,6 +272,16 @@ const BASE_COLS: Col[] = [
     render: () => null,
   },
   {
+    key: "unit_price",
+    label: "Đơn giá cước",
+    width: 140,
+    align: "right",
+    hint: "Đơn giá cước vận chuyển chưa hỗ trợ dầu · % hỗ trợ dầu. Bấm nút bảng giá cạnh số để xem bảng giá xe cont, xe tải, theo tuyến và lấy giá cho chuyến.",
+    sort: (r) => Number(r.unit_price) || null,
+    text: (r) => (Number(r.unit_price) ? Number(r.unit_price) : "Chưa có giá"),
+    render: () => null,
+  },
+  {
     key: "delivery_days",
     label: "Số ngày giao",
     width: 84,
@@ -437,6 +448,8 @@ export function DispatchTable({
             <Actions r={row.original} canAssign={canAssign} canCancel={canCancel} canDelete={canDelete} canFillDriver={fillDriver} />
           ) : c.key === "vehicle_day_order" ? (
             <VehicleOrderCell r={row.original} editable={canAssign} />
+          ) : c.key === "unit_price" ? (
+            <FreightPriceCell row={row.original} editable={canAssign} />
           ) : c.key === "driver_pay" ? (
             <DriverPayCell r={row.original} />
           ) : c.key === "delivery_days" ? (
@@ -729,6 +742,7 @@ export function DispatchTable({
 function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: ShipmentListRow; canAssign: boolean; canCancel: boolean; canDelete: boolean; canFillDriver: boolean }) {
   return (
     <div className="flex flex-wrap justify-end gap-1">
+      {canAssign && r.status !== "cancelled" ? <QuickFreightButton compact shipmentId={r.id} code={r.shipment_code} /> : null}
       {r.status !== "cancelled" ? <DeliveryNoteButton compact ids={[r.id]} label={r.shipment_code} /> : null}
       {r.status !== "cancelled" && r.status !== "draft" && isGhaYard(r.delivery_name) ? <DeliveryNoteButton compact confirm ids={[r.id]} label={r.shipment_code} /> : null}
       {r.driver_id && r.status !== "cancelled" ? <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} /> : null}

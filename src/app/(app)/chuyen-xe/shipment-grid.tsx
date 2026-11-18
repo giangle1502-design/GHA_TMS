@@ -41,6 +41,7 @@ import { CustomFieldCell, PricingUnitCell, ShipmentDateCell, ShipmentRefCell } f
 import { VehiclePlateCell } from "@/components/dispatch/vehicle-plate-cell";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 import { isGhaYard } from "@/lib/delivery-note";
+import { PricePickButton, QuickFreightButton } from "@/components/dispatch/quick-freight-dialog";
 
 type Col = {
   key: string;
@@ -135,7 +136,7 @@ const COLS: Col[] = [
   { key: "driver_name", label: "Tài xế", width: 150, render: (r) => r.driver_name },
   { key: "quantity", label: "SL", width: 70, align: "right", edit: "quantity", render: (r) => formatNumber(r.quantity) },
   { key: "pricing_unit", label: "ĐVT", width: 76, render: (r) => PRICING_UNITS[r.pricing_unit] ?? r.pricing_unit },
-  { key: "unit_price", label: "Đơn giá", width: 120, align: "right", edit: "unit_price", render: (r) => (Number(r.unit_price) ? formatVND(r.unit_price) : <span className="text-amber-700">Chưa có giá</span>) },
+  { key: "unit_price", label: "Đơn giá", width: 140, align: "right", edit: "unit_price", render: (r) => (Number(r.unit_price) ? formatVND(r.unit_price) : <span className="text-amber-700">Chưa có giá</span>) },
   { key: "freight_amount", label: "Cước (đơn giá × SL)", width: 130, align: "right", defaultHidden: true, render: (r) => formatVND(r.freight_amount) },
   { key: "surcharge_amount", label: "Phụ phí bảng giá", width: 120, align: "right", edit: "surcharge_amount", defaultHidden: true, render: (r) => formatVND(r.surcharge_amount) },
   {
@@ -318,6 +319,13 @@ export function ShipmentGrid({
         cell: ({ row }) => {
           const r = row.original;
           const editable = canEdit && c.edit && (c.edit === "notes" || !LOCKED_STATUSES.includes(r.status));
+          if (c.key === "shipment_code" && canEdit && r.status !== "cancelled")
+            return (
+              <div className="flex items-center gap-1">
+                <span className="min-w-0 flex-1 truncate">{c.render(r)}</span>
+                <QuickFreightButton compact shipmentId={r.id} code={r.shipment_code} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />
+              </div>
+            );
           if (c.key === "trip_order") return <VehicleOrderCell r={r} editable={canSetOrder} />;
           // Sửa nhanh số cont, số xe (chọn trong danh mục xe) ngay trên bảng
           if (c.key === "container_no") return <ContainerNoCell r={r} editable={canEdit} />;
@@ -338,7 +346,18 @@ export function ShipmentGrid({
           if (c.key === "pricing_unit") return <PricingUnitCell r={r} display={c.render(r)} editable={canEdit} options={UNIT_OPTIONS} />;
           if (c.key === "delivery_days") return <DeliveryDaysCell r={r} editable={canSetOrder} />;
           if (c.def) return <CustomFieldCell r={r} def={c.def} display={c.render(r)} editable={canEdit} />;
-          return editable ? <EditCell row={r} col={c} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} /> : c.render(r);
+          const saved = (nr: ShipmentListRow) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)));
+          // Đơn giá: nút bảng giá (xe cont, xe tải, theo tuyến) cạnh ô để lấy giá
+          if (c.key === "unit_price" && editable)
+            return (
+              <div className="flex items-center gap-0.5">
+                <div className="min-w-0 flex-1">
+                  <EditCell row={r} col={c} onSaved={saved} />
+                </div>
+                <PricePickButton row={r} onSaved={saved} />
+              </div>
+            );
+          return editable ? <EditCell row={r} col={c} onSaved={saved} /> : c.render(r);
         },
       })),
     [canEdit, allCols, canFillDriver, canSetOrder, canAssign],
