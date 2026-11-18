@@ -24,6 +24,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/so-chuyen", label: "Số chuyến xe, tài xế", icon: "ListOrdered", anyOf: ["dispatch.view", "reports.view"] },
       { href: "/tai-xe", label: "Tài xế", icon: "IdCard", anyOf: ["drivers.view"] },
       { href: "/phuong-tien", label: "Phương tiện", icon: "Bus", anyOf: ["vehicles.view"] },
+      { href: "/kho", label: "Kho GHA nhập xuất tồn", icon: "Warehouse", anyOf: ["inventory.view"] },
       { href: "/dau-xe", label: "Dầu theo xe", icon: "Fuel", anyOf: ["fuel.view"] },
       { href: "/khach-hang", label: "Khách hàng và địa điểm", icon: "Building2", anyOf: ["customers.view", "locations.view"] },
       { href: "/bang-gia", label: "Bảng giá", icon: "Tags", anyOf: ["price_lists.view"] },
