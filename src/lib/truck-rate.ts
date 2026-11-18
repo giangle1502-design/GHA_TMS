@@ -2,10 +2,9 @@
  * Bảng giá xe tải (SQL 9022, bảng truck_rate_cards): ma trận khoảng km × trọng tải,
  * phí bốc xếp theo trọng tải, hệ số hỗ trợ dầu theo giá dầu.
  *
- * Giá trong bảng cước ĐÃ cộng hỗ trợ dầu (fuel_pct_included, vd 20%):
- *   Đơn giá chưa dầu = Giá trong bảng / (1 + % đã cộng / 100)
- *   Cước = Đơn giá chưa dầu × (1 + % hỗ trợ dầu / 100)
- * % hỗ trợ dầu lấy theo giá dầu (bảng hệ số: hệ số 1.2 = 20%), không nhập giá dầu thì dùng đúng % đã cộng.
+ * Giá trong bảng cước là ĐƠN GIÁ CHƯA hỗ trợ dầu (LE xác nhận 18/11/2026: tiêu đề "đã điều chỉnh 20%" trong file là ghi nhầm).
+ *   Cước = Đơn giá × (1 + % hỗ trợ dầu / 100)
+ * % hỗ trợ dầu lấy theo giá dầu (bảng hệ số: hệ số 1.2 = 20%); không nhập giá dầu thì dùng % dầu mặc định của bảng giá.
  */
 
 export type DistanceBand = { from_km: number; to_km: number; label: string };
@@ -18,7 +17,7 @@ export type TruckRateCard = {
   name: string;
   customer_id?: string | null;
   customer_name?: string | null;
-  fuel_pct_included: number;
+  default_fuel_pct: number;
   distance_bands: DistanceBand[];
   weight_bands: WeightBand[];
   /** prices[i][j]: khoảng km i, trọng tải j; null = chưa có giá */
@@ -33,10 +32,6 @@ export type TruckRateCard = {
 
 export const round0 = (n: number) => Math.round(n);
 
-/** Đơn giá chưa dầu từ giá trong bảng */
-export function basePrice(cardPrice: number, fuelPctIncluded: number): number {
-  return cardPrice / (1 + (fuelPctIncluded || 0) / 100);
-}
 
 /** Hệ số dầu theo giá dầu (đ/lít). Ngoài bảng thì lấy dòng gần nhất và báo. */
 export function fuelFactor(bands: FuelBand[], fuelPrice: number): { factor: number; index: number; outside: "below" | "above" | null } | null {
@@ -64,9 +59,9 @@ function bandIndex<T>(bands: T[], value: number, to: (b: T) => number): number {
 export type TruckQuote = {
   distanceIndex: number;
   weightIndex: number;
-  /** Giá trong bảng (đã gồm % dầu của bảng) */
+  /** Giá trong bảng = đơn giá chưa dầu */
   cardPrice: number | null;
-  /** Đơn giá chưa dầu */
+  /** Đơn giá chưa dầu (= giá trong bảng) */
   unitPrice: number | null;
   /** % hỗ trợ dầu áp dụng */
   fuelPct: number;
@@ -76,7 +71,7 @@ export type TruckQuote = {
   warnings: string[];
 };
 
-export function quoteTruck(card: Pick<TruckRateCard, "distance_bands" | "weight_bands" | "prices" | "fuel_bands" | "fuel_pct_included">, input: { km: number | null; tons: number | null; fuelPrice?: number | null }): TruckQuote {
+export function quoteTruck(card: Pick<TruckRateCard, "distance_bands" | "weight_bands" | "prices" | "fuel_bands" | "default_fuel_pct">, input: { km: number | null; tons: number | null; fuelPrice?: number | null }): TruckQuote {
   const warnings: string[] = [];
   const di = input.km === null ? -1 : bandIndex(card.distance_bands, input.km, (b) => b.to_km);
   const wi = input.tons === null ? -1 : bandIndex(card.weight_bands, input.tons, (b) => b.to_ton);
@@ -88,19 +83,19 @@ export function quoteTruck(card: Pick<TruckRateCard, "distance_bands" | "weight_
     const max = card.weight_bands.at(-1)?.to_ton;
     warnings.push(max !== undefined && input.tons > max ? `Trọng lượng vượt bảng giá (tối đa ${max} tấn).` : "Trọng lượng không hợp lệ.");
   }
-  let fuelPct = card.fuel_pct_included || 0;
+  let fuelPct = card.default_fuel_pct || 0;
   if (input.fuelPrice) {
     const f = fuelFactor(card.fuel_bands, input.fuelPrice);
     if (f) {
       fuelPct = Math.round((f.factor - 1) * 100 * 1000) / 1000;
       if (f.outside === "below") warnings.push("Giá dầu thấp hơn bảng hệ số: lấy hệ số thấp nhất.");
       if (f.outside === "above") warnings.push("Giá dầu cao hơn bảng hệ số: lấy hệ số cao nhất.");
-    } else warnings.push("Chưa có bảng hệ số hỗ trợ dầu: dùng % dầu của bảng giá.");
+    } else warnings.push("Chưa có bảng hệ số hỗ trợ dầu: dùng % dầu mặc định của bảng giá.");
   }
   const raw = di >= 0 && wi >= 0 ? card.prices[di]?.[wi] : null;
   const cardPrice = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
   if (di >= 0 && wi >= 0 && cardPrice === null) warnings.push("Ô giá này chưa có giá.");
-  const unitPrice = cardPrice === null ? null : basePrice(cardPrice, card.fuel_pct_included);
+  const unitPrice = cardPrice;
   const freight = unitPrice === null ? null : round0(unitPrice * (1 + fuelPct / 100));
   const loadingFee = wi >= 0 ? (card.weight_bands[wi].loading_fee ?? null) : null;
   return { distanceIndex: di, weightIndex: wi, cardPrice, unitPrice: unitPrice === null ? null : round0(unitPrice), fuelPct, freight, loadingFee, warnings };
@@ -112,7 +107,7 @@ export function validateCard(card: TruckRateCard): string[] {
   if (!card.name.trim()) errs.push("Chưa nhập tên bảng giá.");
   if (!card.distance_bands.length) errs.push("Chưa có khoảng km nào.");
   if (!card.weight_bands.length) errs.push("Chưa có trọng tải nào.");
-  if (!(card.fuel_pct_included >= 0 && card.fuel_pct_included <= 100)) errs.push("% hỗ trợ dầu đã gồm phải từ 0 đến 100.");
+  if (!(card.default_fuel_pct >= 0 && card.default_fuel_pct <= 100)) errs.push("% hỗ trợ dầu mặc định phải từ 0 đến 100.");
   const asc = <T,>(list: T[], from: (b: T) => number, to: (b: T) => number, what: string) => {
     list.forEach((b, i) => {
       if (!Number.isFinite(from(b)) || !Number.isFinite(to(b)) || to(b) < from(b)) errs.push(`${what} dòng ${i + 1}: "từ" phải nhỏ hơn hoặc bằng "đến".`);
@@ -224,15 +219,12 @@ export function parseRateSheet(rawGrid: Grid, opts: { sheetName?: string; fileNa
   const head = findCell(grid, /^tu\s*\(?km\)?$/);
   if (!head) throw new Error("Không thấy bảng cước: cần ô tiêu đề \"Từ (KM)\" như file mẫu.");
 
-  // Tiêu đề và % dầu đã gồm
+  // Tiêu đề (số % ghi trong tiêu đề KHÔNG dùng: giá trong bảng là đơn giá chưa dầu)
   let title = "";
   for (let r = head.r - 1; r >= 0 && !title; r--) {
     const t = (grid[r] ?? []).find((v) => typeof v === "string" && v.trim());
     if (typeof t === "string") title = t.trim();
   }
-  const pctMatch = /(\d+(?:[.,]\d+)?)\s*%/.exec(title);
-  const fuelPct = pctMatch ? Number(pctMatch[1].replace(",", ".")) : 0;
-  if (!pctMatch) warnings.push("Tiêu đề không ghi % hỗ trợ dầu đã gồm: tạm để 0%, sửa lại nếu cần.");
 
   // Cột trọng tải: các ô có chữ bên phải cột "Khoảng cách"
   const hr = grid[head.r];
@@ -312,7 +304,7 @@ export function parseRateSheet(rawGrid: Grid, opts: { sheetName?: string; fileNa
     card: {
       id: null,
       name: title || opts.sheetName || "Bảng giá xe tải",
-      fuel_pct_included: fuelPct,
+      default_fuel_pct: 0,
       distance_bands,
       weight_bands,
       prices,
@@ -336,7 +328,7 @@ export function blankCard(today: string, like?: TruckRateCard | null): TruckRate
     name: like ? `${like.name} (bản sao)` : "Bảng giá xe tải mới",
     customer_id: like?.customer_id ?? null,
     customer_name: like?.customer_name ?? null,
-    fuel_pct_included: like?.fuel_pct_included ?? 0,
+    default_fuel_pct: like?.default_fuel_pct ?? 0,
     distance_bands,
     weight_bands,
     prices: like ? like.prices.map((r) => [...r]) : distance_bands.map(() => weight_bands.map(() => null)),

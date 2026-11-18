@@ -11,7 +11,7 @@ const cardSchema = z.object({
   id: z.string().nullable().optional(),
   name: z.string().trim().min(1, "Chưa nhập tên bảng giá").max(200),
   customer_id: z.string().nullable().optional(),
-  fuel_pct_included: num.min(0).max(100),
+  default_fuel_pct: num.min(0).max(100),
   distance_bands: z.array(z.object({ from_km: num, to_km: num, label: z.string().trim().max(100) })).min(1).max(100),
   weight_bands: z.array(z.object({ from_ton: num, to_ton: num, label: z.string().trim().max(100), loading_fee: num.min(0).nullable() })).min(1).max(40),
   prices: z.array(z.array(num.min(0).nullable())),
@@ -35,7 +35,7 @@ export async function saveTruckRateCard(input: TruckRateCard): Promise<ActionRes
     const row = {
       name: c.name,
       customer_id: c.customer_id && isUuid(c.customer_id) ? c.customer_id : null,
-      fuel_pct_included: c.fuel_pct_included,
+      default_fuel_pct: c.default_fuel_pct,
       distance_bands: c.distance_bands,
       weight_bands: c.weight_bands,
       prices: c.prices,

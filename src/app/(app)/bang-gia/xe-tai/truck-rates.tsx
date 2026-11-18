@@ -37,7 +37,7 @@ export function TruckRates({
   const [selectedId, setSelectedId] = useState<string | null>(() => cards.find((c) => c.id === initialId)?.id ?? cards[0]?.id ?? null);
   const [draft, setDraft] = useState<TruckRateCard | null>(null);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
-  const [mode, setMode] = useState<MatrixMode>("card");
+  const [mode, setMode] = useState<MatrixMode>("base");
   const [calc, setCalc] = useState({ km: "", tons: "", fuel: "" });
   const [pending, start] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -53,7 +53,7 @@ export function TruckRates({
     if (km === null && tons === null) return null;
     return quoteTruck(card, { km, tons, fuelPrice: toNum(calc.fuel) });
   }, [card, calc]);
-  const fuelPct = quote?.fuelPct ?? card?.fuel_pct_included ?? 0;
+  const fuelPct = quote?.fuelPct ?? card?.default_fuel_pct ?? 0;
 
   const pick = (id: string) => {
     if (editing && !confirm("Bỏ các thay đổi chưa lưu?")) return;
@@ -222,7 +222,7 @@ export function TruckRates({
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Calculator className="size-4" /> Tính cước
                 </CardTitle>
-                <CardDescription>Nhập quãng đường và trọng lượng để tìm ô giá. Nhập giá dầu để tính % hỗ trợ dầu theo bảng hệ số; để trống thì dùng % dầu đã gồm trong bảng.</CardDescription>
+                <CardDescription>Nhập quãng đường và trọng lượng để tìm ô giá. Nhập giá dầu để tính % hỗ trợ dầu theo bảng hệ số; để trống thì dùng % dầu mặc định của bảng giá.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid gap-3 sm:grid-cols-3">
@@ -248,12 +248,11 @@ export function TruckRates({
           <Card>
             <CardHeader className="pb-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-base">Bảng cước vận chuyển (đ/chuyến)</CardTitle>
+                <CardTitle className="text-base">Bảng đơn giá vận chuyển chưa hỗ trợ dầu (đ/chuyến)</CardTitle>
                 {!editing ? (
                   <div className="flex flex-wrap gap-1 rounded-md border p-0.5 text-sm">
                     {(
                       [
-                        ["card", `Giá trong bảng (gồm dầu ${formatNumber(card.fuel_pct_included)}%)`],
                         ["base", "Đơn giá chưa dầu"],
                         ["fuel", `Cước theo % dầu ${formatNumber(fuelPct)}%`],
                       ] as const
@@ -300,9 +299,8 @@ function QuoteResult({ quote, card }: { quote: ReturnType<typeof quoteTruck>; ca
           <AlertDescription>{quote.warnings.join(" ")}</AlertDescription>
         </Alert>
       ) : null}
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Ô giá" value={d && w ? `${d.label} · ${w.label}` : "–"} />
-        <Stat label={`Giá trong bảng (gồm ${formatNumber(card.fuel_pct_included)}% dầu)`} value={quote.cardPrice === null ? "–" : formatVND(quote.cardPrice)} />
         <Stat label="Đơn giá chưa dầu" value={quote.unitPrice === null ? "–" : formatVND(quote.unitPrice)} strong />
         <Stat label={`Cước = Đơn giá × (1 + ${formatNumber(quote.fuelPct)}%)`} value={quote.freight === null ? "–" : formatVND(quote.freight)} strong />
         <Stat label="Phí bốc xếp" value={quote.loadingFee === null ? "–" : formatVND(quote.loadingFee)} />
@@ -328,7 +326,7 @@ function CardInfo({ card }: { card: TruckRateCard }) {
         Áp dụng: <b>{card.customer_name ?? "Nội bộ, mọi khách hàng"}</b>
       </span>
       <span>
-        % dầu đã gồm trong giá: <b>{formatNumber(card.fuel_pct_included)}%</b>
+        Giá trong bảng: <b>đơn giá chưa hỗ trợ dầu</b> · % dầu mặc định: <b>{formatNumber(card.default_fuel_pct)}%</b>
       </span>
       <span>
         Hiệu lực: <b>{formatDate(card.effective_from)}</b>
@@ -364,8 +362,8 @@ function CardInfoEditor({ card, update }: { card: TruckRateCard; update: (fn: (c
           />
         </div>
         <div className="space-y-1.5">
-          <Label>% hỗ trợ dầu đã gồm trong giá</Label>
-          <NumInput value={card.fuel_pct_included} allowEmpty={false} className="h-9" onChange={(v) => update((c) => void (c.fuel_pct_included = v ?? 0))} />
+          <Label title="Dùng khi tính cước mà không nhập giá dầu">% hỗ trợ dầu mặc định</Label>
+          <NumInput value={card.default_fuel_pct} allowEmpty={false} className="h-9" onChange={(v) => update((c) => void (c.default_fuel_pct = v ?? 0))} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="rc-from">Hiệu lực từ</Label>
@@ -551,9 +549,9 @@ function FuelBands({ card, editing, update, fuelPrice }: { card: TruckRateCard; 
           <tbody>
             {card.fuel_bands.map((b, i) => {
               const hit = fuelPrice !== null && fuelPrice >= b.from_price && fuelPrice <= b.to_price;
-              const pctIncluded = Math.abs((b.factor - 1) * 100 - card.fuel_pct_included) < 0.001;
+              const pctIncluded = Math.abs((b.factor - 1) * 100 - card.default_fuel_pct) < 0.001;
               return (
-                <tr key={i} className={hit ? "bg-primary/10 font-semibold" : pctIncluded && !editing ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
+                <tr key={i} className={hit ? "bg-primary/10 font-semibold" : pctIncluded && !editing && card.default_fuel_pct ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
                   {editing ? (
                     <>
                       <td className="border p-1">
@@ -574,7 +572,7 @@ function FuelBands({ card, editing, update, fuelPrice }: { card: TruckRateCard; 
                     </>
                   )}
                   <td className="border px-3 py-1.5 text-right tabular-nums">
-                    {formatNumber(Math.round((b.factor - 1) * 10000) / 100)}%{pctIncluded && !editing ? " (đang gồm trong giá)" : ""}
+                    {formatNumber(Math.round((b.factor - 1) * 10000) / 100)}%{pctIncluded && !editing && card.default_fuel_pct ? " (mặc định)" : ""}
                   </td>
                   {editing ? (
                     <td className="border px-1">

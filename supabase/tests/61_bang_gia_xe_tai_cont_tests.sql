@@ -10,9 +10,9 @@ grant all on t_bg to authenticated, anon;
 
 -- Bảng giá nội bộ xe tải nhập sẵn từ file BANG_GIA_NOI_BO.xlsx
 select tests.assert((select count(*) from public.truck_rate_cards) = 1, 'Có sẵn 1 bảng giá xe tải nội bộ');
-select tests.assert((select fuel_pct_included = 20 and jsonb_array_length(distance_bands) = 11 and jsonb_array_length(weight_bands) = 8
+select tests.assert((select default_fuel_pct = 0 and name like '%chưa hỗ trợ dầu%' and jsonb_array_length(distance_bands) = 11 and jsonb_array_length(weight_bands) = 8
   and jsonb_array_length(fuel_bands) = 8 and (prices -> 2 ->> 2)::numeric = 1390000 and (weight_bands -> 2 ->> 'loading_fee')::numeric = 250000
-  and code like 'BGXT%' from public.truck_rate_cards), 'Bảng giá xe tải: 11 khoảng km × 8 trọng tải, 25-35 km / 3.5-5 tấn = 1,390,000, bốc xếp 250,000, mã BGXT…');
+  and code like 'BGXT%' from public.truck_rate_cards), 'Bảng giá xe tải: đơn giá chưa dầu (% dầu mặc định 0), 11 khoảng km × 8 trọng tải, 25-35 km / 3.5-5 tấn = 1,390,000, bốc xếp 250,000, mã BGXT…');
 
 -- Hai chuyến cont đã chạy cùng tuyến, giá khác nhau; một chuyến chưa có giá; một chuyến xe tải không cont
 insert into t_bg select 's' || row_number() over (order by s.pickup_at, s.id), s.id::text

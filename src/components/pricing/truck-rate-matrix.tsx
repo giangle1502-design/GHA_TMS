@@ -1,16 +1,15 @@
 "use client";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/format";
-import { basePrice, round0, type TruckRateCard } from "@/lib/truck-rate";
+import { round0, type TruckRateCard } from "@/lib/truck-rate";
 
-export type MatrixMode = "card" | "base" | "fuel";
+/** base = đơn giá chưa dầu (đúng như bảng), fuel = cước gồm % dầu */
+export type MatrixMode = "base" | "fuel";
 
 /** Giá hiển thị trong ô theo chế độ xem */
-export function shownPrice(card: Pick<TruckRateCard, "fuel_pct_included">, raw: number | null, mode: MatrixMode, fuelPct: number): number | null {
+export function shownPrice(raw: number | null, mode: MatrixMode, fuelPct: number): number | null {
   if (raw === null) return null;
-  if (mode === "card") return raw;
-  const base = basePrice(raw, card.fuel_pct_included);
-  return mode === "base" ? round0(base) : round0(base * (1 + fuelPct / 100));
+  return mode === "base" ? raw : round0(raw * (1 + fuelPct / 100));
 }
 
 /** Bảng cước xe tải (chỉ xem): dòng = khoảng km, cột = trọng tải; bấm ô để chọn giá */
@@ -54,7 +53,7 @@ export function TruckRateMatrix({
                 {d.label}
               </th>
               {card.weight_bands.map((_, j) => {
-                const v = shownPrice(card, card.prices[i]?.[j] ?? null, mode, fuelPct);
+                const v = shownPrice(card.prices[i]?.[j] ?? null, mode, fuelPct);
                 const hit = highlight?.di === i && highlight?.wi === j;
                 const cross = !hit && (highlight?.di === i || highlight?.wi === j);
                 return (
