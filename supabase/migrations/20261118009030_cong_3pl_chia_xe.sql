@@ -30,8 +30,6 @@ begin
     );
     create index user_suppliers_supplier_idx on public.user_suppliers (supplier_id);
     comment on table public.user_suppliers is 'Tài khoản nhà xe 3PL được làm việc với những nhà xe nào';
-    create trigger trg_user_suppliers_audit after insert or update or delete on public.user_suppliers
-      for each row execute function private.audit_row_change('user_id');
     alter table public.user_suppliers enable row level security;
     create policy user_suppliers_select on public.user_suppliers for select to authenticated
       using (user_id = (select auth.uid()) or (select private.has_perm('users.view')));
@@ -43,6 +41,11 @@ begin
     grant select, insert, delete on public.user_suppliers to authenticated;
   end if;
 end $$;
+
+-- Nhật ký gắn/bỏ nhà xe: luôn có, kể cả khi bảng đã được migration kho 9025 tạo trước
+drop trigger if exists trg_user_suppliers_audit on public.user_suppliers;
+create trigger trg_user_suppliers_audit after insert or update or delete on public.user_suppliers
+  for each row execute function private.audit_row_change('user_id');
 
 insert into public.roles (code, name, description, is_system, sort_order)
 values ('carrier_3pl', 'Nhà xe 3PL',
