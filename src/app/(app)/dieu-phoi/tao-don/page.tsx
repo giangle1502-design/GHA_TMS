@@ -9,6 +9,7 @@ import { isUuid, layoutOf, moduleCustomFields } from "@/lib/entities/record";
 import { loadCustomFields, visibleCustomRows } from "@/lib/entities/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { parseDriverAppSettings } from "@/lib/driver-link/settings";
+import { stockTargetOptions } from "@/lib/inventory/actions";
 import { OrderForm } from "./order-form";
 
 export const metadata: Metadata = { title: "Tạo đơn hàng" };
@@ -36,6 +37,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ d
     const c = data.customers as unknown as { name: string } | null;
     order = { id: data.id, code: data.order_code, customerId: data.customer_id, customerName: c?.name ?? "" };
   }
+  const stockRes = order ? null : await stockTargetOptions({});
   return (
     <>
       <Link href={order ? `/dieu-phoi/don-hang/${order.id}` : "/dieu-phoi"} className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -58,6 +60,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ d
       />
       <OrderForm
         podPhotoDefault={podPhotoDefault}
+        stock={stockRes?.ok ? stockRes.data : null}
         closeHref={order ? `/dieu-phoi/don-hang/${order.id}` : "/dieu-phoi"}
         order={order}
         canCreatePriceList={me.permissions.has("price_lists.create")}

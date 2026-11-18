@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { ActionError, requirePermission, runAction, type ActionResult } from "@/lib/auth/action";
 import { todayVN } from "@/lib/format";
+import { getCurrentUser } from "@/lib/auth/session";
 
 const uuid = z.string().uuid();
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -140,5 +141,74 @@ export async function stockCard(input: { productId: string; binId?: string | nul
       };
     });
     return { opening, lines };
+  });
+}
+
+/** Ô "Kho GHA" trên đơn / chuyến: "" = theo địa điểm, "none" = không qua kho, "receipt:<vị trí>" / "issue:<vị trí>" (vị trí trống = chọn khi hoàn thành) */
+export type StockTargetValue = string;
+export type StockTargetOptions = {
+  bins: { id: string; label: string }[];
+  value: StockTargetValue;
+  /** Chuyến: giá trị đang theo đơn hàng (chưa chọn riêng) */
+  inherited?: boolean;
+  /** Chuyến đi qua kho GHA (đã chọn nhập / xuất, hoặc địa điểm gắn với kho) nhưng chưa có vị trí */
+  needsBin?: boolean;
+  /** Chuyến đi qua kho GHA theo địa điểm (không chọn trên đơn) */
+  viaLocation?: boolean;
+};
+
+const encode = (kind: string | null, bin: string | null) => (kind === "receipt" || kind === "issue" ? `${kind}:${bin ?? ""}` : kind === "none" ? "none" : "");
+function decode(v: string): { kind: string | null; bin: string | null } {
+  if (v === "none") return { kind: "none", bin: null };
+  const m = /^(receipt|issue):(.*)$/.exec(v);
+  if (!m) return { kind: null, bin: null };
+  return { kind: m[1], bin: uuid.safeParse(m[2]).success ? m[2] : null };
+}
+
+/** Vị trí kho đang dùng (cho ô chọn); null khi không có quyền lập phiếu kho hoặc CSDL chưa nâng cấp 9026 */
+export async function stockTargetOptions(input: { orderId?: string | null; shipmentId?: string | null }): Promise<ActionResult<StockTargetOptions | null>> {
+  return runAction(async () => {
+    const me = await getCurrentUser();
+    if (!me || me.status !== "active" || !me.permissions.has("inventory.create")) return null;
+    const supabase = await createClient();
+    const binsRes = await supabase.from("warehouse_bins").select("id, code, name").eq("is_active", true).order("sort_order").order("code").limit(50);
+    if (binsRes.error) return null;
+    const bins = (binsRes.data ?? []).map((b) => ({ id: String(b.id), label: String(b.code) }));
+    if (input.shipmentId && uuid.safeParse(input.shipmentId).success) {
+      const { data, error } = await supabase
+        .from("shipments")
+        .select("stock_kind, stock_bin_id, transport_orders(stock_kind, stock_bin_id)")
+        .eq("id", input.shipmentId)
+        .maybeSingle();
+      if (error || !data) return null;
+      const o = (data as unknown as { transport_orders: { stock_kind: string | null; stock_bin_id: string | null } | null }).transport_orders;
+      const own = data.stock_kind as string | null;
+      const value = own ? encode(own, (data.stock_bin_id as string | null) ?? (own === o?.stock_kind ? (o?.stock_bin_id ?? null) : null)) : encode(o?.stock_kind ?? null, (data.stock_bin_id as string | null) ?? o?.stock_bin_id ?? null);
+      const sug = await supabase.from("stock_shipment_suggestions").select("needs_bin").eq("shipment_id", input.shipmentId).maybeSingle();
+      const viaLocation = !value && Boolean(sug.data);
+      return { bins, value, inherited: !own, needsBin: Boolean(sug.data?.needs_bin), viaLocation };
+    }
+    if (input.orderId && uuid.safeParse(input.orderId).success) {
+      const { data, error } = await supabase.from("transport_orders").select("stock_kind, stock_bin_id").eq("id", input.orderId).maybeSingle();
+      if (error) return null;
+      return { bins, value: encode((data?.stock_kind as string | null) ?? null, (data?.stock_bin_id as string | null) ?? null) };
+    }
+    return { bins, value: "" };
+  });
+}
+
+/** Lưu ô "Kho GHA" cho đơn hàng (orderId) hoặc riêng một chuyến (shipmentId) */
+export async function setStockTarget(input: { orderId?: string | null; shipmentId?: string | null; value: StockTargetValue }): Promise<ActionResult<null>> {
+  return runAction(async () => {
+    await requirePermission("inventory.create");
+    const orderId = input.orderId && uuid.safeParse(input.orderId).success ? input.orderId : null;
+    const shipmentId = input.shipmentId && uuid.safeParse(input.shipmentId).success ? input.shipmentId : null;
+    if (!orderId && !shipmentId) throw new ActionError("Thiếu đơn hàng hoặc chuyến");
+    const { kind, bin } = decode(input.value);
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("set_stock_target", { p_order_id: orderId, p_shipment_id: shipmentId, p_kind: kind, p_bin_id: bin });
+    if (error) throw error;
+    revalidatePath("/kho");
+    return null;
   });
 }
