@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { ReferenceSelect } from "@/components/entities/reference-select";
 import { parseNumberVN } from "@/lib/entities/record";
 import { formatNumber, formatVND, formatDate, todayVN } from "@/lib/format";
-import { listOpenCarrierPayables, payCarrierPayables, saveCarrierCosts, type OpenCarrierPayable } from "@/lib/finance/carrier-actions";
+import { listOpenCarrierPayables, payCarrierPayables, saveCarrierCosts, supplierFuelPct, type OpenCarrierPayable } from "@/lib/finance/carrier-actions";
 
 import { CARRIER_KIND_LABEL, type CarrierKind } from "@/lib/finance/carrier-kind";
 export type { CarrierKind };
@@ -21,6 +21,8 @@ export type CarrierCost = {
   description: string;
   quantity: number | null;
   unit_price: number | null;
+  /** % hỗ trợ dầu của dòng cước (CSDL 9020) */
+  fuel_pct?: number | null;
   amount: number;
   ref_no: string | null;
   note: string | null;
@@ -45,6 +47,8 @@ type Line = {
   description: string;
   quantity: string;
   unit_price: string;
+  /** % hỗ trợ dầu (chỉ dòng Cước 3PL) */
+  fuel_pct: string;
   amount: string;
   ref_no: string;
   note: string;
@@ -62,6 +66,7 @@ const newLine = (p: Partial<Line> = {}): Line => ({
   description: "",
   quantity: "",
   unit_price: "",
+  fuel_pct: "",
   amount: "",
   ref_no: "",
   note: "",
@@ -76,8 +81,12 @@ const lineAmount = (l: Line) => {
   if (a !== null) return a;
   const q = n(l.quantity);
   const p = n(l.unit_price);
-  return q !== null && p !== null ? Math.round(q * p) : 0;
+  if (q === null || p === null) return 0;
+  // Cước 3PL: Đơn giá × SL × (1 + % hỗ trợ dầu), giống công thức cước GHA
+  const fuel = l.kind === "freight" ? (n(l.fuel_pct) ?? 0) : 0;
+  return Math.round(q * p * (1 + fuel / 100));
 };
+const pctText = (v: number | null) => (v === null ? "" : formatNumber(v));
 
 /** Nhập cước, chi hộ, chi phí khác phải trả nhà xe 3PL của chuyến */
 export function CarrierCostsDialog(props: {
@@ -114,12 +123,35 @@ export function CarrierCostsDialog(props: {
   const [invoice, setInvoice] = useState(props.invoiceNo ?? "");
   const [due, setDue] = useState(props.dueDate ?? "");
   const [lines, setLines] = useState<Line[]>([]);
+  /** % hỗ trợ dầu của nhà xe đang chọn (danh mục Nhà cung cấp) */
+  const [supplierFuel, setSupplierFuel] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const total = lines.reduce((a, l) => a + lineAmount(l), 0);
   const patch = (key: number, p: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)));
 
+  /** Lấy % dầu của nhà xe; apply = điền vào các dòng Cước 3PL (đổi nhà xe, hoặc mở lần đầu chưa có khoản nào) */
+  const loadSupplierFuel = (supplierId: string, apply: "all" | "empty" | "none") => {
+    if (!supplierId) {
+      setSupplierFuel(null);
+      return;
+    }
+    supplierFuelPct(supplierId).then((r) => {
+      const v = r.ok ? (r.data ?? null) : null;
+      setSupplierFuel(v);
+      if (apply === "none") return;
+      setLines((ls) =>
+        ls.map((l) =>
+          l.kind !== "freight" || (apply === "empty" && l.fuel_pct.trim())
+            ? l
+            : { ...l, fuel_pct: pctText(v), amount: l.quantity.trim() && l.unit_price.trim() ? "" : l.amount },
+        ),
+      );
+    });
+  };
+
   const openDialog = () => {
     setSupplier(props.supplierId ?? "");
+    loadSupplierFuel(props.supplierId ?? "", props.costs.length ? "none" : "empty");
     setInvoice(props.invoiceNo ?? "");
     setDue(props.dueDate ?? "");
     setLines(
@@ -134,6 +166,7 @@ export function CarrierCostsDialog(props: {
               description: c.description,
               quantity: txt(c.quantity),
               unit_price: txt(c.unit_price),
+              fuel_pct: txt(c.fuel_pct),
               amount: txt(c.amount),
               ref_no: c.ref_no ?? "",
               note: c.note ?? "",
@@ -166,7 +199,9 @@ export function CarrierCostsDialog(props: {
 
   const save = () =>
     start(async () => {
-      const bad = lines.find((l) => [l.amount, l.quantity, l.unit_price].some((s) => s.trim() && n(s) === null));
+      const bad = lines.find((l) => [l.amount, l.quantity, l.unit_price, l.kind === "freight" ? l.fuel_pct : ""].some((s) => s.trim() && n(s) === null));
+      const badFuel = lines.find((l) => l.kind === "freight" && (n(l.fuel_pct) ?? 0) > 100);
+      if (badFuel) return void toast.error("% hỗ trợ dầu phải từ 0 đến 100.");
       if (bad) return void toast.error(`Số không hợp lệ ở khoản "${bad.description || (bad.kind === "loading" ? "Bốc xếp 3PL" : CARRIER_KIND_LABEL[bad.kind])}"`);
       const noType = lines.find((l) => l.kind === "loading" && lineAmount(l) > 0 && !l.fee_type_id);
       if (noType) return void toast.error("Chọn loại phí bốc xếp cho khoản bốc xếp (danh mục Loại phí, nhóm Bốc xếp).");
@@ -184,6 +219,7 @@ export function CarrierCostsDialog(props: {
             description: l.description,
             quantity: n(l.quantity),
             unitPrice: n(l.unit_price),
+            fuelPct: l.kind === "freight" ? n(l.fuel_pct) : null,
             amount: n(l.amount) ?? lineAmount(l),
             refNo: l.ref_no,
             note: l.note,
@@ -213,10 +249,31 @@ export function CarrierCostsDialog(props: {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="cc-supplier">Nhà xe 3PL nhận tiền *</Label>
-              <ReferenceSelect id="cc-supplier" refKey="suppliers" value={supplier} initialLabel={props.supplierLabel ?? ""} onChange={(v) => setSupplier(v)} />
+              <ReferenceSelect
+                id="cc-supplier"
+                refKey="suppliers"
+                value={supplier}
+                initialLabel={props.supplierLabel ?? ""}
+                onChange={(v) => {
+                  if (v === supplier) return;
+                  setSupplier(v);
+                  loadSupplierFuel(v, "all");
+                }}
+              />
               <p className="text-xs text-muted-foreground">
                 Tự điền theo xe (Phương tiện → Nhà xe 3PL). Chưa có thì gõ tên để thêm mới.{props.paidAmount > 0 ? " Đã trả tiền thì không đổi nhà xe được." : ""}
               </p>
+              {supplier ? (
+                <p className="text-xs text-muted-foreground">
+                  {supplierFuel !== null ? (
+                    <>
+                      Nhà xe có <b className="text-foreground">hỗ trợ dầu {formatNumber(supplierFuel)}%</b>: dòng Cước 3PL tự tính SL × Đơn giá × (1 + {formatNumber(supplierFuel)}%).
+                    </>
+                  ) : (
+                    "Nhà xe không có % hỗ trợ dầu (nhập ở danh mục Nhà cung cấp nếu có)."
+                  )}
+                </p>
+              ) : null}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cc-invoice">Số hóa đơn / bảng kê của nhà xe</Label>
@@ -231,18 +288,19 @@ export function CarrierCostsDialog(props: {
           </div>
 
           <div className="space-y-2">
-            <div className="hidden gap-1.5 px-1 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[9rem_minmax(0,1.6fr)_5.5rem_7rem_8.5rem_7rem_minmax(0,9rem)_2rem]">
+            <div className="hidden gap-1.5 px-1 text-xs font-medium text-muted-foreground lg:grid lg:grid-cols-[9rem_minmax(0,1.6fr)_5.5rem_7rem_4.5rem_8.5rem_7rem_minmax(0,9rem)_2rem]">
               <span>Loại khoản</span>
               <span>Nội dung</span>
               <span>SL</span>
               <span>Đơn giá</span>
+              <span>% dầu</span>
               <span>Số tiền (đ)</span>
               <span>Số HĐ/chứng từ</span>
               <span>Ghi chú</span>
               <span />
             </div>
             {lines.map((l, i) => (
-              <div key={l.key} className="grid gap-1.5 rounded-lg border p-2 lg:grid-cols-[9rem_minmax(0,1.6fr)_5.5rem_7rem_8.5rem_7rem_minmax(0,9rem)_2rem] lg:items-start lg:border-0 lg:p-0">
+              <div key={l.key} className="grid gap-1.5 rounded-lg border p-2 lg:grid-cols-[9rem_minmax(0,1.6fr)_5.5rem_7rem_4.5rem_8.5rem_7rem_minmax(0,9rem)_2rem] lg:items-start lg:border-0 lg:p-0">
                 <NativeSelect
                   aria-label={`Loại khoản dòng ${i + 1}`}
                   className="h-8"
@@ -252,7 +310,13 @@ export function CarrierCostsDialog(props: {
                     if (k === "loading") {
                       const d = newLoadingLine();
                       patch(l.key, { kind: k, fee_type_id: d.fee_type_id, fee_label: d.fee_label, description: d.description, quantity: l.quantity || d.quantity, unit_price: l.unit_price || d.unit_price, amount: "" });
-                    } else patch(l.key, { kind: k, ...(l.kind === "loading" ? { fee_type_id: "", fee_label: "", supplier_id: "", supplier_label: "" } : {}) });
+                    } else
+                      patch(l.key, {
+                        kind: k,
+                        ...(l.kind === "loading" ? { fee_type_id: "", fee_label: "", supplier_id: "", supplier_label: "" } : {}),
+                        ...(k === "freight" && !l.fuel_pct ? { fuel_pct: pctText(supplierFuel) } : {}),
+                        amount: k === "freight" || l.kind === "freight" ? (l.quantity && l.unit_price ? "" : l.amount) : l.amount,
+                      });
                   }}
                 >
                   <option value="freight">Cước 3PL</option>
@@ -333,6 +397,19 @@ export function CarrierCostsDialog(props: {
                     if (v !== null) patch(l.key, { unit_price: formatNumber(v) });
                   }}
                 />
+                {l.kind === "freight" ? (
+                  <Input
+                    aria-label={`% hỗ trợ dầu dòng ${i + 1}`}
+                    title="% hỗ trợ dầu: Số tiền = SL × Đơn giá × (1 + % dầu)"
+                    className="h-8 text-right tabular-nums"
+                    inputMode="decimal"
+                    placeholder="% dầu"
+                    value={l.fuel_pct}
+                    onChange={(e) => patch(l.key, { fuel_pct: e.target.value, amount: "" })}
+                  />
+                ) : (
+                  <span className="hidden lg:block" />
+                )}
                 <Input
                   aria-label={`Số tiền dòng ${i + 1}`}
                   className="h-8 text-right tabular-nums"
@@ -374,7 +451,12 @@ export function CarrierCostsDialog(props: {
               </div>
             ))}
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => setLines((ls) => [...ls, newLine({ kind: ls.some((x) => x.kind === "freight") ? "pass_through" : "freight" })])}>
+              <Button type="button" size="sm" variant="outline" onClick={() =>
+                  setLines((ls) => {
+                    const kind = ls.some((x) => x.kind === "freight") ? "pass_through" : "freight";
+                    return [...ls, newLine({ kind, fuel_pct: kind === "freight" ? pctText(supplierFuel) : "" })];
+                  })
+                }>
                 <Plus /> Thêm khoản
               </Button>
               <Button type="button" size="sm" variant="outline" onClick={() => setLines((ls) => [...ls, newLoadingLine()])} disabled={!loadingTypes.length}>
@@ -385,7 +467,7 @@ export function CarrierCostsDialog(props: {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Nhập Số tiền, hoặc nhập SL × Đơn giá để tự tính. Dòng số tiền bằng 0 bị bỏ qua. Xóa hết các khoản thì công nợ 3PL chưa trả bị hủy.
+              Nhập Số tiền, hoặc nhập SL × Đơn giá để tự tính (Cước 3PL có % dầu: SL × Đơn giá × (1 + % dầu)). Dòng số tiền bằng 0 bị bỏ qua. Xóa hết các khoản thì công nợ 3PL chưa trả bị hủy.
             </p>
           </div>
 

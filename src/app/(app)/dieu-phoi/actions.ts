@@ -1488,23 +1488,36 @@ export async function unacceptShipment(input: z.input<typeof crewSchema>): Promi
   }, "Đã hủy nhận xe. Chuyến về Chờ tài xế nhận trên xe mới.");
 }
 
-/** Sửa số xe / tài xế của chuyến đang chạy, đã giao hoặc đã đóng (nhập sai), bắt buộc lý do */
-export async function correctShipmentCrew(input: z.input<typeof crewSchema>): Promise<ActionResult> {
+const correctCrewSchema = crewSchema.extend({
+  /** Sửa nhà xe 3PL của chuyến: uuid = nhà xe đúng, null = chạy xe nội bộ (bỏ nhà xe); bỏ trống = giữ như cũ */
+  supplierId: uuid.nullable().optional(),
+});
+
+/** Sửa số xe / tài xế / nhà xe 3PL của chuyến đang chạy, đã giao hoặc đã đóng (nhập sai), bắt buộc lý do */
+export async function correctShipmentCrew(input: z.input<typeof correctCrewSchema>): Promise<ActionResult> {
   return runAction(async () => {
     await requirePermission("dispatch.update", "shipments.update");
-    const p = crewSchema.safeParse(input);
+    const p = correctCrewSchema.safeParse(input);
     if (!p.success) throw new ActionError(p.error.issues[0]?.message ?? "Dữ liệu không hợp lệ");
     const supabase = await createClient();
+    const setSupplier = p.data.supplierId !== undefined;
     const { error } = await supabase.rpc("correct_shipment_crew", {
       p_shipment_id: p.data.shipmentId,
       p_vehicle_id: p.data.vehicleId,
       p_driver_id: p.data.driverId,
       p_reason: p.data.reason,
+      ...(setSupplier ? { p_supplier_id: p.data.supplierId ?? null, p_set_supplier: true } : {}),
     });
-    if (error) throw error;
+    if (error) {
+      if (setSupplier && (error.code === "PGRST202" || error.code === "42883"))
+        throw new ActionError("CSDL chưa nâng cấp sửa nhà xe 3PL cho chuyến đã hoàn thành. Nhờ quản trị chạy SQL 9020_dau_3pl_sua_3pl.sql.");
+      throw error;
+    }
     revalidatePath("/dieu-phoi", "layout");
     revalidatePath("/chuyen-xe", "layout");
-  }, "Đã sửa xe, tài xế của chuyến.");
+    revalidatePath("/thue-ngoai");
+    revalidatePath("/cong-no");
+  }, input.supplierId !== undefined ? "Đã sửa xe, tài xế, nhà xe 3PL của chuyến." : "Đã sửa xe, tài xế của chuyến.");
 }
 
 const orderOnlySchema = z.object({ shipmentId: uuid, order: dayOrder.nullable() });

@@ -175,7 +175,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   ]);
   const [carrierRes, payableRes, feeDocRes, sheetRes, lockRes] = await Promise.all([
     canSeeCarrier
-      ? supabase.from("shipment_carrier_costs").select("line_no, cost_kind, fee_type_id, description, quantity, unit_price, amount, ref_no, note, supplier_id, supplier:suppliers(name), fee_type:fee_types(name, is_loading)").eq("shipment_id", id).order("line_no")
+      ? supabase.from("shipment_carrier_costs").select("*, supplier:suppliers(name), fee_type:fee_types(name, is_loading)").eq("shipment_id", id).order("line_no")
       : Promise.resolve({ data: [], error: null }),
     canSeePayable
       ? supabase.from("payables").select("id, code, amount, paid_amount, status, due_date, invoice_no, kind, supplier_id").eq("shipment_id", id).in("kind", ["carrier", "loading"]).neq("status", "cancelled")
