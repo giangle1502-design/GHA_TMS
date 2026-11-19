@@ -12,6 +12,8 @@ import { formatDate, formatNumber, formatVND, todayVN } from "@/lib/format";
 import { downloadXlsx } from "@/lib/xlsx-client";
 import { payCarrierPayables } from "@/lib/finance/carrier-actions";
 import { saveLoadingUnitPrice } from "./actions";
+import { ReportGrid, type ReportColumn } from "@/components/grid/report-grid";
+import type { TableViewConfig } from "@/lib/entities/types";
 
 export type LoadingLine = {
   id: string;
@@ -55,6 +57,9 @@ export type LoadingTrip = {
   loading_unpaid: number;
   loading_lines: number;
   vendors: string | null;
+  /** 9033: tick "Có chi phí bốc xếp" ở Điều phối; tuyến Điểm nhận → Điểm giao → Điểm hạ rỗng */
+  requires_loading?: boolean;
+  route_label?: string | null;
 };
 
 const PAY: Record<string, { label: string; variant: "warning" | "info" | "success" | "outline" }> = {
@@ -64,7 +69,8 @@ const PAY: Record<string, { label: string; variant: "warning" | "info" | "succes
   no_payable: { label: "Chưa lập công nợ", variant: "outline" },
 };
 
-const route = (r: { pickup_name: string | null; delivery_name: string | null }) => `${r.pickup_name ?? "-"} → ${r.delivery_name ?? "-"}`;
+const route = (r: { pickup_name: string | null; delivery_name: string | null; route_label?: string | null }) =>
+  r.route_label || `${r.pickup_name ?? "-"} → ${r.delivery_name ?? "-"}`;
 const tons = (v: number | null | undefined) => formatNumber(Math.round(Number(v ?? 0) * 1000) / 1000);
 /** Trọng lượng của khoản: SL nhập (tấn) nếu tính theo đơn giá, không thì trọng lượng chuyến */
 const lineTons = (l: LoadingLine) => (l.quantity != null && l.unit_price != null ? Number(l.quantity) : Number(l.tons));
@@ -77,6 +83,8 @@ export function LoadingReport(props: {
   company: { name: string; taxCode: string; address: string };
   defaultPrice: number;
   canPay: boolean;
+  missing: LoadingTrip[];
+  missingView: TableViewConfig | null;
 }) {
   const router = useRouter();
   const [tu, setTu] = useState(props.tu);
@@ -255,6 +263,8 @@ export function LoadingReport(props: {
           </div>
         </div>
 
+        <MissingLoading trips={props.missing} view={props.missingView} />
+
         <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Kpi label="Thu bốc xếp từ khách" value={formatVND(revTotal)} />
           <Kpi label="Trả các đơn vị bốc xếp" value={formatVND(payTotal)} />
@@ -328,6 +338,7 @@ export function LoadingReport(props: {
                           {t.shipment_code}
                         </Link>
                         <div className="text-xs text-muted-foreground">{t.plate_number ?? "-"}</div>
+                        {t.requires_loading && Number(t.loading_lines) === 0 ? <Badge variant="warning">Có bốc xếp, chưa nhập phí</Badge> : null}
                       </td>
                       <td className="py-2 pr-3">{custOf(t)}</td>
                       <td className="py-2 pr-3">{route(t)}</td>
@@ -372,6 +383,58 @@ export function LoadingReport(props: {
         <LoadingStatement lines={shown} tu={props.tu} den={props.den} vendor={vendor} customer={customer} company={props.company} onClose={() => setStmt(false)} />
       ) : null}
     </>
+  );
+}
+
+/** Chuyến có tick "Có chi phí bốc xếp" ở Điều phối mà chưa nhập khoản trả bốc xếp (mọi ngày, để không quên) */
+function MissingLoading({ trips, view }: { trips: LoadingTrip[]; view: TableViewConfig | null }) {
+  const columns = useMemo<ReportColumn<LoadingTrip>[]>(
+    () => [
+      { key: "report_date", label: "Ngày", width: 100, kind: "date", value: (r) => r.report_date, render: (r) => formatDate(r.report_date) },
+      {
+        key: "shipment_code",
+        label: "Mã chuyến",
+        width: 130,
+        value: (r) => r.shipment_code,
+        render: (r) => (
+          <Link href={`/chuyen-xe/${r.id}#chi-phi-3pl`} className="font-medium text-primary hover:underline">
+            {r.shipment_code}
+          </Link>
+        ),
+      },
+      { key: "plate_number", label: "Số xe", width: 110, value: (r) => r.plate_number },
+      { key: "customer", label: "Khách hàng", width: 110, value: (r) => r.customer_code ?? r.customer_name },
+      { key: "route", label: "Tuyến đường", width: 360, value: (r) => route(r) },
+      { key: "tons", label: "Tấn", width: 80, align: "right", kind: "number", value: (r) => Number(r.tons), render: (r) => tons(r.tons) },
+      { key: "loading_revenue", label: "Thu bốc xếp", width: 120, align: "right", kind: "number", value: (r) => Number(r.loading_revenue), render: (r) => formatVND(r.loading_revenue) },
+      {
+        key: "action",
+        label: "Nhập phí",
+        width: 170,
+        value: () => "",
+        render: (r) => (
+          <Link href={`/chuyen-xe/${r.id}#chi-phi-3pl`} className="text-xs font-medium text-primary hover:underline">
+            Nhập bốc xếp 3PL →
+          </Link>
+        ),
+      },
+    ],
+    [],
+  );
+  if (!trips.length) return null;
+  return (
+    <Card className="mt-3 border-l-4 border-l-amber-500">
+      <CardHeader>
+        <CardTitle className="text-base text-amber-800 dark:text-amber-300">Chuyến cần nhập phí bốc xếp ({formatNumber(trips.length)})</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Chuyến đã tick &quot;Có chi phí bốc xếp&quot; khi tạo đơn ở Điều phối nhưng chưa nhập khoản trả bốc xếp. Tính mọi ngày, không theo bộ lọc Từ ngày - Đến ngày.
+          Nhập xong (Chi phí trả 3PL → Thêm bốc xếp 3PL) chuyến tự rời danh sách này.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <ReportGrid tableKey="loading_missing" rows={trips} columns={columns} view={view} getRowId={(r) => r.id} defaultPinned={["shipment_code"]} emptyText="Không còn chuyến nào thiếu phí bốc xếp." />
+      </CardContent>
+    </Card>
   );
 }
 

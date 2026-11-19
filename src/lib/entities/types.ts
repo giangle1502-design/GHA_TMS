@@ -143,6 +143,8 @@ export type EntityDef = {
   leadAction?: string;
   /** Nút thao tác trên từng dòng (khóa trong bảng đăng ký components/finance/registry) */
   rowActions?: string;
+  /** Lọc Từ ngày - Đến ngày (tham số URL tu, den) theo cột ngày này; month = cột là ngày đầu tháng (report_month) */
+  dateRange?: { key: string; month?: boolean };
   /** Mọi thao tác ghi cần đúng một quyền này (ví dụ approvals.configure) */
   writePerm?: string;
   /** Thực thể có writePerm vẫn cho nhập Excel (người có writePerm) */

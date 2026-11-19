@@ -28,6 +28,7 @@ import { createOrder, customerDefaultPayer, quoteShipment, updateOrderFull, vehi
 import { shipmentStatus } from "@/lib/status";
 import { normalizeContainerNo } from "@/lib/shipment-container";
 import { containerCheckOk } from "@/lib/paste-orders";
+import { cn } from "@/lib/utils";
 
 type Row = {
   key: number;
@@ -55,6 +56,10 @@ type Row = {
   notes: string;
   /** Khách yêu cầu chụp chứng từ: tài xế bắt buộc chụp ảnh giao hàng */
   podPhotoRequired: boolean;
+  /** Có chi phí bốc xếp: chưa nhập khoản trả bốc xếp thì chuyến hiện ở trang Bốc xếp để không quên */
+  requiresLoading: boolean;
+  /** Giá trị lúc mở form sửa đơn (chỉ gửi máy chủ khi có tick hoặc đổi so với lúc mở) */
+  loadingOrig?: boolean;
   custom: Record<string, unknown>;
   /** Trường bổ sung kiểu tiền, %, số, công thức: nhập trong khung Giá */
   customPrice: Record<string, unknown>;
@@ -122,6 +127,7 @@ export type EditShipmentInit = {
   fuelAmount: number;
   notes: string;
   podPhotoRequired: boolean;
+  requiresLoading?: boolean;
   custom: Record<string, unknown>;
   items: Omit<ItemLine, "key">[];
   fees: Omit<FeeLine, "key">[];
@@ -180,6 +186,7 @@ const newRow = (from?: Row, pod = true): Row => ({
   fuelSupportRate: from?.fuelSupportRate ?? "",
   notes: from?.notes ?? "",
   podPhotoRequired: from?.podPhotoRequired ?? pod,
+  requiresLoading: from?.requiresLoading ?? false,
   custom: from?.custom ?? {},
   customPrice: from?.customPrice ?? {},
   items: (from?.items ?? []).map((l) => newItem(l)),
@@ -211,6 +218,8 @@ const rowFromShipment = (s: EditShipmentInit, generalKeys: string[], priceKeys: 
   fuelSupportRate: s.fuelSupportRate === null ? "" : String(s.fuelSupportRate),
   notes: s.notes,
   podPhotoRequired: s.podPhotoRequired,
+  requiresLoading: s.requiresLoading ?? false,
+  loadingOrig: s.requiresLoading ?? false,
   custom: pick(s.custom, generalKeys),
   customPrice: pick(s.custom, priceKeys),
   items: s.items.map((l) => newItem(l)),
@@ -379,6 +388,7 @@ export function OrderForm({
     fuelSupportRate: num(s.fuelSupportRate),
     notes: s.notes,
     podPhotoRequired: s.podPhotoRequired,
+    requiresLoading: s.requiresLoading || s.loadingOrig ? s.requiresLoading : undefined,
     custom: { ...s.custom, ...s.customPrice },
     items: itemsPayload(s.items),
     fees: feesPayload(s.fees),
@@ -1019,6 +1029,17 @@ function ShipmentEditor({
                 <label htmlFor={id("pod")} className="flex items-center gap-2 pt-1 text-sm">
                   <input id={id("pod")} type="checkbox" className="size-4" checked={row.podPhotoRequired} onChange={(e) => onChange({ podPhotoRequired: e.target.checked })} />
                   Khách yêu cầu chụp chứng từ <span className="text-muted-foreground">(tài xế bắt buộc chụp ảnh giao hàng; không tích thì app tài xế bỏ qua bước chụp)</span>
+                </label>
+                <label
+                  htmlFor={id("loading")}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-1 pt-1 text-sm",
+                    row.requiresLoading && "bg-amber-50 font-medium text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
+                  )}
+                >
+                  <input id={id("loading")} type="checkbox" className="size-4" checked={row.requiresLoading} onChange={(e) => onChange({ requiresLoading: e.target.checked })} />
+                  Có chi phí bốc xếp{" "}
+                  <span className="font-normal text-muted-foreground">(bắt buộc nhập phí bốc xếp: chưa nhập thì chuyến hiện ở trang Bốc xếp 3PL, mục &quot;Chuyến cần nhập phí bốc xếp&quot;)</span>
                 </label>
               </div>
             ),

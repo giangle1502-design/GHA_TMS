@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { todayVN } from "@/lib/format";
 import { COMPANY_DEFAULT, monthRange } from "@/lib/freight-statement";
 import { CompactDensity } from "@/components/layout/compact-density";
+import { loadTableView } from "@/lib/entities/server";
 import { LoadingReport, type LoadingLine, type LoadingTrip } from "./loading-report";
 
 export const metadata: Metadata = { title: "Bốc xếp 3PL" };
@@ -23,7 +24,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   if (den < tu) [tu, den] = [den, tu];
 
   const supabase = await createClient();
-  const [linesRes, tripsRes, priceRes] = await Promise.all([
+  const [linesRes, tripsRes, priceRes, missingRes, missingView] = await Promise.all([
     supabase
       .from("report_loading_3pl")
       .select(
@@ -35,12 +36,15 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       .limit(20000),
     supabase
       .from("report_loading_trips")
-      .select("id, shipment_code, report_date, customer_code, customer_name, plate_number, pickup_name, delivery_name, tons, loading_revenue, loading_cost, loading_unpaid, loading_lines, vendors")
+      .select("*")
       .gte("report_date", tu)
       .lte("report_date", den)
       .order("report_date")
       .limit(20000),
     supabase.from("system_settings").select("value").eq("key", "loading.unit_price_per_ton").maybeSingle(),
+    // Chuyến có tick "Có chi phí bốc xếp" mà chưa nhập khoản trả bốc xếp: mọi ngày (không theo bộ lọc) để không quên
+    supabase.from("report_loading_trips").select("*").eq("requires_loading", true).eq("loading_lines", 0).order("report_date").limit(1000),
+    loadTableView(supabase, "loading_missing", me.id),
   ]);
   if (linesRes.error) throw linesRes.error;
   if (tripsRes.error) throw tripsRes.error;
@@ -56,6 +60,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         company={COMPANY_DEFAULT}
         defaultPrice={Number((priceRes.data as { value?: unknown } | null)?.value ?? 40000) || 40000}
         canPay={me.permissions.has("receivables.pay")}
+        missing={missingRes.error ? [] : ((missingRes.data ?? []) as LoadingTrip[])}
+        missingView={missingView}
       />
     </>
   );

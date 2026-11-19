@@ -25,7 +25,7 @@ export function ExportButton({
   visibleColumns,
 }: {
   entityKey: string;
-  params: { q?: string; sort?: string; dir?: "asc" | "desc"; filters?: Record<string, string>; adv?: string[] };
+  params: { q?: string; sort?: string; dir?: "asc" | "desc"; filters?: Record<string, string>; adv?: string[]; from?: string; to?: string };
   visibleColumns: string[];
 }) {
   const [pending, start] = useTransition();

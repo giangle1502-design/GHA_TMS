@@ -490,7 +490,7 @@ export function EntityTable(props: EntityTableProps) {
           {access.export ? (
             <ExportButton
               entityKey={entityKey}
-              params={{ q: props.q, sort: props.sort, dir: props.dir, filters: props.filters, adv: props.adv }}
+              params={{ q: props.q, sort: props.sort, dir: props.dir, filters: props.filters, adv: props.adv, from: searchParams.get("tu") ?? undefined, to: searchParams.get("den") ?? undefined }}
               visibleColumns={table.getVisibleLeafColumns().map((c) => c.id).filter((id) => !isSysCol(id))}
             />
           ) : null}
