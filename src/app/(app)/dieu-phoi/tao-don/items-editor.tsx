@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ClipboardPaste, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, NativeSelect, Textarea } from "@/components/ui/input";
@@ -79,7 +79,10 @@ export function ItemsEditor({
   canAddField,
   fieldRows,
   idPrefix,
+  headerExtra,
 }: {
+  /** Ô thêm trên tiêu đề (VD: Kho GHA nhập vào / xuất từ GHA1, GHA2) */
+  headerExtra?: ReactNode;
   value: ItemLine[];
   onChange: (lines: ItemLine[]) => void;
   fields: FieldDef[];
@@ -131,6 +134,7 @@ export function ItemsEditor({
         <div className="text-sm font-medium">
           Hàng hóa (mã hàng) <span className="font-normal text-muted-foreground">· không bắt buộc, dùng khi khách yêu cầu kê từng mã hàng</span>
         </div>
+        {headerExtra}
         <div className="flex flex-wrap gap-1">
           <Button type="button" variant="outline" size="sm" onClick={() => onChange([...value, newItem({ unit: value.at(-1)?.unit })])}>
             <Plus /> Thêm dòng

@@ -37,7 +37,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ d
     const c = data.customers as unknown as { name: string } | null;
     order = { id: data.id, code: data.order_code, customerId: data.customer_id, customerName: c?.name ?? "" };
   }
-  const stockRes = order ? null : await stockTargetOptions({});
+  const stockRes = await stockTargetOptions({});
   return (
     <>
       <Link href={order ? `/dieu-phoi/don-hang/${order.id}` : "/dieu-phoi"} className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
