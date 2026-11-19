@@ -151,6 +151,8 @@ export type StockTargetOptions = {
   value: StockTargetValue;
   /** Chuyến: giá trị đang theo đơn hàng (chưa chọn riêng) */
   inherited?: boolean;
+  /** Đơn hàng: ô Kho GHA đang có của từng chuyến (chuyến chưa chọn riêng thì theo đơn) */
+  shipments?: Record<string, StockTargetValue>;
   /** Chuyến đi qua kho GHA (đã chọn nhập / xuất, hoặc địa điểm gắn với kho) nhưng chưa có vị trí */
   needsBin?: boolean;
   /** Chuyến đi qua kho GHA theo địa điểm (không chọn trên đơn) */
@@ -189,10 +191,22 @@ export async function stockTargetOptions(input: { orderId?: string | null; shipm
       return { bins, value, inherited: !own, needsBin: Boolean(sug.data?.needs_bin), viaLocation };
     }
     if (input.orderId && uuid.safeParse(input.orderId).success) {
-      const { data, error } = await supabase.from("transport_orders").select("stock_kind, stock_bin_id").eq("id", input.orderId).maybeSingle();
-      if (error) return null;
-      return { bins, value: encode((data?.stock_kind as string | null) ?? null, (data?.stock_bin_id as string | null) ?? null) };
+      const [{ data, error }, shipRes] = await Promise.all([
+        supabase.from("transport_orders").select("stock_kind, stock_bin_id").eq("id", input.orderId).maybeSingle(),
+        supabase.from("shipments").select("id, stock_kind, stock_bin_id").eq("order_id", input.orderId).limit(500),
+      ]);
+      if (error || shipRes.error) return null;
+      const ok = (data?.stock_kind as string | null) ?? null;
+      const ob = (data?.stock_bin_id as string | null) ?? null;
+      const shipments: Record<string, string> = {};
+      for (const x of (shipRes.data ?? []) as { id: string; stock_kind: string | null; stock_bin_id: string | null }[]) {
+        shipments[x.id] = x.stock_kind ? encode(x.stock_kind, x.stock_bin_id ?? (x.stock_kind === ok ? ob : null)) : encode(ok, x.stock_bin_id ?? ob);
+      }
+      return { bins, value: encode(ok, ob), shipments };
     }
+    // CSDL chưa chạy 9026 thì ẩn ô Kho GHA
+    const probe = await supabase.from("transport_orders").select("stock_kind").limit(1);
+    if (probe.error) return null;
     return { bins, value: "" };
   });
 }

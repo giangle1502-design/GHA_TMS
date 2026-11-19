@@ -88,6 +88,9 @@ type Row = {
   orig?: { vehicleId: string; driverId: string; day: string };
   /** Có giá trị = hủy chuyến này khi lưu (lý do hủy) */
   cancel?: string;
+  /** Ô Kho GHA của chuyến ("" = không chọn, "receipt:<vị trí>", "issue:<vị trí>", "none") và giá trị lúc mở form */
+  stock?: string;
+  stockOrig?: string;
 };
 
 /** Chuyến đã có khi mở form sửa đơn (trang /dieu-phoi/don-hang/[id]/sua nạp sẵn) */
@@ -181,6 +184,7 @@ const newRow = (from?: Row, pod = true): Row => ({
   customPrice: from?.customPrice ?? {},
   items: (from?.items ?? []).map((l) => newItem(l)),
   fees: (from?.fees ?? []).map((l) => newFee(l)),
+  stock: from?.stock ?? "",
   priceMode: "quote",
 });
 
@@ -310,12 +314,17 @@ export function OrderForm({
   };
   const [orderDate, setOrderDate] = useState(edit?.orderDate ?? todayVN());
   const [notes, setNotes] = useState(edit?.notes ?? "");
-  const [stockValue, setStockValue] = useState(stock?.value ?? "");
-  /** Lưu ô Kho GHA sau khi lưu đơn; lỗi chỉ cảnh báo (đơn đã lưu) */
-  const saveStock = async (orderId: string) => {
-    if (!stock || stockValue === stock.value) return;
-    const r = await setStockTarget({ orderId, value: stockValue });
-    if (!r.ok) toast.warning(`Đã lưu đơn nhưng chưa lưu được vị trí kho GHA: ${r.error}`, { duration: 15000 });
+  /** Lưu ô Kho GHA của từng chuyến sau khi lưu đơn (ids: id chuyến theo thứ tự dòng); lỗi chỉ cảnh báo vì đơn đã lưu */
+  const saveStock = async (ids: (string | undefined)[]) => {
+    if (!stock) return;
+    const errs: string[] = [];
+    for (const [i, r] of rows.entries()) {
+      const sid = ids[i];
+      if (!sid || r.cancel !== undefined || (r.stock ?? "") === (r.stockOrig ?? "")) continue;
+      const res = await setStockTarget({ shipmentId: sid, value: r.stock ?? "" });
+      if (!res.ok) errs.push(`Chuyến ${i + 1}: ${res.error}`);
+    }
+    if (errs.length) toast.warning(`Đã lưu đơn nhưng chưa lưu được vị trí kho GHA. ${errs.join(" ")}`, { duration: 15000 });
   };
   const [orderCustom, setOrderCustom] = useState<Record<string, unknown>>(() =>
     edit
@@ -330,10 +339,10 @@ export function OrderForm({
     const priceKeys = shipmentFields.filter((f) => PRICE_FIELD_TYPES.includes(f.type)).map((f) => f.key);
     const generalKeys = shipmentFields.filter((f) => !PRICE_FIELD_TYPES.includes(f.type)).map((f) => f.key);
     // Khóa theo thứ tự để máy chủ và trình duyệt sinh cùng id
-    const list = edit.shipments.map((s, i) => ({
-      ...rowFromShipment(s, generalKeys, priceKeys),
-      key: -(i + 1),
-    }));
+    const list = edit.shipments.map((s, i): Row => {
+      const st = stock?.shipments?.[s.id] ?? stock?.value ?? "";
+      return { ...rowFromShipment(s, generalKeys, priceKeys), key: -(i + 1), stock: st, stockOrig: st };
+    });
     const at = duplicateOf && canCreate ? list.findIndex((r) => r.id === duplicateOf) : -1;
     if (at >= 0) list.splice(at + 1, 0, { ...newRow(list[at], podPhotoDefault), key: DUPLICATE_KEY });
     return list;
@@ -414,7 +423,7 @@ export function OrderForm({
         if (err) fileErrors.push(`Chuyến ${i + 1}: ${err}`);
       }
       if (fileErrors.length) toast.warning(fileErrors.join(" "), { duration: 15000 });
-      await saveStock(e.id);
+      await saveStock(rows.map((s, i) => s.id ?? newIds.get(i)));
       const extra = [r.data.created ? `thêm ${r.data.created} chuyến` : "", r.data.cancelled ? `hủy ${r.data.cancelled} chuyến` : ""].filter(Boolean).join(", ");
       toast.success(`Đã lưu đơn ${e.code}${extra ? ` (${extra})` : ""}.`);
       if (r.data.warning) toast.warning(r.data.warning, { duration: 15000 });
@@ -444,7 +453,8 @@ export function OrderForm({
         otherOrders: rows.flatMap((s) => (s.vehicleId ? (s.vehicleDay?.others ?? []) : [])),
       });
       if (!r.ok || !r.data) return void toast.error(r.ok ? "Không lưu được đơn hàng" : r.error);
-      if (!order) await saveStock(r.data.order_id);
+      const created = r.data.shipments;
+      await saveStock(rows.map((_, i) => created[i]?.id));
       const fileErrors: string[] = [];
       for (const [i, s] of rows.entries()) {
         const sid = r.data.shipments[i]?.id;
@@ -536,15 +546,6 @@ export function OrderForm({
                 ),
               }}
             />
-            {stock ? (
-              <div className="grid gap-1.5 sm:max-w-md">
-                <Label htmlFor="order-stock">Kho GHA (vị trí GHA1 / GHA2)</Label>
-                <StockTargetSelect id="order-stock" bins={stock.bins} value={stockValue} onChange={setStockValue} />
-                <p className="text-xs text-muted-foreground">
-                  Hàng về bãi GHA chọn Nhập, lấy hàng ở bãi GHA chọn Xuất. Khi chuyến hoàn thành tự lập phiếu kho vào vị trí này; chưa chọn vị trí thì hỏi lúc bấm Hoàn thành.
-                </p>
-              </div>
-            ) : null}
             {canAddField ? <AddFieldButton module="transport_orders" customRows={orderFieldRows} label="Thêm trường cho đơn hàng" /> : null}
           </CardContent>
         </Card>
@@ -555,6 +556,7 @@ export function OrderForm({
           key={row.key}
           index={i}
           row={row}
+          stockBins={stock?.bins ?? null}
           customerId={customer.id}
           canCreatePriceList={canCreatePriceList}
           shipmentFields={shipmentFields}
@@ -637,7 +639,10 @@ function ShipmentEditor({
   onChange,
   onRemove,
   onDuplicate,
+  stockBins,
 }: {
+  /** Vị trí kho GHA (chỉ người có quyền lập phiếu kho) */
+  stockBins: { id: string; label: string }[] | null;
   index: number;
   row: Row;
   customerId: string;
@@ -1031,6 +1036,23 @@ function ShipmentEditor({
             canAddField={canAddField}
             fieldRows={itemFieldRows}
             idPrefix={`s${row.key}-it-`}
+            headerExtra={
+              stockBins ? (
+                <div className="flex items-center gap-2">
+                  <Label htmlFor={`s${row.key}-stock`} className="text-sm whitespace-nowrap">
+                    Kho GHA
+                  </Label>
+                  <StockTargetSelect
+                    id={`s${row.key}-stock`}
+                    className={`h-8 w-auto min-w-56 ${/^(receipt|issue):/.test(row.stock ?? "") ? "border-primary" : ""}`}
+                    bins={stockBins}
+                    value={row.stock ?? ""}
+                    onChange={(v) => onChange({ stock: v })}
+                    emptyLabel="Không chọn (theo địa điểm)"
+                  />
+                </div>
+              ) : null
+            }
           />
         </fieldset>
 
