@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
+import { loadTableView } from "@/lib/entities/server";
 import { PageHeader } from "@/components/layout/page-header";
 import { monthRangeYMD, todayVN } from "@/lib/format";
-import { CarrierPortal, type PortalShipment, type PortalSupplier } from "./carrier-portal";
+import { CarrierPortal, type PortalFleet, type PortalShipment, type PortalSupplier } from "./carrier-portal";
 
 export const metadata: Metadata = { title: "Nhà xe 3PL đăng ký xe" };
 
@@ -42,11 +43,18 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const staff = me.permissions.has("dispatch.update");
   let sup = UUID.test(one(sp.nx)) && suppliers.some((s) => s.id === one(sp.nx)) ? one(sp.nx) : "";
   if (!sup && suppliers.length === 1) sup = suppliers[0].id;
+  const view = await loadTableView(supabase, "carrier_portal", me.id);
   let rows: PortalShipment[] = [];
+  let fleet: PortalFleet = { vehicles: [], drivers: [] };
   if (sup || !staff) {
-    const { data, error } = await supabase.rpc("carrier_portal_shipments", { p_supplier_id: sup || null, p_from: tu, p_to: den, p_open_only: !all });
+    const [{ data, error }, fleetRes] = await Promise.all([
+      supabase.rpc("carrier_portal_shipments", { p_supplier_id: sup || null, p_from: tu, p_to: den, p_open_only: !all }),
+      // Xe, tài xế đã nhập lần trước (SQL 9031); chưa nâng cấp thì không gợi ý
+      supabase.rpc("carrier_portal_fleet", { p_supplier_id: sup || null }),
+    ]);
     if (error) throw error;
     rows = (data ?? []) as PortalShipment[];
+    if (!fleetRes.error && fleetRes.data) fleet = fleetRes.data as PortalFleet;
   }
   return (
     <>
@@ -54,7 +62,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
         title="Nhà xe 3PL đăng ký xe"
         description="Các chuyến GHA giao cho nhà xe. Bấm Đăng ký xe để nhập số xe, tài xế và số lượng từng xe; đơn lớn thì thêm nhiều xe, tổng không vượt số lượng của chuyến. Không nhập tài xế thì ghi Tài xế & 3PL."
       />
-      <CarrierPortal tu={tu} den={den} all={all} supplier={sup} suppliers={suppliers} staff={staff} rows={rows} />
+      <CarrierPortal tu={tu} den={den} all={all} supplier={sup} suppliers={suppliers} staff={staff} rows={rows} fleet={fleet} view={view} />
     </>
   );
 }
