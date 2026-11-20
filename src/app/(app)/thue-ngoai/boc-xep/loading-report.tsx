@@ -428,7 +428,11 @@ function MissingLoading({ trips, view }: { trips: LoadingTrip[]; view: TableView
         <CardTitle className="text-base text-amber-800 dark:text-amber-300">Chuyến cần nhập phí bốc xếp ({formatNumber(trips.length)})</CardTitle>
         <p className="text-sm text-muted-foreground">
           Chuyến đã tick &quot;Có chi phí bốc xếp&quot; khi tạo đơn ở Điều phối nhưng chưa nhập khoản trả bốc xếp. Tính mọi ngày, không theo bộ lọc Từ ngày - Đến ngày.
-          Nhập xong (Chi phí trả 3PL → Thêm bốc xếp 3PL) chuyến tự rời danh sách này.
+          Nhập xong (Chi phí trả 3PL → Thêm bốc xếp 3PL) chuyến tự rời danh sách này. Nhập nhanh ngay trên dòng ở trang{" "}
+          <Link href="/phi-chua-nhap" className="text-primary hover:underline">
+            Phí bốc xếp, chi hộ chưa nhập
+          </Link>
+          .
         </p>
       </CardHeader>
       <CardContent>

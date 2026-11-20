@@ -124,6 +124,7 @@ export function QuickFreightDialog({
   code: string;
   onClose: () => void;
   onSaved?: (r: ShipmentListRow) => void;
+  /** "carrier" = mở thẳng tab Chi phí trả 3PL (luôn có tab này, kể cả xe nội bộ: nhập bốc xếp 3PL) */
   initialTab?: Tab;
 }) {
   const router = useRouter();
@@ -173,11 +174,12 @@ export function QuickFreightDialog({
     setFiles({});
     setDirty({ price: false, fees: false });
     if (initialTab === "price" && (!d.canSeePrices || !d.canEditFees)) setTab("customer");
+    if (initialTab === "carrier" && !d.carrier) setTab("customer");
   }
 
   useEffect(() => {
     let alive = true;
-    void loadQuickFreight(shipmentId).then((r) => alive && apply(r));
+    void loadQuickFreight(shipmentId, { carrier: initialTab === "carrier" }).then((r) => alive && apply(r));
     return () => {
       alive = false;
     };
