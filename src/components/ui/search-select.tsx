@@ -218,7 +218,7 @@ export function SearchSelect({ className, style, disabled, ...props }: React.Com
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", margin: 0, padding: 0, border: 0 }}
       />
       <PopoverContent
-        className="flex max-w-[min(28rem,calc(100vw-1rem))] flex-col p-0"
+        className="flex w-auto max-w-[min(40rem,calc(100vw-1rem))] flex-col p-0"
         style={{ minWidth: "max(var(--radix-popover-trigger-width), 12rem)" }}
         onKeyDown={onListKey}
         onPointerDownOutside={(e) => {
@@ -266,14 +266,14 @@ export function SearchSelect({ className, style, disabled, ...props }: React.Com
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => pick(o)}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5",
+                    "flex cursor-pointer items-start gap-2 rounded px-2 py-1.5",
                     o.group && "pl-4",
                     i === hi && !o.disabled && "bg-accent",
                     o.disabled && "cursor-not-allowed opacity-50",
                     o.value === "" && "text-muted-foreground",
                   )}
                 >
-                  <Check className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
+                  <Check className={cn("mt-0.5 size-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
                   <span className="min-w-0 break-words">{o.label || " "}</span>
                 </li>
               </React.Fragment>

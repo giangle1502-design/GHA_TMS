@@ -25,6 +25,21 @@ function loadMeta(refKey: string) {
 /** Bộ nhớ tạm kết quả tìm kiếm của các ô chọn (theo danh mục + từ khóa), sống trong phiên trình duyệt */
 const refCache = new Map<string, RefOption[]>();
 
+/**
+ * Hiện đủ nhãn, tự xuống dòng (không cắt "…").
+ * Nhãn ghép "Tên – Địa chỉ": tên in đậm dòng trên, phần sau chữ nhỏ dòng dưới cho dễ phân biệt.
+ */
+function OptionLabel({ label }: { label: string }) {
+  const i = label.indexOf(" – ");
+  if (i < 0) return <span className="min-w-0 break-words">{label}</span>;
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span className="break-words font-medium">{label.slice(0, i)}</span>
+      <span className="break-words text-xs text-muted-foreground">{label.slice(i + 3)}</span>
+    </span>
+  );
+}
+
 export function ReferenceSelect({
   id,
   refKey,
@@ -127,20 +142,26 @@ export function ReferenceSelect({
             id={id}
             type="button"
             className={cn(
-              "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-card px-3 text-left text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50",
+              "flex min-h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-card px-3 py-1 text-left text-sm shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50",
               !value && "text-muted-foreground",
               invalid && "border-destructive",
             )}
           >
-            <span className="truncate">{value ? label || "Đang tải…" : `Chọn ${entity?.singular ?? ""}`}</span>
+            {/* Tên dài (VD tên công ty + địa chỉ) xuống tối đa 2 dòng; rê chuột xem đủ */}
+            <span className="line-clamp-2 min-w-0 break-words leading-snug" title={value && label ? label : undefined}>
+              {value ? label || "Đang tải…" : `Chọn ${entity?.singular ?? ""}`}
+            </span>
             <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-[min(24rem,calc(100vw-2rem))] p-0">
+        <PopoverContent
+          className="w-auto max-w-[calc(100vw-1rem)] p-0"
+          style={{ width: "max(var(--radix-popover-trigger-width), min(36rem, calc(100vw - 1rem)))" }}
+        >
           <div className="border-b p-2">
             <Input autoFocus placeholder="Gõ để tìm…" value={q} onChange={(e) => onQuery(e.target.value)} className="h-8" />
           </div>
-          <ul className="max-h-64 overflow-y-auto p-1" role="listbox">
+          <ul className="max-h-80 overflow-y-auto p-1" role="listbox">
             {loading && options.length === 0 ? (
               <li className="flex items-center gap-2 px-2 py-2 text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Đang tìm…
@@ -159,10 +180,11 @@ export function ReferenceSelect({
                   role="option"
                   aria-selected={o.value === value}
                   onClick={() => pick(o)}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"
+                  title={o.label}
+                  className={cn("flex w-full items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-accent", o.value === value && "bg-accent/60")}
                 >
-                  <Check className={cn("size-4 shrink-0", o.value === value ? "opacity-100" : "opacity-0")} />
-                  <span className="truncate">{o.label}</span>
+                  <Check className={cn("mt-0.5 size-4 shrink-0", o.value === value ? "opacity-100" : "opacity-0")} />
+                  <OptionLabel label={o.label} />
                 </button>
               </li>
             ))}
