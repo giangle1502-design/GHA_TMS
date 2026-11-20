@@ -200,6 +200,8 @@ const shipmentBase = z.object({
   notes: z.string().max(1000).optional(),
   /** Khách yêu cầu chụp chứng từ (không gửi = theo mặc định trong Cấu hình) */
   podPhotoRequired: z.boolean().optional(),
+  /** Có chi phí bốc xếp (không gửi = giữ nguyên) */
+  requiresLoading: z.boolean().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   items: itemsSchema.optional(),
   fees: feesSchema.optional(),
@@ -267,6 +269,14 @@ async function insertShipments(
     if (!ids.length) continue;
     const r = await supabase.from("shipments").update({ pod_photo_required: want }).in("id", ids).neq("pod_photo_required", want);
     if (r.error) created.itemsError = `Chưa lưu được ô "Khách yêu cầu chụp chứng từ": ${toUserMessage(r.error)}. Mở chi tiết chuyến để sửa.`;
+  }
+  // Có chi phí bốc xếp: đánh dấu để trang Bốc xếp nhắc nhập phí
+  {
+    const ids = list.flatMap((s, i) => (s.requiresLoading && created.shipments[i] ? [created.shipments[i].id] : []));
+    if (ids.length) {
+      const r = await supabase.from("shipments").update({ requires_loading: true }).in("id", ids);
+      if (r.error) created.itemsError = `Chưa lưu được ô "Có chi phí bốc xếp": ${toUserMessage(r.error)}. Cần chạy SQL 9033 trên Supabase rồi sửa đơn tích lại.`;
+    }
   }
   // Số cont từng chuyến (ghi sau khi tạo, như ô chụp chứng từ)
   for (const [i, s] of list.entries()) {
@@ -1127,6 +1137,7 @@ export async function updateOrderFull(
           notes: s.notes?.trim() || null,
           custom_fields: plan.custom,
           ...(s.podPhotoRequired === undefined ? {} : { pod_photo_required: s.podPhotoRequired }),
+          ...(s.requiresLoading === undefined ? {} : { requires_loading: s.requiresLoading }),
           ...(s.containerNo === undefined ? {} : { container_no: s.containerNo || null }),
           ...(s.carrierSupplierId ? { carrier_supplier_id: s.carrierSupplierId } : {}),
         };

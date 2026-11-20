@@ -19,6 +19,9 @@ export type ListParams = {
   /** Điều kiện tìm kiếm nâng cao (chuỗi a=truong.toan_tu.gia_tri) */
   adv?: string[];
   parentId?: string;
+  /** Từ ngày / Đến ngày (YYYY-MM-DD) cho thực thể có dateRange */
+  from?: string;
+  to?: string;
 };
 
 export type RefLabels = Record<string, Record<string, string>>;
@@ -74,6 +77,8 @@ export function sanitizeSearch(q: string): string {
   return q.replace(/[%,()*\\:"']/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
 function columnRef(f: FieldDef): string {
   return f.custom ? `custom_fields->>${f.key}` : f.key;
 }
@@ -94,6 +99,11 @@ function applyFilters(query: any, entity: EntityDef, fields: FieldDef[], params:
     if (!f || value === "") continue;
     if (f.type === "boolean") q = q.eq(columnRef(f), f.custom ? value : value === "true");
     else q = q.eq(columnRef(f), value);
+  }
+  if (entity.dateRange) {
+    const { key, month } = entity.dateRange;
+    if (params.from && YMD.test(params.from)) q = q.gte(key, month ? `${params.from.slice(0, 7)}-01` : params.from);
+    if (params.to && YMD.test(params.to)) q = q.lte(key, params.to);
   }
   if (params.adv?.length) {
     const adv = advancedFields(fields);
@@ -235,6 +245,8 @@ export function parseListParams(sp: Record<string, string | string[] | undefined
     size: Number.isInteger(size) ? size : undefined,
     filters,
     adv: (Array.isArray(sp.a) ? sp.a : sp.a ? [sp.a] : []).slice(0, 20),
+    from: YMD.test(one("tu") ?? "") ? one("tu") : undefined,
+    to: YMD.test(one("den") ?? "") ? one("den") : undefined,
   };
 }
 

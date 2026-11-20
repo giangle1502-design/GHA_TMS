@@ -58,11 +58,15 @@ export async function resolveEntityTabs({
   basePath,
   tabs,
   searchParams,
+  keep,
 }: {
   basePath: string;
   tabs: { key: string; label?: string }[];
   searchParams: SP;
+  /** Tham số giữ lại khi đổi tab (ví dụ Từ ngày / Đến ngày của trang Báo cáo) */
+  keep?: Record<string, string>;
 }) {
+  const extra = keep ? Object.entries(keep).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join("") : "";
   const me = await requireActiveUser();
   const allowed = tabs.filter((t) => entityAccess(getEntity(t.key), me.permissions).view);
   const tabParam = typeof searchParams.tab === "string" ? searchParams.tab : undefined;
@@ -75,7 +79,7 @@ export async function resolveEntityTabs({
           {allowed.map((t) => (
             <Link
               key={t.key}
-              href={`${basePath}?tab=${t.key}`}
+              href={`${basePath}?tab=${t.key}${extra}`}
               className={cn(
                 "-mb-px shrink-0 border-b-2 px-4 py-2 text-sm whitespace-nowrap",
                 active === t.key ? "border-primary font-medium text-primary" : "border-transparent text-muted-foreground hover:text-foreground",

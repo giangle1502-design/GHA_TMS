@@ -7,6 +7,7 @@ import { CreateLeaveDialog, HandoverRowActions, LeaveRowActions } from "@/compon
 import { CreateTaskDialog, TaskRowActions } from "@/components/tasks/task-dialogs";
 import { CreatePurchaseRequestDialog, PurchaseRowActions } from "./purchase-dialogs";
 import { PlanTick } from "@/components/plans/plan-tick";
+import { FreightRowAction } from "@/components/reports/freight-row-action";
 import { CreateStockVoucherDialog } from "@/components/inventory/stock-voucher-dialog";
 import { BillingRowActions, CarrierRowActions, PayableRowActions, PaymentRowActions, PayrollRowActions, ReceivableRowActions } from "./payroll-debt-actions";
 
@@ -38,6 +39,7 @@ export const ROW_ACTIONS: Record<string, ComponentType<RowActionProps>> = {
   leave_handover: HandoverRowActions,
   task: TaskRowActions,
   purchase_request: PurchaseRowActions,
+  freight: FreightRowAction,
 };
 
 /** Ô thao tác ở cột đầu tiên của dòng (EntityDef.leadAction) */
@@ -60,4 +62,5 @@ export const ROW_ACTION_WIDTH: Record<string, number> = {
   leave_handover: 150,
   task: 230,
   purchase_request: 330,
+  freight: 120,
 };

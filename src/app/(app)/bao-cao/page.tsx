@@ -11,6 +11,8 @@ import { LineChart } from "@/components/charts/line-chart";
 import { EntityListSection, resolveEntityTabs } from "@/components/entities/entity-list-section";
 import { formatVND, todayVN } from "@/lib/format";
 import { toneVar, type Tone } from "@/lib/tones";
+import { monthRange } from "@/lib/freight-statement";
+import { ReportDateRange } from "@/components/reports/report-date-range";
 
 export const metadata: Metadata = { title: "Báo cáo" };
 
@@ -27,7 +29,17 @@ type Month = {
 
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const me = await requirePagePermission("reports.view");
-  const sp = await searchParams;
+  const raw = await searchParams;
+  // Từ ngày - Đến ngày cho mọi bảng báo cáo: mặc định tháng hiện tại
+  const today = todayVN();
+  const thisMonth = monthRange(today);
+  const lastMonth = monthRange(today, -1);
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
+  const ymd = /^\d{4}-\d{2}-\d{2}$/;
+  let tu = ymd.test(one(raw.tu)) ? one(raw.tu) : thisMonth.tu;
+  let den = ymd.test(one(raw.den)) ? one(raw.den) : thisMonth.den;
+  if (den < tu) [tu, den] = [den, tu];
+  const sp = { ...raw, tu, den };
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("report_monthly")
@@ -56,6 +68,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   const { active, nav } = await resolveEntityTabs({
     basePath: "/bao-cao",
     searchParams: sp,
+    keep: { tu, den },
     tabs: [
       { key: "report_shipments" },
       { key: "report_freight" },
@@ -116,6 +129,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         </CardContent>
       </Card>
       <div className="mt-6">
+        <ReportDateRange tu={tu} den={den} thisMonth={thisMonth} lastMonth={lastMonth} />
         {nav}
         {active ? <EntityListSection entityKey={active} searchParams={sp} revalidate="/bao-cao" /> : null}
       </div>

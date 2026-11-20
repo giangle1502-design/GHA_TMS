@@ -116,6 +116,9 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
     loadCustomFields(sb, "shipment_items"),
   ]);
   if (orderRes.error) throw orderRes.error;
+  // Ô "Có chi phí bốc xếp" (SQL 9033): đọc riêng, CSDL chưa nâng cấp thì coi như chưa tick
+  const loadingRes = await sb.from("shipments").select("id, requires_loading").eq("order_id", id);
+  const loadingIds = new Set(loadingRes.error ? [] : ((loadingRes.data ?? []) as { id: string; requires_loading: boolean }[]).filter((r) => r.requires_loading).map((r) => r.id));
   // CSDL chưa nâng cấp 0054 (chưa có cột pod_photo_required): đọc lại không có cột này, coi như bắt buộc chụp
   let shipData = shipRes.data as unknown[] | null;
   if (shipRes.error && missingColumn(shipRes.error, "pod_photo_required")) {
@@ -197,6 +200,7 @@ async function PageInner({ params, searchParams }: { params: Promise<{ id: strin
     fuelAmount: Number(s.fuel_support_amount),
     notes: s.notes ?? "",
     podPhotoRequired: s.pod_photo_required ?? true,
+    requiresLoading: loadingIds.has(s.id),
     custom: s.custom_fields ?? {},
     items: items
       .filter((it) => it.shipment_id === s.id)
