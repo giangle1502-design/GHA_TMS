@@ -22,6 +22,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/nha-xe", label: "Nhà xe 3PL đăng ký xe", icon: "Truck", anyOf: ["carrier_portal.use"] },
       { href: "/chuyen-xe/bang-ke", label: "Bảng kê cước", icon: "ReceiptText", anyOf: ["shipments.view", "statements.view"] },
       { href: "/chuyen-xe/vo-chua-tra", label: "Vỏ chưa trả rỗng", icon: "Container", anyOf: ["dispatch.view"] },
+      { href: "/phi-chua-nhap", label: "Phí bốc xếp, chi hộ chưa nhập", icon: "ClipboardList", anyOf: ["dispatch.view", "shipments.view", "reports.view"] },
       { href: "/so-chuyen", label: "Số chuyến xe, tài xế", icon: "ListOrdered", anyOf: ["dispatch.view", "reports.view"] },
       { href: "/tai-xe", label: "Tài xế", icon: "IdCard", anyOf: ["drivers.view"] },
       { href: "/phuong-tien", label: "Phương tiện", icon: "Bus", anyOf: ["vehicles.view"] },

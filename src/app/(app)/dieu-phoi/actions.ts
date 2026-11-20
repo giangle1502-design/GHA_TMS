@@ -202,6 +202,8 @@ const shipmentBase = z.object({
   podPhotoRequired: z.boolean().optional(),
   /** Có chi phí bốc xếp (không gửi = giữ nguyên) */
   requiresLoading: z.boolean().optional(),
+  /** Có chi hộ (không gửi = giữ nguyên) */
+  requiresPassThrough: z.boolean().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   items: itemsSchema.optional(),
   fees: feesSchema.optional(),
@@ -276,6 +278,11 @@ async function insertShipments(
     if (ids.length) {
       const r = await supabase.from("shipments").update({ requires_loading: true }).in("id", ids);
       if (r.error) created.itemsError = `Chưa lưu được ô "Có chi phí bốc xếp": ${toUserMessage(r.error)}. Cần chạy SQL 9033 trên Supabase rồi sửa đơn tích lại.`;
+    }
+    const ptIds = list.flatMap((s, i) => (s.requiresPassThrough && created.shipments[i] ? [created.shipments[i].id] : []));
+    if (ptIds.length) {
+      const r = await supabase.from("shipments").update({ requires_pass_through: true }).in("id", ptIds);
+      if (r.error) created.itemsError = `Chưa lưu được ô "Có chi hộ": ${toUserMessage(r.error)}. Cần chạy SQL 9034 trên Supabase rồi sửa đơn tích lại.`;
     }
   }
   // Số cont từng chuyến (ghi sau khi tạo, như ô chụp chứng từ)
@@ -1138,6 +1145,7 @@ export async function updateOrderFull(
           custom_fields: plan.custom,
           ...(s.podPhotoRequired === undefined ? {} : { pod_photo_required: s.podPhotoRequired }),
           ...(s.requiresLoading === undefined ? {} : { requires_loading: s.requiresLoading }),
+          ...(s.requiresPassThrough === undefined ? {} : { requires_pass_through: s.requiresPassThrough }),
           ...(s.containerNo === undefined ? {} : { container_no: s.containerNo || null }),
           ...(s.carrierSupplierId ? { carrier_supplier_id: s.carrierSupplierId } : {}),
         };

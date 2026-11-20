@@ -60,6 +60,9 @@ type Row = {
   requiresLoading: boolean;
   /** Giá trị lúc mở form sửa đơn (chỉ gửi máy chủ khi có tick hoặc đổi so với lúc mở) */
   loadingOrig?: boolean;
+  /** Có chi hộ: chưa nhập phí chi hộ thu khách thì chuyến hiện ở trang Phí chưa nhập */
+  requiresPassThrough: boolean;
+  passThroughOrig?: boolean;
   custom: Record<string, unknown>;
   /** Trường bổ sung kiểu tiền, %, số, công thức: nhập trong khung Giá */
   customPrice: Record<string, unknown>;
@@ -128,6 +131,7 @@ export type EditShipmentInit = {
   notes: string;
   podPhotoRequired: boolean;
   requiresLoading?: boolean;
+  requiresPassThrough?: boolean;
   custom: Record<string, unknown>;
   items: Omit<ItemLine, "key">[];
   fees: Omit<FeeLine, "key">[];
@@ -187,6 +191,7 @@ const newRow = (from?: Row, pod = true): Row => ({
   notes: from?.notes ?? "",
   podPhotoRequired: from?.podPhotoRequired ?? pod,
   requiresLoading: from?.requiresLoading ?? false,
+  requiresPassThrough: from?.requiresPassThrough ?? false,
   custom: from?.custom ?? {},
   customPrice: from?.customPrice ?? {},
   items: (from?.items ?? []).map((l) => newItem(l)),
@@ -220,6 +225,8 @@ const rowFromShipment = (s: EditShipmentInit, generalKeys: string[], priceKeys: 
   podPhotoRequired: s.podPhotoRequired,
   requiresLoading: s.requiresLoading ?? false,
   loadingOrig: s.requiresLoading ?? false,
+  requiresPassThrough: s.requiresPassThrough ?? false,
+  passThroughOrig: s.requiresPassThrough ?? false,
   custom: pick(s.custom, generalKeys),
   customPrice: pick(s.custom, priceKeys),
   items: s.items.map((l) => newItem(l)),
@@ -389,6 +396,7 @@ export function OrderForm({
     notes: s.notes,
     podPhotoRequired: s.podPhotoRequired,
     requiresLoading: s.requiresLoading || s.loadingOrig ? s.requiresLoading : undefined,
+    requiresPassThrough: s.requiresPassThrough || s.passThroughOrig ? s.requiresPassThrough : undefined,
     custom: { ...s.custom, ...s.customPrice },
     items: itemsPayload(s.items),
     fees: feesPayload(s.fees),
@@ -1039,7 +1047,18 @@ function ShipmentEditor({
                 >
                   <input id={id("loading")} type="checkbox" className="size-4" checked={row.requiresLoading} onChange={(e) => onChange({ requiresLoading: e.target.checked })} />
                   Có chi phí bốc xếp{" "}
-                  <span className="font-normal text-muted-foreground">(bắt buộc nhập phí bốc xếp: chưa nhập thì chuyến hiện ở trang Bốc xếp 3PL, mục &quot;Chuyến cần nhập phí bốc xếp&quot;)</span>
+                  <span className="font-normal text-muted-foreground">(bắt buộc nhập phí bốc xếp: chưa nhập thì chuyến hiện ở trang Phí chưa nhập)</span>
+                </label>
+                <label
+                  htmlFor={id("passthrough")}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-1 pt-1 text-sm",
+                    row.requiresPassThrough && "bg-amber-50 font-medium text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
+                  )}
+                >
+                  <input id={id("passthrough")} type="checkbox" className="size-4" checked={row.requiresPassThrough} onChange={(e) => onChange({ requiresPassThrough: e.target.checked })} />
+                  Có chi hộ{" "}
+                  <span className="font-normal text-muted-foreground">(bắt buộc nhập phí chi hộ: chưa nhập thì chuyến hiện ở trang Phí chưa nhập)</span>
                 </label>
               </div>
             ),

@@ -59,7 +59,8 @@ export type QuickFreight = {
 const FEE_COLS =
   "line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, is_loading, fee_group:fee_groups(id, name, report_role, sort_order))";
 
-export async function loadQuickFreight(shipmentId: string): Promise<ActionResult<QuickFreight>> {
+/** opts.carrier: luôn trả phần chi phí 3PL (mở từ trang Phí chưa nhập để nhập bốc xếp cho cả chuyến xe nội bộ) */
+export async function loadQuickFreight(shipmentId: string, opts: { carrier?: boolean } = {}): Promise<ActionResult<QuickFreight>> {
   return runAction(async () => {
     const me = await requirePermission("dispatch.update", "shipments.update", "receivables.create");
     if (!isUuid(shipmentId)) throw new ActionError("Dữ liệu không hợp lệ.");
@@ -118,7 +119,7 @@ export async function loadQuickFreight(shipmentId: string): Promise<ActionResult
     const tons = items.length && itemsNoWeight < items.length ? Math.round(kg) / 1000 : null;
 
     let carrier: QuickFreight["carrier"] = null;
-    if (canSeeCarrier && (is3pl || costs.length)) {
+    if (canSeeCarrier && (is3pl || costs.length || opts.carrier)) {
       // Bốc xếp 3PL: loại phí nhóm Bốc xếp, đơn giá mặc định (đ/tấn), trọng lượng chuyến (tấn) như chi tiết chuyến
       const [typesRes, priceRes, weightRes] = await Promise.all([
         supabase.from("fee_types").select("id, name").eq("is_loading", true).eq("is_active", true).order("sort_order"),
