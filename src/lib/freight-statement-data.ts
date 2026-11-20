@@ -4,6 +4,7 @@ import { addDaysYMD, formatDate, startOfDayVN } from "@/lib/format";
 import { PRICING_UNITS } from "@/lib/status";
 import { dispatchExtraColumns } from "@/lib/dispatch-columns";
 import type { ShipmentListRow } from "@/lib/shipments";
+import { mergeStatementGroups } from "@/lib/load-group";
 import {
   BASE_STATEMENT_COLUMNS,
   STATEMENT_ALL_CUSTOMERS,
@@ -221,7 +222,7 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
   return {
     customer,
     catalog,
-    rows,
+    rows: mergeStatementGroups(rows, rowsIn, catalog),
     truncated,
     notDelivered: notDeliveredRes.count ?? 0,
   };
@@ -246,3 +247,4 @@ function buildCatalog(extra: { key: string; label: string; numeric: boolean; sou
     })),
   ];
 }
+

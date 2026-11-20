@@ -42,6 +42,8 @@ import { VehiclePlateCell } from "@/components/dispatch/vehicle-plate-cell";
 import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-button";
 import { isGhaYard } from "@/lib/delivery-note";
 import { PricePickButton, QuickFreightButton } from "@/components/dispatch/quick-freight-dialog";
+import { GroupCodes, LoadGroupButton, PerTrip } from "@/components/dispatch/load-group-button";
+import { distinctValues, loadGroupCandidates, mergeLoadGroups, rowMembers, type GroupedShipmentRow } from "@/lib/load-group";
 
 type Col = {
   key: string;
@@ -82,11 +84,14 @@ const COLS: Col[] = [
     key: "order_code",
     label: "Đơn hàng",
     width: 150,
-    render: (r) => (
-      <Link href={`/dieu-phoi/don-hang/${r.order_id}`} className="hover:text-primary hover:underline">
-        {r.order_code}
-      </Link>
-    ),
+    render: (r) =>
+      (r as GroupedShipmentRow).group_rows ? (
+        <GroupCodes r={r} field="order" />
+      ) : (
+        <Link href={`/dieu-phoi/don-hang/${r.order_id}`} className="hover:text-primary hover:underline">
+          {r.order_code}
+        </Link>
+      ),
   },
   {
     key: "customer_code",
@@ -207,6 +212,11 @@ const COLS: Col[] = [
 
 const DEFAULT_PINNED = ["pickup_at", "shipment_code"];
 
+/** Ô của dòng gộp hiện riêng từng chuyến (sửa nhanh được, hoặc là số riêng của chuyến) */
+const PER_TRIP_COLS = new Set(["trip_order", "container_no", "delivery_days", "unit_price", "pricing_unit", "quantity", "fuel_support_rate", "driver_pay", "notes"]);
+/** Ô của dòng gộp: các chuyến cùng giá trị thì hiện 1 lần, khác nhau thì từng chuyến */
+const SAME_COLS = new Set(["pickup_name", "delivery_name", "route_label", "empty_return_name", "offroute_return_name", "vehicle_type_name"]);
+
 /** Cột chọn từ danh mục -> trường của chuyến */
 const REF_COLS: Record<string, "pickup_location_id" | "delivery_location_id" | "empty_return_location_id" | "offroute_return_location_id" | "vehicle_type_id" | "driver_id"> = {
   pickup_name: "pickup_location_id",
@@ -308,64 +318,111 @@ export function ShipmentGrid({
     [customDefs, canSeeProfit, dropDef, show3pl],
   );
 
-  const columns = useMemo<ColumnDef<ShipmentListRow>[]>(
+  // Các chuyến của nhiều đơn ghép chung một xe (cùng nhóm xe) hiện 1 dòng
+  const data = useMemo(() => mergeLoadGroups(rows), [rows]);
+  // Chuyến ghép chung xe được với từng dòng (cùng xe, cùng ngày): nút Ghép chung xe
+  const candidates = useMemo(() => {
+    const m = new Map<string, ShipmentListRow[]>();
+    if (!canSetOrder) return m;
+    for (const r of data) {
+      const list = loadGroupCandidates(r, data);
+      if (list.length) m.set(r.id, list);
+    }
+    return m;
+  }, [data, canSetOrder]);
+
+  const columns = useMemo<ColumnDef<GroupedShipmentRow>[]>(
     () =>
-      allCols.map((c) => ({
-        id: c.key,
-        header: c.label,
-        size: c.width,
-        minSize: 50,
-        meta: { col: c },
-        cell: ({ row }) => {
-          const r = row.original;
-          const editable = canEdit && c.edit && (c.edit === "notes" || !LOCKED_STATUSES.includes(r.status));
-          if (c.key === "shipment_code" && canEdit && r.status !== "cancelled")
-            return (
-              <div className="flex items-center gap-1">
-                <span className="min-w-0 flex-1 truncate">{c.render(r)}</span>
-                <QuickFreightButton compact shipmentId={r.id} code={r.shipment_code} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />
-              </div>
-            );
-          if (c.key === "trip_order") return <VehicleOrderCell r={r} editable={canSetOrder} />;
-          // Sửa nhanh số cont, số xe (chọn trong danh mục xe) ngay trên bảng
-          if (c.key === "container_no") return <ContainerNoCell r={r} editable={canEdit} />;
-          if (c.key === "plate_number") return <VehiclePlateCell r={r} editable={canAssign} empty="" className="-ml-1" />;
-          // Sửa nhanh ngày, điểm, loại xe, tài xế, ĐVT, số ngày giao, trường bổ sung ngay trên bảng
-          if (c.key === "pickup_at" || c.key === "expected_delivery_at") return <ShipmentDateCell r={r} field={c.key} display={c.render(r)} editable={canEdit} />;
-          const refField = REF_COLS[c.key];
-          if (refField && refField !== "driver_id") return <ShipmentRefCell r={r} field={refField} display={c.render(r)} editable={canEdit} />;
-          if (c.key === "driver_name")
-            return (
-              <div className="flex items-center gap-1">
-                <div className="min-w-0 flex-1">
-                  <ShipmentRefCell r={r} field="driver_id" display={r.driver_name} editable={canAssign} />
+      allCols.map((c) => {
+        // Ô của một chuyến (dòng thường, hoặc từng chuyến trong dòng gộp)
+        const cellOf = (r: ShipmentListRow): ReactNode => {
+              const editable = canEdit && c.edit && (c.edit === "notes" || !LOCKED_STATUSES.includes(r.status));
+              if (c.key === "shipment_code" && canEdit && r.status !== "cancelled")
+                return (
+                  <div className="flex items-center gap-1">
+                    <span className="min-w-0 flex-1 truncate">{c.render(r)}</span>
+                    <QuickFreightButton compact shipmentId={r.id} code={r.shipment_code} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />
+                  </div>
+                );
+              if (c.key === "trip_order") return <VehicleOrderCell r={r} editable={canSetOrder} />;
+              // Sửa nhanh số cont, số xe (chọn trong danh mục xe) ngay trên bảng
+              if (c.key === "container_no") return <ContainerNoCell r={r} editable={canEdit} />;
+              if (c.key === "plate_number") return <VehiclePlateCell r={r} editable={canAssign} empty="" className="-ml-1" />;
+              // Sửa nhanh ngày, điểm, loại xe, tài xế, ĐVT, số ngày giao, trường bổ sung ngay trên bảng
+              if (c.key === "pickup_at" || c.key === "expected_delivery_at") return <ShipmentDateCell r={r} field={c.key} display={c.render(r)} editable={canEdit} />;
+              const refField = REF_COLS[c.key];
+              if (refField && refField !== "driver_id") return <ShipmentRefCell r={r} field={refField} display={c.render(r)} editable={canEdit} />;
+              if (c.key === "driver_name")
+                return (
+                  <div className="flex items-center gap-1">
+                    <div className="min-w-0 flex-1">
+                      <ShipmentRefCell r={r} field="driver_id" display={r.driver_name} editable={canAssign} />
+                    </div>
+                    {r.driver_id ? <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} /> : null}
+                  </div>
+                );
+              if (c.key === "pricing_unit") return <PricingUnitCell r={r} display={c.render(r)} editable={canEdit} options={UNIT_OPTIONS} />;
+              if (c.key === "delivery_days") return <DeliveryDaysCell r={r} editable={canSetOrder} />;
+              if (c.def) return <CustomFieldCell r={r} def={c.def} display={c.render(r)} editable={canEdit} />;
+              const saved = (nr: ShipmentListRow) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)));
+              // Đơn giá: nút bảng giá (xe cont, xe tải, theo tuyến) cạnh ô để lấy giá
+              if (c.key === "unit_price" && editable)
+                return (
+                  <div className="flex items-center gap-0.5">
+                    <div className="min-w-0 flex-1">
+                      <EditCell row={r} col={c} onSaved={saved} />
+                    </div>
+                    <PricePickButton row={r} onSaved={saved} />
+                  </div>
+                );
+              return editable ? <EditCell row={r} col={c} onSaved={saved} /> : c.render(r);
+        };
+        return {
+          id: c.key,
+          header: c.label,
+          size: c.width,
+          minSize: 50,
+          meta: { col: c },
+          cell: ({ row }) => {
+            const g = row.original;
+            if (!g.group_rows) {
+              if (c.key !== "shipment_code" || !candidates.has(g.id)) return cellOf(g);
+              return (
+                <div className="flex items-center gap-1">
+                  <div className="min-w-0 flex-1">{cellOf(g)}</div>
+                  <LoadGroupButton r={g} candidates={candidates.get(g.id) ?? []} editable={canSetOrder} />
                 </div>
-                {r.driver_id ? <DriverInfoButton compact shipmentIds={[r.id]} canFill={canFillDriver} /> : null}
-              </div>
-            );
-          if (c.key === "pricing_unit") return <PricingUnitCell r={r} display={c.render(r)} editable={canEdit} options={UNIT_OPTIONS} />;
-          if (c.key === "delivery_days") return <DeliveryDaysCell r={r} editable={canSetOrder} />;
-          if (c.def) return <CustomFieldCell r={r} def={c.def} display={c.render(r)} editable={canEdit} />;
-          const saved = (nr: ShipmentListRow) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)));
-          // Đơn giá: nút bảng giá (xe cont, xe tải, theo tuyến) cạnh ô để lấy giá
-          if (c.key === "unit_price" && editable)
-            return (
-              <div className="flex items-center gap-0.5">
-                <div className="min-w-0 flex-1">
-                  <EditCell row={r} col={c} onSaved={saved} />
+              );
+            }
+            // Dòng gộp (nhiều đơn chung một xe): mã từng chuyến; ô sửa được thì xếp chồng từng chuyến; xe, tài xế, ngày chỉ xem
+            if (c.key === "shipment_code")
+              return (
+                <div className="flex items-start gap-1">
+                  <div className="min-w-0 flex-1">
+                    <GroupCodes r={g} field="shipment" />
+                  </div>
+                  {canEdit ? (
+                    <PerTrip r={g}>
+                      {(m) => <QuickFreightButton compact shipmentId={m.id} code={m.shipment_code} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />}
+                    </PerTrip>
+                  ) : null}
+                  <LoadGroupButton r={g} candidates={candidates.get(g.id) ?? []} editable={canSetOrder} />
                 </div>
-                <PricePickButton row={r} onSaved={saved} />
-              </div>
-            );
-          return editable ? <EditCell row={r} col={c} onSaved={saved} /> : c.render(r);
-        },
-      })),
-    [canEdit, allCols, canFillDriver, canSetOrder, canAssign],
+              );
+            if (["plate_number", "driver_name", "pickup_at", "expected_delivery_at"].includes(c.key)) return c.render(g);
+            // Điểm, tuyến, loại xe: các chuyến giống nhau thì hiện 1 lần, khác nhau thì từng chuyến
+            if (SAME_COLS.has(c.key) && distinctValues(rowMembers(g), (m) => m[c.key as keyof ShipmentListRow]).length <= 1) return c.render(g);
+            if (c.edit || c.def || PER_TRIP_COLS.has(c.key) || SAME_COLS.has(c.key)) return <PerTrip r={g}>{(m) => cellOf(m)}</PerTrip>;
+            return c.render(g);
+          },
+        };
+      }),
+    [canEdit, allCols, canFillDriver, canSetOrder, canAssign, candidates],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: rows,
+    data,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (r) => r.id,
@@ -417,14 +474,14 @@ export function ShipmentGrid({
     for (const a of list) sp.append("a", a);
     startNav(() => router.push(`${pathname}?${sp.toString()}`, { scroll: false }));
   }
-  function pinStyle(col: Column<ShipmentListRow>, header = false): CSSProperties {
+  function pinStyle(col: Column<GroupedShipmentRow>, header = false): CSSProperties {
     const side = col.getIsPinned();
     return side
       ? { width: col.getSize(), minWidth: col.getSize(), maxWidth: col.getSize(), position: "sticky", left: col.getStart("left"), zIndex: header ? 30 : 10 }
       : { width: col.getSize(), minWidth: col.getSize(), maxWidth: col.getSize() };
   }
   const tall = rowHeight !== null && rowHeight >= 52;
-  const label = (c: Column<ShipmentListRow>) => (c.columnDef.meta as { col: Col }).col.label;
+  const label = (c: Column<GroupedShipmentRow>) => (c.columnDef.meta as { col: Col }).col.label;
 
   return (
     <>

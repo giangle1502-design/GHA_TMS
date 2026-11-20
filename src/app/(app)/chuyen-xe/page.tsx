@@ -84,7 +84,15 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   ]);
   if (listRes.error) throw listRes.error;
   if (sumRes.error) throw sumRes.error;
-  const listRows = await attachContainerNo(supabase, await attachDriverPay(supabase, (listRes.data ?? []) as ShipmentListRow[]));
+  const pageRows = (listRes.data ?? []) as ShipmentListRow[];
+  // Đơn ghép chung xe: lấy thêm chuyến cùng nhóm nằm ở trang khác để gộp đủ 1 dòng
+  const groupIds = [...new Set(pageRows.map((r) => r.load_group_id).filter((x): x is string => Boolean(x)))];
+  if (groupIds.length) {
+    const have = new Set(pageRows.map((r) => r.id));
+    const { data: more } = await supabase.from("shipment_list").select("*").in("load_group_id", groupIds.slice(0, 200)).neq("status", "cancelled");
+    for (const m of (more ?? []) as ShipmentListRow[]) if (!have.has(m.id)) pageRows.push(m);
+  }
+  const listRows = await attachContainerNo(supabase, await attachDriverPay(supabase, pageRows));
   // Điền nhanh CCCD / GPLX còn thiếu trong hộp Thông tin tài xế
   const canFillDriver = me.permissions.has("dispatch.update") || (me.permissions.has("drivers.view_sensitive") && me.permissions.has("drivers.update"));
   // Lời/lỗ từng chuyến của trang đang xem (chỉ người có quyền xem chi phí hoặc báo cáo)
