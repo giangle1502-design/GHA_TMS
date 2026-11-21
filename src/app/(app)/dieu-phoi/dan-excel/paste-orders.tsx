@@ -103,6 +103,10 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
   const [ocr, setOcr] = useState<{ busy: boolean; progress: number; error: string }>({ busy: false, progress: 0, error: "" });
   /** Điểm nhận / điểm giao chọn tay theo từng dòng: "dòng|pickup" → id địa điểm (ưu tiên hơn ghép theo tên) */
   const [rowLoc, setRowLoc] = useState<Map<string, string>>(new Map());
+  /** Khách hàng (pháp nhân) chọn tay theo từng dòng: dòng thiếu / chưa ghép được pháp nhân */
+  const [rowCus, setRowCus] = useState<Map<number, string>>(new Map());
+  /** Dòng đã bấm Xóa: bỏ khỏi danh sách, không tạo đơn */
+  const [removed, setRemoved] = useState<Set<number>>(new Set());
   /** File Excel (sheet COST CONT) đã đọc + bộ lọc Nhà vận chuyển / ngày giao */
   const [sheet, setSheet] = useState<SheetData | null>(null);
   const [sheetFilter, setSheetFilter] = useState<CarrierFilter>(() => ({ carrier: "GHA", from: ymdOf(0), to: ymdOf(0), onlyPending: false }));
@@ -136,6 +140,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     if (rows.length !== grid.length) {
       setOrderNos(new Map());
       setRowLoc(new Map());
+      setRowCus(new Map());
+      setRemoved(new Set());
     }
     setGrid(rows);
     setMap(d.map);
@@ -162,6 +168,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     // Bắt buộc có khoảng ngày giao: không lọc ngày thì dễ tạo nhầm đơn của ngày khác
     const { rows: picked } = f.from && f.to ? filterCostCont(data, f) : { rows: [] };
     setRowLoc(new Map());
+      setRowCus(new Map());
+      setRemoved(new Set());
     setOrderNos(new Map());
     read(picked.length ? toTSV(data.header, picked) : "", null, "theo_doi");
   };
@@ -270,7 +278,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     const out = records.map((r, i) => {
       const errors: string[] = [];
       const warnings: string[] = [];
-      const customer = pick("customer", r.phap_nhan);
+      const cusPick = rowCus.get(i);
+      const customer: Pick = cusPick ? { id: cusPick, how: "manual", candidates: [] } : pick("customer", r.phap_nhan);
       const pickup = withRowChoice(pickFrom("location", pickupNames(r)), rowLoc.get(`${i}|pickup`));
       const delivery = withRowChoice(pickFrom("location", deliveryNames(r), deliveryDisplay(r)), rowLoc.get(`${i}|delivery`));
       const product = pick("product", r.ma_hang);
@@ -278,8 +287,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       const cont = containerOf(r);
       // ảnh chụp hay đọc nhầm "24,750" thành "24.750": số lượng đọc từ ảnh có dạng 24.750 hiểu là hàng nghìn
       const qty = parseQty(unsure && /^\d{1,3}(\.\d{3})+$/.test((r.so_luong ?? "").trim()) ? r.so_luong!.replace(/\./g, "") : r.so_luong);
-      if (!r.phap_nhan) errors.push(template === "theo_doi" ? "Thiếu Pháp nhân" : "Thiếu Công ty");
-      else if (!customer.id) errors.push(`Chưa ghép khách hàng "${r.phap_nhan}"`);
+      if (!customer.id) errors.push(r.phap_nhan ? `Chưa ghép khách hàng "${r.phap_nhan}": chọn ở cột Khách hàng` : `${template === "theo_doi" ? "Thiếu Pháp nhân" : "Thiếu Công ty"}: chọn ở cột Khách hàng`);
       if (!pickup.raw && !pickup.id) errors.push(template === "theo_doi" ? "Thiếu Điểm lấy cont" : "Thiếu Điểm đi / Kho xuất");
       else if (!pickup.id) errors.push(`Chưa chọn điểm nhận cho "${pickup.raw}"`);
       if (!delivery.raw && !delivery.id) errors.push(template === "theo_doi" ? "Thiếu Điểm giao" : template === "ecount_ck" ? "Thiếu Điểm đến / Kho nhập" : "Thiếu khách hàng nhận");
@@ -302,7 +310,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
       }
       if (looksScientific(r.so_to_khai)) warnings.push("Số tờ khai bị Excel đổi dạng 1.08E+11: định dạng cột là Text rồi copy lại");
       return { i, r, customer, pickup, delivery, product, date, cont, qty, method: deliveryMethodOf(r), errors, warnings, group: "" };
-    });
+    }).filter((x) => !removed.has(x.i));
     // Đánh số đơn: tự gợi ý theo nhóm, người dùng sửa được ô "Đơn" (cùng số = một đơn)
     const nums = new Map<string, number>();
     const no = new Map<number, string>();
@@ -322,7 +330,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
     return out.map((x) => ({ ...x, orderNo: no.get(x.i) ?? null }));
     // pick đọc manual + matchers
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template, rowLoc, sheet, sheetFilter]);
+  }, [records, manual, matchers, existing, merge, skip, unsure, recordRows, map, orderNos, template, rowLoc, rowCus, removed, sheet, sheetFilter]);
 
   const errorCount = rows.filter((x) => x.errors.length).length;
   const chosen = rows.filter((x) => !x.errors.length && !skip.has(x.i));
@@ -434,6 +442,8 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
         setManual(new Map());
         setRemember(new Set());
         setRowLoc(new Map());
+      setRowCus(new Map());
+      setRemoved(new Set());
       }
     });
   };
@@ -755,13 +765,23 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
         </Card>
       ) : null}
 
-      {rows.length ? (
+      {rows.length || removed.size ? (
         <Card>
           <CardHeader className="gap-2">
             <CardTitle className="text-base">3. Xem trước và tạo đơn</CardTitle>
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Badge variant="muted">{rows.length} dòng</Badge>
               <Badge variant={errorCount ? "destructive" : "muted"}>{errorCount} chưa đủ thông tin</Badge>
+              {errorCount ? (
+                <Button size="sm" variant="outline" onClick={() => setRemoved((s) => new Set([...s, ...rows.filter((x) => x.errors.length).map((x) => x.i)]))}>
+                  <Trash2 /> Xóa {errorCount} dòng chưa đủ thông tin
+                </Button>
+              ) : null}
+              {removed.size ? (
+                <Button size="sm" variant="ghost" onClick={() => setRemoved(new Set())}>
+                  Hiện lại {removed.size} dòng đã xóa
+                </Button>
+              ) : null}
               <Badge variant="info">
                 Sẽ tạo {orderCount} đơn, {chosen.length} chuyến
               </Badge>
@@ -807,6 +827,7 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                       "Điểm giao trong file",
                       "Điểm giao (chọn)",
                       "Kiểm tra",
+                      "Xóa",
                     ].map((h) => (
                       <th key={h} className="px-2 py-1.5 whitespace-nowrap">
                         {h}
@@ -859,7 +880,30 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                           />
                         ) : null}
                       </td>
-                      <Cell raw={x.r.phap_nhan} id={x.customer.id} byId={byId} />
+                      {x.customer.id && !rowCus.has(x.i) ? (
+                        <Cell raw={x.r.phap_nhan} id={x.customer.id} byId={byId} />
+                      ) : (
+                        <td className={cn("min-w-52 px-2 py-1", !x.customer.id && "bg-destructive/10")} data-customer-cell={x.i + 1}>
+                          <ReferenceSelect
+                            key={x.customer.id ?? ""}
+                            id={`dx-customer-${x.i}`}
+                            refKey="customers"
+                            value={x.customer.id ?? ""}
+                            initialLabel={label(byId.get(x.customer.id ?? ""))}
+                            invalid={!x.customer.id}
+                            allowQuickCreate={false}
+                            onChange={(v) =>
+                              setRowCus((m) => {
+                                const n = new Map(m);
+                                if (v) n.set(x.i, v);
+                                else n.delete(x.i);
+                                return n;
+                              })
+                            }
+                          />
+                          <span className="text-[11px] text-muted-foreground">{x.r.phap_nhan ? `File: ${x.r.phap_nhan}` : "File không có pháp nhân"}</span>
+                        </td>
+                      )}
                       <td className="px-2 py-1 font-mono whitespace-nowrap">{groupRef(x.r)}</td>
                       <Cell raw={x.r.ma_hang} id={x.product.id} byId={byId} codeOnly />
                       <td className="px-2 py-1 text-right tabular-nums">{x.qty !== null ? x.qty.toLocaleString("en-US") : x.r.so_luong}</td>
@@ -882,6 +926,18 @@ export function PasteOrders({ catalog: initialCatalog }: { catalog: PasteCatalog
                           </p>
                         ))}
                         {!x.errors.length && !x.warnings.length ? <span className="text-emerald-700">Hợp lệ</span> : null}
+                      </td>
+                      <td className="px-1 py-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Xóa dòng ${x.i + 1}`}
+                          title="Xóa dòng này: không tạo đơn"
+                          className="text-destructive"
+                          onClick={() => setRemoved((s) => new Set(s).add(x.i))}
+                        >
+                          <Trash2 />
+                        </Button>
                       </td>
                     </tr>
                   ))}
