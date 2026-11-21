@@ -43,7 +43,7 @@ import { DeliveryNoteButton } from "@/components/delivery-note/delivery-note-but
 import { isGhaYard } from "@/lib/delivery-note";
 import { PricePickButton, QuickFreightButton } from "@/components/dispatch/quick-freight-dialog";
 import { GroupCodes, LoadGroupButton, PerTrip } from "@/components/dispatch/load-group-button";
-import { distinctValues, loadGroupCandidates, mergeLoadGroups, rowMembers, type GroupedShipmentRow } from "@/lib/load-group";
+import { distinctValues, groupHead, loadGroupCandidates, mergeLoadGroups, rowMembers, tripPriced, type GroupedShipmentRow } from "@/lib/load-group";
 
 type Col = {
   key: string;
@@ -213,7 +213,11 @@ const COLS: Col[] = [
 const DEFAULT_PINNED = ["pickup_at", "shipment_code"];
 
 /** Ô của dòng gộp hiện riêng từng chuyến (sửa nhanh được, hoặc là số riêng của chuyến) */
-const PER_TRIP_COLS = new Set(["trip_order", "container_no", "delivery_days", "unit_price", "pricing_unit", "quantity", "fuel_support_rate", "driver_pay", "notes"]);
+const PER_TRIP_COLS = new Set(["unit_price", "pricing_unit", "quantity", "fuel_support_rate", "driver_pay", "notes"]);
+/** Dòng gộp: một giá trị cho cả nhóm (một xe, một lượt) */
+const GROUP_ONE_COLS = new Set(["trip_order", "container_no", "delivery_days"]);
+/** Dòng gộp tính cước theo mã chuyến: một đơn giá (chuyến đầu) */
+const PRICE_COLS = new Set(["unit_price", "pricing_unit", "quantity", "fuel_support_rate", "surcharge_amount"]);
 /** Ô của dòng gộp: các chuyến cùng giá trị thì hiện 1 lần, khác nhau thì từng chuyến */
 const SAME_COLS = new Set(["pickup_name", "delivery_name", "route_label", "empty_return_name", "offroute_return_name", "vehicle_type_name"]);
 
@@ -401,7 +405,9 @@ export function ShipmentGrid({
                   <div className="min-w-0 flex-1">
                     <GroupCodes r={g} field="shipment" />
                   </div>
-                  {canEdit ? (
+                  {canEdit && tripPriced(g) ? (
+                    <QuickFreightButton compact shipmentId={groupHead(g).id} code={groupHead(g).shipment_code} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />
+                  ) : canEdit ? (
                     <PerTrip r={g}>
                       {(m) => <QuickFreightButton compact shipmentId={m.id} code={m.shipment_code} onSaved={(nr) => setRows((rs) => rs.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />}
                     </PerTrip>
@@ -412,6 +418,8 @@ export function ShipmentGrid({
             if (["plate_number", "driver_name", "pickup_at", "expected_delivery_at"].includes(c.key)) return c.render(g);
             // Điểm, tuyến, loại xe: các chuyến giống nhau thì hiện 1 lần, khác nhau thì từng chuyến
             if (SAME_COLS.has(c.key) && distinctValues(rowMembers(g), (m) => m[c.key as keyof ShipmentListRow]).length <= 1) return c.render(g);
+            // Một xe một lượt: số cont, thứ tự xe, số ngày giao chung cả nhóm; cước theo mã chuyến: một đơn giá (chuyến đầu)
+            if (GROUP_ONE_COLS.has(c.key) || (PRICE_COLS.has(c.key) && tripPriced(g))) return cellOf(groupHead(g));
             if (c.edit || c.def || PER_TRIP_COLS.has(c.key) || SAME_COLS.has(c.key)) return <PerTrip r={g}>{(m) => cellOf(m)}</PerTrip>;
             return c.render(g);
           },

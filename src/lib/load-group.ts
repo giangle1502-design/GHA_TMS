@@ -117,6 +117,20 @@ export function mergeLoadGroups<T extends ShipmentListRow>(rows: T[]): GroupedSh
   return out;
 }
 
+/**
+ * Dòng gộp tính cước theo mã chuyến (ĐVT chuyến, SQL 9036): chuyến đầu giữ đơn giá, các chuyến ghép thêm bằng 0
+ * → hiện và sửa một đơn giá (của chuyến đầu). Nhóm tính theo tấn/km, hoặc chưa chuẩn hóa (còn 2 đơn giá) thì hiện từng chuyến.
+ */
+export function tripPriced(r: GroupedShipmentRow): boolean {
+  const list = rowMembers(r);
+  return list.every((m) => m.pricing_unit === "trip") && list.slice(1).every((m) => !Number(m.unit_price) && !Number(m.surcharge_amount) && !Number(m.fuel_support_amount));
+}
+
+/** Chuyến đầu (đại diện) của dòng */
+export function groupHead(r: GroupedShipmentRow): ShipmentListRow {
+  return rowMembers(r)[0];
+}
+
 /** Các chuyến của một dòng (dòng gộp: mọi chuyến trong nhóm; dòng thường: chính nó) */
 export function rowMembers(r: GroupedShipmentRow): ShipmentListRow[] {
   return r.group_rows?.length ? r.group_rows : [r];

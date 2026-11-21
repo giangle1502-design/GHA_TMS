@@ -95,3 +95,17 @@ describe("gộp đơn ghép chung xe", () => {
     expect(out[1].cells.stt).toBe(2);
   });
 });
+
+describe("cước xe ghép theo mã chuyến", () => {
+  it("chuyến ghép thêm về 0: một đơn giá của chuyến đầu", async () => {
+    const { tripPriced } = await import("@/lib/load-group");
+    const a = trip("1", "SNOV-0049", "SHP-1", 2_200_000, "g");
+    const b = { ...trip("2", "SNOV-0050", "SHP-2", 0, "g"), freight_amount: 0, transport_fee: 0, total_revenue: 0, amount_due: 0 };
+    const [row] = mergeLoadGroups([a, b]);
+    expect(tripPriced(row)).toBe(true);
+    expect(row.unit_price).toBe(2_200_000);
+    expect(row.transport_fee).toBe(2_200_000);
+    const [old] = mergeLoadGroups([a, trip("2", "SNOV-0050", "SHP-2", 2_500_000, "g")]);
+    expect(tripPriced(old)).toBe(false);
+  });
+});
