@@ -83,6 +83,8 @@ export type ShipmentListRow = {
   /** Nhà xe 3PL của chuyến (SQL 9018): ghi ở chuyến hoặc theo xe/tài xế 3PL; trống với người không xem được 3PL */
   carrier_supplier_id?: string | null;
   carrier_name?: string | null;
+  /** Các chuyến (của nhiều đơn) đi chung một xe, cùng lượt: cùng giá trị = gộp 1 dòng (SQL 9032, 9035) */
+  load_group_id?: string | null;
   /** Lời/lỗ (view shipment_profit, ghép ở trang khi người xem có quyền chi phí/báo cáo) */
   trip_cost?: number | null;
   vehicle_cost?: number | null;

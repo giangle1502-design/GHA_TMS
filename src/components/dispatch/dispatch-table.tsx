@@ -45,6 +45,8 @@ import { VehiclePlateCell } from "./vehicle-plate-cell";
 import { CancelDialog, DeleteCancelledButton, RestoreShipmentButton } from "./cancel-dialog";
 import { ResubmitTripButton, TripApprovalButtons } from "./trip-approval";
 import { DriverInfoButton } from "./driver-info-button";
+import { GroupCodes, LoadGroupButton, PerTrip } from "./load-group-button";
+import { loadGroupCandidates, mergeLoadGroups, type GroupedShipmentRow } from "@/lib/load-group";
 
 type SortVal = string | number | null | undefined;
 type Col = {
@@ -144,9 +146,13 @@ const BASE_COLS: Col[] = [
     sort: (r) => r.shipment_code,
     render: (r) => (
       <>
-        <Link href={`/chuyen-xe/${r.id}`} className="font-medium whitespace-nowrap text-primary hover:underline">
-          {r.shipment_code}
-        </Link>
+        {(r as GroupedShipmentRow).group_rows ? (
+          <GroupCodes r={r} field="shipment" />
+        ) : (
+          <Link href={`/chuyen-xe/${r.id}`} className="font-medium whitespace-nowrap text-primary hover:underline">
+            {r.shipment_code}
+          </Link>
+        )}
         {r.trip_order || r.plan_code ? (
           <div className="truncate text-xs text-muted-foreground">
             {r.trip_order ? <b className="text-primary">Thứ tự {r.trip_order}</b> : null}
@@ -180,11 +186,14 @@ const BASE_COLS: Col[] = [
     width: 130,
     orderOnly: true,
     sort: (r) => r.order_code,
-    render: (r) => (
-      <Link href={`/dieu-phoi/don-hang/${r.order_id}`} className="whitespace-nowrap hover:text-primary hover:underline">
-        {r.order_code}
-      </Link>
-    ),
+    render: (r) =>
+      (r as GroupedShipmentRow).group_rows ? (
+        <GroupCodes r={r} field="order" />
+      ) : (
+        <Link href={`/dieu-phoi/don-hang/${r.order_id}`} className="whitespace-nowrap hover:text-primary hover:underline">
+          {r.order_code}
+        </Link>
+      ),
   },
   {
     key: SERVICE_KIND_PLACEHOLDER,
@@ -429,7 +438,20 @@ export function DispatchTable({
   const resizeRow = useRef<{ y: number; h: number } | null>(null);
   const [now] = useState(() => Date.now());
 
-  const columns = useMemo<ColumnDef<ShipmentListRow>[]>(
+  // Các chuyến của nhiều đơn ghép chung một xe (cùng nhóm xe) hiện 1 dòng
+  const data = useMemo(() => mergeLoadGroups(rows), [rows]);
+  // Chuyến ghép chung xe được với từng dòng (cùng xe, cùng ngày): hiện nút Ghép chung xe
+  const candidates = useMemo(() => {
+    const m = new Map<string, ShipmentListRow[]>();
+    if (!canAssign) return m;
+    for (const r of data) {
+      const list = loadGroupCandidates(r, data);
+      if (list.length) m.set(r.id, list);
+    }
+    return m;
+  }, [data, canAssign]);
+
+  const columns = useMemo<ColumnDef<GroupedShipmentRow>[]>(
     () =>
       cols.map((c) => ({
         id: c.key,
@@ -441,35 +463,44 @@ export function DispatchTable({
         enableHiding: c.key !== "actions",
         // Ô trống trả về undefined để luôn nằm cuối dù sắp tăng hay giảm
         accessorFn: c.sort ? (r: ShipmentListRow) => emptyToUndef(c.sort!(r)) : undefined,
-        sortingFn: (a: Row<ShipmentListRow>, b: Row<ShipmentListRow>, id: string) => compareVals(a.getValue<SortVal>(id), b.getValue<SortVal>(id)),
+        sortingFn: (a: Row<GroupedShipmentRow>, b: Row<GroupedShipmentRow>, id: string) => compareVals(a.getValue<SortVal>(id), b.getValue<SortVal>(id)),
         sortUndefined: "last" as const,
-        cell: ({ row }) =>
-          c.key === "actions" ? (
-            <Actions r={row.original} canAssign={canAssign} canCancel={canCancel} canDelete={canDelete} canFillDriver={fillDriver} />
+        cell: ({ row }) => {
+          const r = row.original;
+          // Dòng gộp (nhiều đơn chung một xe): số xe sửa ở từng chuyến (chi tiết chuyến), các ô sửa riêng từng chuyến xếp chồng
+          const grouped = Boolean(r.group_rows);
+          return c.key === "actions" ? (
+            <PerTrip r={r}>{(m) => <Actions r={m} canAssign={canAssign} canCancel={canCancel} canDelete={canDelete} canFillDriver={fillDriver} />}</PerTrip>
           ) : c.key === "vehicle_day_order" ? (
-            <VehicleOrderCell r={row.original} editable={canAssign} />
+            <PerTrip r={r}>{(m) => <VehicleOrderCell r={m} editable={canAssign} />}</PerTrip>
           ) : c.key === "unit_price" ? (
-            <FreightPriceCell row={row.original} editable={canAssign} />
+            <PerTrip r={r}>{(m) => <FreightPriceCell row={m} editable={canAssign} />}</PerTrip>
           ) : c.key === "driver_pay" ? (
-            <DriverPayCell r={row.original} />
+            <PerTrip r={r}>{(m) => <DriverPayCell r={m} />}</PerTrip>
           ) : c.key === "delivery_days" ? (
-            <DeliveryDaysCell r={row.original} editable={canAssign} />
+            <PerTrip r={r}>{(m) => <DeliveryDaysCell r={m} editable={canAssign} />}</PerTrip>
           ) : c.key === "container_no" ? (
-            <ContainerNoCell r={row.original} editable={canAssign} />
+            <PerTrip r={r}>{(m) => <ContainerNoCell r={m} editable={canAssign} />}</PerTrip>
           ) : c.key === "vehicle_driver" ? (
-            vehicleDriverCell(row.original, canAssign)
+            vehicleDriverCell(r, canAssign && !grouped)
           ) : c.key === "plate_number" ? (
-            <VehiclePlateCell r={row.original} editable={canAssign} empty="" />
+            <VehiclePlateCell r={r} editable={canAssign && !grouped} empty="" />
+          ) : c.key === "shipment_code" ? (
+            <div className="flex items-start gap-1">
+              <div className="min-w-0 flex-1">{c.render(r, now)}</div>
+              <LoadGroupButton r={r} candidates={candidates.get(r.id) ?? []} editable={canAssign} />
+            </div>
           ) : (
-            c.render(row.original, now)
-          ),
+            c.render(r, now)
+          );
+        },
       })),
-    [cols, canAssign, canCancel, canDelete, fillDriver, now],
+    [cols, canAssign, canCancel, canDelete, fillDriver, now, candidates],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: rows,
+    data,
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -486,7 +517,7 @@ export function DispatchTable({
     onSortingChange: setSorting,
   });
   const ids = () => table.getAllLeafColumns().map((c) => c.id);
-  const meta = (c: Column<ShipmentListRow>) => (c.columnDef.meta as { col: Col }).col;
+  const meta = (c: Column<GroupedShipmentRow>) => (c.columnDef.meta as { col: Col }).col;
 
   function moveColumn(id: string, delta: number) {
     const list = ids();
@@ -518,7 +549,7 @@ export function DispatchTable({
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
-  function pinStyle(col: Column<ShipmentListRow>, header = false): CSSProperties {
+  function pinStyle(col: Column<GroupedShipmentRow>, header = false): CSSProperties {
     const size = { width: col.getSize(), minWidth: col.getSize(), maxWidth: col.getSize() };
     return col.getIsPinned() ? { ...size, position: "sticky", left: col.getStart("left"), zIndex: header ? 30 : 10 } : size;
   }
