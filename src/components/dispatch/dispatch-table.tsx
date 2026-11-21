@@ -46,7 +46,7 @@ import { CancelDialog, DeleteCancelledButton, RestoreShipmentButton } from "./ca
 import { ResubmitTripButton, TripApprovalButtons } from "./trip-approval";
 import { DriverInfoButton } from "./driver-info-button";
 import { GroupCodes, LoadGroupButton, PerTrip } from "./load-group-button";
-import { loadGroupCandidates, mergeLoadGroups, type GroupedShipmentRow } from "@/lib/load-group";
+import { groupHead, loadGroupCandidates, mergeLoadGroups, tripPriced, type GroupedShipmentRow } from "@/lib/load-group";
 
 type SortVal = string | number | null | undefined;
 type Col = {
@@ -469,18 +469,21 @@ export function DispatchTable({
           const r = row.original;
           // Dòng gộp (nhiều đơn chung một xe): số xe sửa ở từng chuyến (chi tiết chuyến), các ô sửa riêng từng chuyến xếp chồng
           const grouped = Boolean(r.group_rows);
+          // Một xe một lượt: số cont, thứ tự xe, số ngày giao chung cả nhóm (sửa ở chuyến đầu, CSDL chép sang chuyến còn lại);
+          // cước theo mã chuyến: một đơn giá (chuyến đầu)
+          const head = groupHead(r);
           return c.key === "actions" ? (
             <PerTrip r={r}>{(m) => <Actions r={m} canAssign={canAssign} canCancel={canCancel} canDelete={canDelete} canFillDriver={fillDriver} />}</PerTrip>
           ) : c.key === "vehicle_day_order" ? (
-            <PerTrip r={r}>{(m) => <VehicleOrderCell r={m} editable={canAssign} />}</PerTrip>
+            <VehicleOrderCell r={head} editable={canAssign} />
           ) : c.key === "unit_price" ? (
-            <PerTrip r={r}>{(m) => <FreightPriceCell row={m} editable={canAssign} />}</PerTrip>
+            grouped && !tripPriced(r) ? <PerTrip r={r}>{(m) => <FreightPriceCell row={m} editable={canAssign} />}</PerTrip> : <FreightPriceCell row={head} editable={canAssign} />
           ) : c.key === "driver_pay" ? (
             <PerTrip r={r}>{(m) => <DriverPayCell r={m} />}</PerTrip>
           ) : c.key === "delivery_days" ? (
-            <PerTrip r={r}>{(m) => <DeliveryDaysCell r={m} editable={canAssign} />}</PerTrip>
+            <DeliveryDaysCell r={head} editable={canAssign} />
           ) : c.key === "container_no" ? (
-            <PerTrip r={r}>{(m) => <ContainerNoCell r={m} editable={canAssign} />}</PerTrip>
+            <ContainerNoCell r={head} editable={canAssign} />
           ) : c.key === "vehicle_driver" ? (
             vehicleDriverCell(r, canAssign && !grouped)
           ) : c.key === "plate_number" ? (

@@ -45,7 +45,7 @@ select tests.assert((select count(distinct load_group_id) from public.shipment_l
   'Hai chuyến cùng nhóm xe, view shipment_list có load_group_id');
 select tests.assert((select count(distinct vehicle_day_order) from public.shipments where id in ('f9350000-0000-0000-0000-000000000001', 'f9350000-0000-0000-0000-000000000002')) = 1
   and (select min(vehicle_day_order) from public.shipments where id = 'f9350000-0000-0000-0000-000000000002') = 1, 'Cùng lượt: thứ tự xe về 1 cho cả hai');
-select tests.assert((select sum(freight_amount) from public.shipments where id in ('f9350000-0000-0000-0000-000000000001', 'f9350000-0000-0000-0000-000000000002')) = 4700000, 'Cước từng chuyến giữ nguyên');
+select tests.assert((select sum(freight_amount) from public.shipments where id in ('f9350000-0000-0000-0000-000000000001', 'f9350000-0000-0000-0000-000000000002')) = 2200000, 'Cước theo mã chuyến (9036): chuyến đầu giữ 2,200,000, chuyến ghép thêm về 0');
 -- Ghép lại lần nữa không tạo nhóm mới
 select public.set_shipment_load_group(array['f9350000-0000-0000-0000-000000000002', 'f9350000-0000-0000-0000-000000000001']::uuid[]);
 select tests.assert((select count(distinct load_group_id) from public.shipments where order_id in ('e9350000-0000-0000-0000-000000000001', 'e9350000-0000-0000-0000-000000000002')) = 1, 'Ghép lại giữ nhóm cũ');

@@ -31,7 +31,7 @@ export function GroupCodes({ r, field }: { r: GroupedShipmentRow; field: "shipme
         </span>
       ))}
       {field === "shipment" ? (
-        <span className="rounded bg-sky-100 px-1 text-[11px] font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-200" title="Các đơn đi chung một xe, cùng lượt: hiện 1 dòng, cước cộng lại">
+        <span className="rounded bg-sky-100 px-1 text-[11px] font-medium text-sky-800 dark:bg-sky-950 dark:text-sky-200" title="Các đơn đi chung một xe, cùng lượt: hiện 1 dòng, cước tính theo mã chuyến">
           Ghép {list.length} đơn
         </span>
       ) : null}
@@ -111,7 +111,8 @@ export function LoadGroupButton({ r, candidates, editable }: { r: GroupedShipmen
           <PopoverContent align="start" className="w-80">
             <p className="mb-2 text-xs text-muted-foreground">
               Xe <b>{r.plate_number}</b> còn các chuyến dưới đây cùng ngày. Chọn chuyến <b>đi chung lượt</b> (ghép hàng 2 đơn lên một xe) để hiện 1 dòng ở
-              Điều phối, Quản lý chuyến và bảng kê; cước các chuyến được cộng lại. Chuyến chạy lượt sau thì không chọn.
+              Điều phối, Quản lý chuyến và bảng kê. Cước tính theo chuyến: giữ đơn giá của chuyến có mã nhỏ nhất, chuyến ghép thêm về 0 (phí chi hộ, bốc xếp
+              từng đơn giữ nguyên). Chuyến chạy lượt sau thì không chọn.
             </p>
             <div className="max-h-60 space-y-1 overflow-auto">
               {candidates.map((c) => (
