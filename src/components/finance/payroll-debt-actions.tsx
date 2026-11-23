@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Ban, FilePlus2, HandCoins, History, Send, Truck } from "lucide-react";
+import { Ban, FilePlus2, HandCoins, History, Send } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { formatDateTime, formatVND, todayVN } from "@/lib/format";
 import { cancelDebt, cancelPayroll, listDebtPayments, payPayroll, recordDebtPayment, voidPayment, type DebtPayment } from "@/lib/finance/actions";
 import { MoneyField } from "./create-dialogs";
 import type { RowActionProps } from "./row-actions";
+import { CarrierRowCost } from "./carrier-row-cost";
 
 const num = (v: unknown) => Number(v ?? 0);
 
@@ -420,11 +421,7 @@ export function CarrierRowActions({ row, onDone }: RowActionProps) {
     : null;
   return (
     <>
-      <Button asChild size="sm" variant="outline" className="h-7 px-2">
-        <Link href={`/chuyen-xe/${String(row.id)}#chi-phi-3pl`} aria-label={`Chi phí 3PL ${String(row.shipment_code)}`}>
-          <Truck className="size-3.5" /> {row.pay_status === "no_cost" ? "Nhập chi phí" : "Chi phí"}
-        </Link>
-      </Button>
+      <CarrierRowCost row={row} />
       {payable ? <DebtRowActions kind="payable" row={payable} onDone={onDone} /> : null}
     </>
   );

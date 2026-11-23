@@ -51,7 +51,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       <CompactDensity />
       <PageHeader
         title="Xe thuê ngoài 3PL"
-        description="Các chuyến chạy xe thuê ngoài: cước và phí chi hộ phải trả nhà xe, đã trả, còn nợ. Nhập chi phí 3PL ở chi tiết chuyến (nút Chi phí ở từng dòng). Mọi bảng tìm kiếm nâng cao, chọn cột, xuất Excel được."
+        description="Các chuyến chạy xe thuê ngoài: cước và phí chi hộ phải trả nhà xe, đã trả, còn nợ. Nhập chi phí 3PL ngay trên dòng: nút “Nhập chi phí” (cước 3PL, % dầu, bốc xếp, chi hộ, chi phí khác) và nút “Cước” (cước thu khách, phí, bảng giá), không cần mở Điều phối hay Quản lý chuyến. Mọi bảng tìm kiếm nâng cao, chọn cột, xuất Excel được."
         actions={me.permissions.has("receivables.pay") ? <BulkCarrierPayDialog /> : null}
       />
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5 [&>*]:min-w-0">
