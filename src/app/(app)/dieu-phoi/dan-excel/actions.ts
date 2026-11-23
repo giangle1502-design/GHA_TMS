@@ -176,7 +176,7 @@ export async function commitPaste(input: z.input<typeof commitInput>): Promise<A
       }
       const at = vnMidnight(o.date);
       const { data, error } = await supabase.rpc("import_transport_order", {
-        p_order: { customer_id: o.customerId, payer_customer_id: "", order_date: o.date, notes: ["Dán từ Excel", o.refNo && `Tờ khai ${o.refNo}`].filter(Boolean).join(" · ") },
+        p_order: { customer_id: o.customerId, payer_customer_id: "", order_date: o.date, notes: "" },
         p_shipments: o.trips.map((t) => ({
           pickup_at: at,
           expected_delivery_at: at,
@@ -190,7 +190,8 @@ export async function commitPaste(input: z.input<typeof commitInput>): Promise<A
           quantity: "",
           surcharge_amount: "",
           fuel_support_rate: "",
-          notes: t.note,
+          // LE 23/11/2026: ghi chú trong file Excel / file Mua là của khách, không lưu vào ghi chú chuyến
+          notes: "",
           custom_fields: {},
           fees: [],
           import_status: "draft",

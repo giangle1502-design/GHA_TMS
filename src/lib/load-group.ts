@@ -200,13 +200,15 @@ export function mergeStatementGroups(
       const kind = kindOf.get(k) ?? (k.startsWith("fee_") ? "money" : "text");
       const nums = vals.filter((v): v is number => typeof v === "number");
       const distinct = [...new Set(vals.filter((v) => v !== null && v !== "").map(String))];
-      if (k === "quantity") cells[k] = nums.length ? (perTrip ? Math.max(...nums) : nums.reduce((a, v) => a + v, 0)) : null;
+      // Xe ghép: cả nhóm là một chuyến (cước tính theo mã chuyến)
+      if (k === "trip_count") cells[k] = 1;
+      else if (k === "quantity") cells[k] = nums.length ? (perTrip ? Math.max(...nums) : nums.reduce((a, v) => a + v, 0)) : null;
       else if (k === "unit_price") cells[k] = perTrip ? nums.reduce((a, v) => a + v, 0) : distinct.length === 1 ? vals.find((v) => v !== null) ?? null : null;
       else if (kind === "money" || (kind === "number" && nums.length === vals.filter((v) => v !== null && v !== "").length && nums.length > 0))
         cells[k] = nums.length ? nums.reduce((a, v) => a + v, 0) : null;
       else if (kind === "percent" || kind === "price") cells[k] = distinct.length === 1 ? vals.find((v) => v !== null) ?? null : null;
       else if (kind === "index") cells[k] = vals[0];
-      else cells[k] = distinct.length ? distinct.join(k === "shipment_code" || k === "order_code" ? " + " : k === "notes" || k === "invoice_info" ? "; " : ", ") : null;
+      else cells[k] = distinct.length ? distinct.join(k === "shipment_code" || k === "order_code" ? " + " : k === "notes" || k === "trip_notes" || k === "invoice_info" || k === "goods_detail" ? "; " : ", ") : null;
     }
     out.push({ id: list[0].id, cells });
   }
