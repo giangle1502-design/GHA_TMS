@@ -108,6 +108,8 @@ export function CarrierCostsDialog(props: {
   /** Mở khung ngay khi hiện (không có nút), đóng xong gọi onClose: dùng trên dòng bảng Xe thuê ngoài 3PL */
   autoOpen?: boolean;
   onClose?: () => void;
+  /** Mở để nhập bốc xếp (trang Bốc xếp 3PL): chuyến chưa có khoản bốc xếp thì thêm sẵn một dòng bốc xếp (SL tấn × đơn giá mặc định) */
+  startLoading?: boolean;
 }) {
   const loadingTypes = props.loadingFeeTypes ?? [];
   const defaultLoadingType = loadingTypes.find((t) => /3-?pl/i.test(t.name)) ?? loadingTypes[0];
@@ -157,7 +159,7 @@ export function CarrierCostsDialog(props: {
     loadSupplierFuel(props.supplierId ?? "", props.costs.length ? "none" : "empty");
     setInvoice(props.invoiceNo ?? "");
     setDue(props.dueDate ?? "");
-    setLines(
+    const existing =
       props.costs.length
         ? props.costs.map((c) =>
             newLine({
@@ -175,8 +177,11 @@ export function CarrierCostsDialog(props: {
               note: c.note ?? "",
             }),
           )
-        : [newLine({ kind: "freight", description: "Cước 3PL" })],
-    );
+        : [];
+    if (props.startLoading && loadingTypes.length) {
+      // Chưa có khoản bốc xếp: thêm sẵn một dòng để chọn đơn vị bốc xếp; có rồi thì giữ nguyên (thêm đơn vị khác bằng nút Thêm bốc xếp 3PL)
+      setLines(existing.some((l) => l.kind === "loading") ? existing : [...existing, newLoadingLine()]);
+    } else setLines(existing.length ? existing : [newLine({ kind: "freight", description: "Cước 3PL" })]);
     setOpen(true);
   };
 
@@ -221,6 +226,8 @@ export function CarrierCostsDialog(props: {
       if (bad) return void toast.error(`Số không hợp lệ ở khoản "${bad.description || (bad.kind === "loading" ? "Bốc xếp 3PL" : CARRIER_KIND_LABEL[bad.kind])}"`);
       const noType = lines.find((l) => l.kind === "loading" && lineAmount(l) > 0 && !l.fee_type_id);
       if (noType) return void toast.error("Chọn loại phí bốc xếp cho khoản bốc xếp (danh mục Loại phí, nhóm Bốc xếp).");
+      const noVendor = lines.find((l) => l.kind === "loading" && lineAmount(l) > 0 && !l.supplier_id && !supplier);
+      if (noVendor) return void toast.error("Chọn đơn vị bốc xếp cho khoản bốc xếp (chuyến không có nhà xe 3PL để tính thay).");
       const r = await saveCarrierCosts({
         shipmentId: props.shipmentId,
         supplierId: supplier || null,

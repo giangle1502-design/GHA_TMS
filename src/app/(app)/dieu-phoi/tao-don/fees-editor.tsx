@@ -341,7 +341,7 @@ export function FeesEditor({
           const head = attach ? PASS_HEAD_ATTACH : ROW_HEAD[role];
           const sum = groupSum(g);
           return (
-            <fieldset key={g.id} className={cn("rounded-lg border p-2.5", isFreight && "border-primary/40")}>
+            <fieldset key={g.id} data-fee-role={role} className={cn("rounded-lg border p-2.5", isFreight && "border-primary/40")}>
               <legend className="px-1 text-xs font-semibold text-foreground">{g.name}</legend>
               {isFreight && freightHead ? <div className="mb-1.5 space-y-1.5">{freightHead}</div> : null}
               {gTypes.length ? (

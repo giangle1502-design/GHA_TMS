@@ -6,7 +6,7 @@ import { BellRing, CircleDollarSign, ClipboardList, Loader2, Lock, Receipt, Tags
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FeesEditor, countFeeFiles, feeTotals, feesPayload, newFee, numText, uploadFeeFiles, useFeeCatalog, type FeeFiles, type FeeLine } from "@/app/(app)/dieu-phoi/tao-don/fees-editor";
+import { FeesEditor, type FeeGroupRole, countFeeFiles, feeTotals, feesPayload, newFee, numText, uploadFeeFiles, useFeeCatalog, type FeeFiles, type FeeLine } from "@/app/(app)/dieu-phoi/tao-don/fees-editor";
 import { saveShipmentFees } from "@/app/(app)/dieu-phoi/actions";
 import { CarrierCostsDialog } from "@/components/finance/carrier-dialogs";
 import { PricePanel } from "@/components/pricing/price-panel";
@@ -119,6 +119,7 @@ export function QuickFreightDialog({
   onClose,
   onSaved,
   initialTab = "customer",
+  focusFeeRole,
 }: {
   shipmentId: string;
   code: string;
@@ -126,6 +127,8 @@ export function QuickFreightDialog({
   onSaved?: (r: ShipmentListRow) => void;
   /** "carrier" = mở thẳng tab Chi phí trả 3PL (luôn có tab này, kể cả xe nội bộ: nhập bốc xếp 3PL) */
   initialTab?: Tab;
+  /** Mở xong cuộn tới nhóm phí thu khách này và đặt con trỏ vào ô đầu (vd. "loading" từ trang Bốc xếp 3PL) */
+  focusFeeRole?: FeeGroupRole;
 }) {
   const router = useRouter();
   const [data, setData] = useState<QuickFreight | null>(null);
@@ -185,6 +188,23 @@ export function QuickFreightDialog({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shipmentId]);
+
+  // Cuộn tới nhóm phí cần nhập (danh mục phí tải sau nên thử lại vài lần)
+  const boxRef = useRef<HTMLDivElement>(null);
+  const ready = Boolean(data);
+  useEffect(() => {
+    if (!ready || !focusFeeRole) return;
+    let tries = 0;
+    const iv = window.setInterval(() => {
+      const box = boxRef.current?.querySelector<HTMLElement>(`[data-fee-role="${focusFeeRole}"]`);
+      if (box || ++tries > 20) window.clearInterval(iv);
+      if (!box) return;
+      box.scrollIntoView({ block: "center" });
+      box.classList.add("ring-2", "ring-amber-400");
+      box.querySelector<HTMLInputElement>("input:not([disabled])")?.focus({ preventScroll: true });
+    }, 150);
+    return () => window.clearInterval(iv);
+  }, [ready, focusFeeRole]);
 
   // Khóa sửa chuyến: nhận khi mở khung, báo "còn sửa" mỗi 30 giây, nhả khi đóng
   const rev = data?.rev ?? null;
@@ -295,7 +315,7 @@ export function QuickFreightDialog({
     : [];
   return (
     <Dialog open onOpenChange={(o) => !pending && !o && onClose()}>
-      <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
+      <DialogContent ref={boxRef} className="max-h-[92vh] max-w-6xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nhập cước chuyến {code}</DialogTitle>
           <DialogDescription>
