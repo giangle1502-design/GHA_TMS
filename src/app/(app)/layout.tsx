@@ -13,14 +13,19 @@ import { ChatBadge } from "@/components/chat/chat-badge";
 import { OptionAddProvider } from "@/components/entities/add-option";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const user = await requireActiveUser();
   const supabase = await createClient();
-  const isStaff = user.roles.some((r) => r.code !== "driver");
-  const [{ count: unread }, chatUnread] = await Promise.all([
+  // Người dùng, số thông báo và tin nhắn chưa đọc đọc cùng lúc (không chờ nhau)
+  const [user, { count: unread }, chatAll] = await Promise.all([
+    requireActiveUser(),
     supabase.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null),
     // Trước khi chạy nâng cấp CSDL Trò chuyện, hàm chưa có: coi như 0
-    isStaff ? supabase.rpc("chat_unread_total").then((r) => (typeof r.data === "number" ? r.data : 0)) : Promise.resolve(0),
+    supabase.rpc("chat_unread_total").then(
+      (r) => (typeof r.data === "number" ? r.data : 0),
+      () => 0,
+    ),
   ]);
+  const isStaff = user.roles.some((r) => r.code !== "driver");
+  const chatUnread = isStaff ? chatAll : 0;
 
   // Menu chỉ hiển thị mục người dùng có quyền (máy chủ vẫn kiểm tra quyền ở từng trang)
   const groups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => hasAny(user.permissions, i.anyOf)) })).filter(

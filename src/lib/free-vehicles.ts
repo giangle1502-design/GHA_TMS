@@ -47,15 +47,12 @@ export async function loadFreeVehicles(supabase: SupabaseClient, tu: string, den
     .limit(2000);
   if (opts.vehicleId) vq = vq.eq("id", opts.vehicleId);
   if (opts.driverId) vq = vq.eq("assigned_driver_id", opts.driverId);
-  const { data: vehicles, error } = await vq;
-  if (error) throw error;
-
   const from = startOfDayVN(tu);
   const to = startOfDayVN(addDaysYMD(den, 1));
   const busy = new Map<string, Set<string>>();
   const trips = new Map<string, number>();
-  for (let p = 0; p < 20; p++) {
-    const { data, error: e } = await supabase
+  const tripPage = (p: number) =>
+    supabase
       .from("shipments")
       .select("id, vehicle_id, pickup_at, expected_delivery_at, completed_at")
       .not("vehicle_id", "is", null)
@@ -64,6 +61,11 @@ export async function loadFreeVehicles(supabase: SupabaseClient, tu: string, den
       .or(`pickup_at.gte.${from},expected_delivery_at.gte.${from}`)
       .order("id")
       .range(p * 1000, p * 1000 + 999);
+  // Danh sách xe và trang chuyến đầu tiên đọc song song (không phụ thuộc nhau)
+  const [{ data: vehicles, error }, firstPage] = await Promise.all([vq, tripPage(0)]);
+  if (error) throw error;
+  for (let p = 0; p < 20; p++) {
+    const { data, error: e } = p === 0 ? firstPage : await tripPage(p);
     if (e) throw e;
     const rows = (data ?? []) as { vehicle_id: string; pickup_at: string; expected_delivery_at: string | null; completed_at: string | null }[];
     for (const r of rows) {

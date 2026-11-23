@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
-import { attachDriverPay } from "@/lib/driver-pay";
-import { attachContainerNo } from "@/lib/shipment-container";
+import { attachPayAndContainer } from "@/lib/shipment-container";
 import Link from "next/link";
 import { Ban, ClipboardPaste, FileSpreadsheet, ReceiptText } from "lucide-react";
 import { redirect } from "next/navigation";
 import { requirePagePermission } from "@/lib/auth/session";
-import { loadTableView } from "@/lib/entities/server";
+import { loadCustomFields, loadTableView } from "@/lib/entities/server";
 import { SHIPMENT_ADV_FIELDS } from "@/lib/shipments";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
@@ -47,9 +46,9 @@ type Summary = { total: number; by_status: Record<string, Bucket> };
 const MONEY_KEYS = ["transport", "pass_through", "declaration", "loading", "other"] as const;
 
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const me = await requirePagePermission("shipments.view");
-  const sp = await searchParams;
   const supabase = await createClient();
+  // Quyền người dùng và trường bổ sung đọc cùng lúc (trường bổ sung được ghi nhớ, shipmentCustomFields dùng lại)
+  const [me, sp] = await Promise.all([requirePagePermission("shipments.view"), searchParams, loadCustomFields(supabase, "shipments")]);
   const custom = await shipmentCustomFields(supabase, me.permissions);
   const f = parseShipmentFilters(sp, custom.adv);
   const page = Math.max(1, Math.min(1000, Number(sp.trang) || 1));
@@ -92,15 +91,17 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     const { data: more } = await supabase.from("shipment_list").select("*").in("load_group_id", groupIds.slice(0, 200)).neq("status", "cancelled");
     for (const m of (more ?? []) as ShipmentListRow[]) if (!have.has(m.id)) pageRows.push(m);
   }
-  const listRows = await attachContainerNo(supabase, await attachDriverPay(supabase, pageRows));
   // Điền nhanh CCCD / GPLX còn thiếu trong hộp Thông tin tài xế
   const canFillDriver = me.permissions.has("dispatch.update") || (me.permissions.has("drivers.view_sensitive") && me.permissions.has("drivers.update"));
   // Lời/lỗ từng chuyến của trang đang xem (chỉ người có quyền xem chi phí hoặc báo cáo)
   const canSeeProfit = me.permissions.has("expenses.view") || me.permissions.has("reports.view");
-  const profitRes =
-    canSeeProfit && listRows.length
-      ? await supabase.from("shipment_profit").select("shipment_id, trip_cost, vehicle_cost, profit").in("shipment_id", listRows.map((r) => r.id))
-      : { data: [] };
+  // Lương chuyến, Số cont, lời/lỗ: ba truy vấn chạy song song (trước đây nối tiếp)
+  const [listRows, profitRes] = await Promise.all([
+    attachPayAndContainer(supabase, pageRows),
+    canSeeProfit && pageRows.length
+      ? supabase.from("shipment_profit").select("shipment_id, trip_cost, vehicle_cost, profit").in("shipment_id", pageRows.map((r) => r.id))
+      : Promise.resolve({ data: [] }),
+  ]);
   const profits = new Map(((profitRes.data ?? []) as { shipment_id: string; trip_cost: number; vehicle_cost: number; profit: number }[]).map((p) => [p.shipment_id, p]));
   const rows = listRows.map((r) => {
     const p = profits.get(r.id);
