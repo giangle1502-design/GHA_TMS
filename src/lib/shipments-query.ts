@@ -103,6 +103,16 @@ export async function carrierName(supabase: SupabaseClient, id: string): Promise
   return (data?.name as string | undefined) ?? "";
 }
 
+/**
+ * Nhà xe 3PL để tài xế tự nhận, bắt đầu, hoàn thành trên app (bỏ tick "GHA nhận thay chuyến 3PL",
+ * VD Thành Cảnh, Thế Bùi): ẩn nút làm thay trên web. CSDL chưa nâng cấp 9040 thì coi như không có.
+ */
+export async function driverAppCarrierIds(supabase: SupabaseClient): Promise<string[]> {
+  const { data, error } = await supabase.from("suppliers").select("id").eq("gha_acts_for_driver", false);
+  if (error) return [];
+  return (data ?? []).map((r) => r.id as string);
+}
+
 /** Trường bổ sung của chuyến mà người dùng được xem: định nghĩa cột + trường tìm kiếm nâng cao */
 export async function shipmentCustomFields(supabase: SupabaseClient, perms: Set<string>) {
   const defs = moduleCustomFields("shipments", visibleCustomRows(await loadCustomFields(supabase, "shipments"), perms), perms);

@@ -346,6 +346,8 @@ function compareVals(a: SortVal, b: SortVal) {
 }
 
 /** Bảng chuyến cho màn hình điều phối và chi tiết đơn hàng: kéo đổi cột, sắp xếp, ẩn/hiện, kéo giãn, lưu cấu hình theo người dùng */
+const NO_IDS: string[] = [];
+
 export function DispatchTable({
   rows,
   canAssign,
@@ -362,6 +364,7 @@ export function DispatchTable({
   canFillDriver,
   exportName,
   show3pl = false,
+  driverAppCarrierIds = NO_IDS,
 }: {
   rows: ShipmentListRow[];
   canAssign: boolean;
@@ -387,6 +390,8 @@ export function DispatchTable({
   exportName?: { filename: string; title: string };
   /** Hiện cột Nhà xe 3PL (người có quyền xem 3PL) */
   show3pl?: boolean;
+  /** Nhà xe 3PL để tài xế tự thao tác trên app: không hiện nút Nhận thay */
+  driverAppCarrierIds?: string[];
 }) {
   const fillDriver = canFillDriver ?? canAssign;
   const [savePending, startSave] = useTransition();
@@ -473,7 +478,7 @@ export function DispatchTable({
           // cước theo mã chuyến: một đơn giá (chuyến đầu)
           const head = groupHead(r);
           return c.key === "actions" ? (
-            <PerTrip r={r}>{(m) => <Actions r={m} canAssign={canAssign} canCancel={canCancel} canDelete={canDelete} canFillDriver={fillDriver} />}</PerTrip>
+            <PerTrip r={r}>{(m) => <Actions r={m} canAssign={canAssign} canCancel={canCancel} canDelete={canDelete} canFillDriver={fillDriver} driverAppCarrierIds={driverAppCarrierIds} />}</PerTrip>
           ) : c.key === "vehicle_day_order" ? (
             <VehicleOrderCell r={head} editable={canAssign} />
           ) : c.key === "unit_price" ? (
@@ -498,7 +503,7 @@ export function DispatchTable({
           );
         },
       })),
-    [cols, canAssign, canCancel, canDelete, fillDriver, now, candidates],
+    [cols, canAssign, canCancel, canDelete, fillDriver, now, candidates, driverAppCarrierIds],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -773,7 +778,25 @@ export function DispatchTable({
   );
 }
 
-function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: ShipmentListRow; canAssign: boolean; canCancel: boolean; canDelete: boolean; canFillDriver: boolean }) {
+function Actions({
+  r,
+  canAssign,
+  canCancel,
+  canDelete,
+  canFillDriver,
+  driverAppCarrierIds,
+}: {
+  r: ShipmentListRow;
+  canAssign: boolean;
+  canCancel: boolean;
+  canDelete: boolean;
+  canFillDriver: boolean;
+  driverAppCarrierIds: string[];
+}) {
+  // Nhà xe 3PL tài xế tự làm trên app (Thành Cảnh, Thế Bùi): GHA không làm thay
+  const driverApp = Boolean(r.carrier_supplier_id && driverAppCarrierIds.includes(r.carrier_supplier_id));
+  // Chuyến 3PL đã có số xe nhưng chưa có tài xế: GHA nhận thay được (tự gắn tài xế đại diện nhà xe)
+  const plateOnly3pl = !r.driver_id && Boolean(r.vehicle_id && r.carrier_supplier_id) && r.status === "draft";
   return (
     <div className="flex flex-wrap justify-end gap-1">
       {canAssign && r.status !== "cancelled" ? <QuickFreightButton compact shipmentId={r.id} code={r.shipment_code} /> : null}
@@ -784,8 +807,13 @@ function Actions({ r, canAssign, canCancel, canDelete, canFillDriver }: { r: Shi
       {canAssign && r.dispatch_approval === "rejected" && r.status === "assigned" ? (
         <ResubmitTripButton compact shipmentId={r.id} shipmentCode={r.shipment_code} reason={r.dispatch_reject_reason} />
       ) : null}
-      {canAssign && r.driver_id && ["assigned", "accepted", "in_transit"].includes(r.status) && r.dispatch_approval !== "pending" && r.dispatch_approval !== "rejected" ? (
-        <ActForDriverQuick shipmentId={r.id} code={r.shipment_code} status={r.status} />
+      {canAssign && !driverApp && ((r.driver_id && ["assigned", "accepted", "in_transit"].includes(r.status)) || plateOnly3pl) && r.dispatch_approval !== "pending" && r.dispatch_approval !== "rejected" ? (
+        <ActForDriverQuick shipmentId={r.id} code={r.shipment_code} status={plateOnly3pl ? "assigned" : r.status} />
+      ) : null}
+      {canAssign && driverApp && ["assigned", "accepted", "in_transit"].includes(r.status) ? (
+        <span className="self-center px-1 text-xs text-muted-foreground" title="Nhà xe này để tài xế tự nhận, bắt đầu, hoàn thành trên app">
+          Tài xế tự làm trên app
+        </span>
       ) : null}
       {canAssign && ASSIGNABLE_STATUSES.includes(r.status) ? (
         <AssignDialog
