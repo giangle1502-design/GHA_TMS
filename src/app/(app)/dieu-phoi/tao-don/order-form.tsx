@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Ban, Copy, X, Loader2, Plus, RefreshCw, Save, Trash2, Undo2 } from "lucide-react";
@@ -30,6 +30,8 @@ import { normalizeContainerNo } from "@/lib/shipment-container";
 import { containerCheckOk } from "@/lib/paste-orders";
 import { cn } from "@/lib/utils";
 import { NoteImageFill, type NoteFill } from "./note-image-fill";
+import { searchReferences } from "@/lib/entities/actions";
+import { isPortName } from "@/lib/port";
 
 type Row = {
   key: number;
@@ -743,6 +745,28 @@ function ShipmentEditor({
       ...(keep && !row.billed ? { priceMode: "quote" as const } : {}),
     });
 
+  // Điểm nhận là CẢNG: hàng lấy từ cảng thường có phí chi hộ (nâng cont, lưu bãi...) → nhắc tick "Có chi hộ".
+  // Chuyến mới (kể cả dán Excel, nhập COST CONT, đọc ảnh) tự tick sẵn một lần cho mỗi điểm nhận; bỏ tick được.
+  const [portOf, setPortOf] = useState<{ id: string; port: boolean }>({ id: "", port: false });
+  const pickupIsPort = Boolean(row.pickupLocationId) && portOf.id === row.pickupLocationId && portOf.port;
+  const autoPortTick = useRef("");
+  useEffect(() => {
+    const pid = row.pickupLocationId;
+    if (!pid) return;
+    let alive = true;
+    searchReferences("locations", "", [pid]).then((r) => {
+      if (alive && r.ok) setPortOf({ id: pid, port: isPortName(r.data?.find((o) => o.value === pid)?.label) });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [row.pickupLocationId]);
+  useEffect(() => {
+    if (!pickupIsPort || row.id || autoPortTick.current === row.pickupLocationId) return;
+    autoPortTick.current = row.pickupLocationId;
+    if (!row.requiresPassThrough) onChange({ requiresPassThrough: true });
+  }, [pickupIsPort, row.id, row.pickupLocationId, row.requiresPassThrough, onChange]);
+
   useEffect(() => {
     if (!canQuote) return;
     const t = setTimeout(() => {
@@ -966,6 +990,27 @@ function ShipmentEditor({
               <div className="space-y-1 lg:col-span-2">
                 <SysLabel s={sSys} k="pickup_location_id" htmlFor={id("pickup")} suffix=" *">Điểm nhận</SysLabel>
                 <ReferenceSelect id={id("pickup")} refKey="locations" value={row.pickupLocationId} onChange={(v) => routeChange({ pickupLocationId: v, priceListId: "" })} />
+                {pickupIsPort ? (
+                  <div
+                    role="status"
+                    className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                  >
+                    {row.requiresPassThrough ? (
+                      <span>
+                        <b>Lấy hàng từ cảng:</b> đã tick “Có chi hộ”. Nhớ nhập phí chi hộ (nâng cont, lưu bãi…); chưa nhập thì chuyến hiện ở trang Phí chưa nhập.
+                      </span>
+                    ) : (
+                      <>
+                        <span>
+                          <b>Lấy hàng từ cảng:</b> thường có phí chi hộ (nâng cont, lưu bãi…). Nhớ tick “Có chi hộ”.
+                        </span>
+                        <Button type="button" size="sm" variant="outline" className="h-7" onClick={() => onChange({ requiresPassThrough: true })}>
+                          Tick Có chi hộ
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
               </div>
             ),
             delivery_location_id: (
