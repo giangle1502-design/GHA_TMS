@@ -55,7 +55,7 @@ export const ROW_ACTION_WIDTH: Record<string, number> = {
   payroll: 210,
   receivable: 250,
   payable: 250,
-  carrier: 300,
+  carrier: 380,
   billing: 170,
   payment: 150,
   leave: 250,

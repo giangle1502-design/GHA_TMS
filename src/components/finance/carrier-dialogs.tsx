@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Copy, HandCoins, Loader2, Plus, Trash2, Truck } from "lucide-react";
@@ -105,6 +105,9 @@ export function CarrierCostsDialog(props: {
   loadingUnitPrice?: number;
   /** Trọng lượng chuyến (tấn) */
   tripTons?: number;
+  /** Mở khung ngay khi hiện (không có nút), đóng xong gọi onClose: dùng trên dòng bảng Xe thuê ngoài 3PL */
+  autoOpen?: boolean;
+  onClose?: () => void;
 }) {
   const loadingTypes = props.loadingFeeTypes ?? [];
   const defaultLoadingType = loadingTypes.find((t) => /3-?pl/i.test(t.name)) ?? loadingTypes[0];
@@ -177,6 +180,19 @@ export function CarrierCostsDialog(props: {
     setOpen(true);
   };
 
+  const opened = useRef(false);
+  useEffect(() => {
+    if (props.autoOpen && !opened.current) {
+      opened.current = true;
+      openDialog();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const setOpenAndNotify = (o: boolean) => {
+    setOpen(o);
+    if (!o) props.onClose?.();
+  };
+
   const copyPassThrough = () => {
     if (!props.customerPassThrough.length) return void toast.info("Chuyến chưa có phí chi hộ thu khách để chép.");
     const have = new Set(lines.filter((l) => l.kind === "pass_through").map((l) => l.fee_type_id));
@@ -227,16 +243,18 @@ export function CarrierCostsDialog(props: {
       });
       if (!r.ok) return void toast.error(r.error);
       toast.success(r.data?.payable_code ? `${r.message} Công nợ phải trả ${r.data.payable_code}.` : r.message);
-      setOpen(false);
+      setOpenAndNotify(false);
       router.refresh();
     });
 
   return (
     <>
-      <Button size="sm" variant={props.costs.length ? "outline" : "default"} onClick={openDialog}>
-        <Truck /> {props.costs.length ? "Sửa chi phí 3PL" : "Nhập chi phí 3PL"}
-      </Button>
-      <Dialog open={open} onOpenChange={(o) => !pending && setOpen(o)}>
+      {props.autoOpen ? null : (
+        <Button size="sm" variant={props.costs.length ? "outline" : "default"} onClick={openDialog}>
+          <Truck /> {props.costs.length ? "Sửa chi phí 3PL" : "Nhập chi phí 3PL"}
+        </Button>
+      )}
+      <Dialog open={open} onOpenChange={(o) => !pending && setOpenAndNotify(o)}>
         <DialogContent className="max-h-[94vh] w-[97vw] max-w-7xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chi phí trả 3PL chuyến {props.code}</DialogTitle>
@@ -485,7 +503,7 @@ export function CarrierCostsDialog(props: {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" disabled={pending} onClick={() => setOpen(false)}>
+            <Button variant="outline" disabled={pending} onClick={() => setOpenAndNotify(false)}>
               Đóng
             </Button>
             <Button disabled={pending} onClick={save}>
