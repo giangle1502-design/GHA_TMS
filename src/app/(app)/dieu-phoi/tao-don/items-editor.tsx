@@ -21,12 +21,23 @@ function useProducts() {
   const [list, setList] = useState<Product[]>([]);
   useEffect(() => {
     productCache ??= (async () => {
-      const { data, error } = await createClient().from("products").select("code, name, unit, kg_per_unit, kg_per_bag").eq("status", "active").order("code").limit(10000);
-      if (error) {
-        productCache = null;
-        return [];
+      // Supabase trả tối đa 1,000 dòng mỗi lần: đọc từng trang để không sót mã hàng
+      const all: Product[] = [];
+      for (let page = 0; page < 20; page++) {
+        const { data, error } = await createClient()
+          .from("products")
+          .select("code, name, unit, kg_per_unit, kg_per_bag")
+          .eq("status", "active")
+          .order("code")
+          .range(page * 1000, page * 1000 + 999);
+        if (error) {
+          productCache = null;
+          return all;
+        }
+        all.push(...((data ?? []) as Product[]));
+        if ((data ?? []).length < 1000) break;
       }
-      return (data ?? []) as Product[];
+      return all;
     })();
     let alive = true;
     void productCache.then((d) => alive && setList(d));
@@ -110,8 +121,8 @@ export function ItemsEditor({
     if (value.some((l) => unitOf(l) !== null && unitOf(l) !== l.unit)) onChange(value.map((l) => (unitOf(l) !== null ? { ...l, unit: unitOf(l)! } : l)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [byCode]);
-  /** Số bao tự chia theo Số KG/bao của mã hàng; null = không tính được (mã hàng ngoài danh mục) thì cho nhập tay */
-  const autoBags = (l: ItemLine) => autoBagCount(parseNumberVN(l.quantity) ?? null, l.unit, byCode.get(norm(l.item_code)) ?? null);
+  /** Số bao tự chia theo Số KG/bao của mã hàng (mã ngoài danh mục, ĐVT KG: 25 kg/bao); null = không tính được thì cho nhập tay */
+  const autoBags = (l: ItemLine) => !byCode.size ? null : autoBagCount(parseNumberVN(l.quantity) ?? null, l.unit, byCode.get(norm(l.item_code)) ?? null);
   // Số bao tính được thì không lưu số nhập tay (số đọc từ ảnh / dán Excel), phiếu giao hàng luôn in số tự tính
   useEffect(() => {
     if (!byCode.size) return;
@@ -198,7 +209,7 @@ export function ItemsEditor({
                           className="h-8 bg-muted/50"
                           value={formatNumber(autoBags(l))}
                           readOnly
-                          title="Tự tính: Số lượng (KG) ÷ Số KG/bao của mã hàng (sửa Số KG/bao trong Danh mục mã hàng)"
+                          title={byCode.has(norm(l.item_code)) ? "Tự tính: Số lượng (KG) ÷ Số KG/bao của mã hàng (sửa Số KG/bao trong Danh mục mã hàng)" : "Mã hàng chưa có trong danh mục: tạm tính 25 kg/bao. Thêm mã vào Danh mục mã hàng để đặt Số KG/bao khác"}
                         />
                       ) : c.sys ? (
                         <Input
@@ -214,7 +225,7 @@ export function ItemsEditor({
                             c.key === "unit" && byCode.has(norm(l.item_code))
                               ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)"
                               : c.key === "bag_count"
-                                ? "Mã hàng chưa có trong danh mục (hoặc chưa có Số KG/bao) nên nhập tay số bao"
+                                ? "Không tự tính được (ĐVT không phải KG, mã hàng chưa có trong danh mục) nên nhập tay số bao"
                                 : undefined
                           }
                           onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
