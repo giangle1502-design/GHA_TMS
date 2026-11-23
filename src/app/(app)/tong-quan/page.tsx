@@ -118,14 +118,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   };
   const head = { count: "exact" as const, head: true };
 
-  let rows: Row[] = [];
-  let truncated = false;
-  let recent: Recent[] = [];
-  let inTransit = 0;
-  let lateCount = 0;
-  let waitingAccept = 0;
-  let waitingSettle = 0;
-  if (canShip) {
+  // Mọi khối số liệu bên dưới đọc CSDL song song (trước đây nối tiếp 5 bước), rồi mới tính toán
+  const shipBlock = async () => {
     // Một lần đọc đủ dữ liệu cho kỳ đang xem, kỳ trước và biểu đồ theo tháng
     const loadFrom = [prev.range.from, `${months[0]}-01`, f.tu].sort()[0];
     const [all, recentRes, a, b, c, d] = await Promise.all([
@@ -155,11 +149,86 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       count(scope(supabase.from("shipment_list").select("id", head).eq("status", "driver_completed"))),
     ]);
     if (recentRes.error) throw recentRes.error;
-    rows = all.rows;
-    truncated = all.truncated;
-    recent = (recentRes.data ?? []) as Recent[];
-    [inTransit, lateCount, waitingAccept, waitingSettle] = [a, b, c, d];
-  }
+    return { rows: all.rows, truncated: all.truncated, recent: (recentRes.data ?? []) as Recent[], counts: [a, b, c, d] as const };
+  };
+
+  type Expiring = { id: string; plate_number: string; registration_expiry: string | null; insurance_expiry: string | null };
+  const expiringBlock = async (): Promise<Expiring[]> => {
+    let q = supabase
+      .from("vehicles")
+      .select("id, plate_number, registration_expiry, insurance_expiry")
+      .is("archived_at", null)
+      .or(`registration_expiry.lte.${in30},insurance_expiry.lte.${in30}`);
+    if (f.xe) q = q.eq("id", f.xe);
+    const { data, error } = await q.order("registration_expiry", { ascending: true, nullsFirst: false }).limit(6);
+    if (error) throw error;
+    return data ?? [];
+  };
+
+  // Chỉ tiêu tài chính (người có quyền xem báo cáo); khoản nào không có quyền thì ghi rõ
+  type FinanceItem = { label: string; value: number | null; note?: string };
+  const financeBlock = async (): Promise<FinanceItem[]> => {
+    const sum = async (q: PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>, col: string) => {
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []).reduce((a, r) => a + Number(r[col] ?? 0), 0);
+    };
+    const profitQuery = () => {
+      let q = supabase
+        .from("report_shipment_profit")
+        .select("id, revenue, cost", { count: "exact" })
+        .gte("report_date", f.tu)
+        .lte("report_date", f.den);
+      if (f.kh) q = q.eq("customer_id", f.kh);
+      if (f.tx) q = q.eq("driver_id", f.tx);
+      if (f.xe) q = q.eq("vehicle_id", f.xe);
+      if (f.tuyen) q = q.eq("pickup_name", route?.pickup?.name ?? "").eq("delivery_name", route?.delivery?.name ?? "");
+      return q.order("id");
+    };
+    const ar = () => {
+      let q = supabase.from("receivable_list").select("remaining_amount").in("status", ["open", "partial"]);
+      if (f.kh) q = q.eq("customer_id", f.kh);
+      return q;
+    };
+    const ap = () => {
+      let q = supabase.from("payable_list").select("remaining_amount").in("status", ["open", "partial"]);
+      if (f.tx) q = q.eq("driver_id", f.tx);
+      return q;
+    };
+    const adv = () => {
+      let q = supabase.from("report_advance_balance").select("balance");
+      if (f.tx) q = q.eq("driver_id", f.tx);
+      return q;
+    };
+    const [pr, arSum, apSum, advSum] = await Promise.all([
+      fetchAll<{ revenue: number; cost: number }>(profitQuery),
+      perms.has("receivables.view") ? sum(ar(), "remaining_amount") : null,
+      perms.has("receivables.view") ? sum(ap(), "remaining_amount") : null,
+      sum(adv(), "balance"),
+    ]);
+    const revenue = pr.rows.reduce((a, r) => a + Number(r.revenue ?? 0), 0);
+    const cost = pr.rows.reduce((a, r) => a + Number(r.cost ?? 0), 0);
+    return [
+      { label: "Doanh thu", value: revenue },
+      { label: "Chi phí chuyến", value: cost },
+      { label: "Lợi nhuận gộp", value: revenue - cost },
+      { label: f.kh ? "Khách này còn nợ" : "Công nợ phải thu", value: arSum, note: "Số dư hiện tại" },
+      { label: f.tx ? "Phải trả tài xế này" : "Công nợ phải trả", value: apSum, note: "Số dư hiện tại" },
+      { label: f.tx ? "Tạm ứng tài xế này đang giữ" : "Tạm ứng tài xế đang giữ", value: advSum, note: "Số dư hiện tại" },
+    ];
+  };
+
+  const [ship, pendingApprovals, pendingUsers, expiring, finance] = await Promise.all([
+    canShip ? shipBlock() : null,
+    perms.has("approvals.view") ? count(supabase.from("approval_requests").select("id", head).eq("status", "pending")) : null,
+    perms.has("users.view") ? count(supabase.from("profiles").select("id", head).eq("status", "pending")) : null,
+    perms.has("vehicles.view") ? expiringBlock() : ([] as Expiring[]),
+    perms.has("reports.view") ? financeBlock() : null,
+  ]);
+  const rows: Row[] = ship?.rows ?? [];
+  const truncated = ship?.truncated ?? false;
+  const recent: Recent[] = ship?.recent ?? [];
+  const [inTransit, lateCount, waitingAccept, waitingSettle] = ship?.counts ?? [0, 0, 0, 0];
 
   // Tính số liệu từ các dòng đã đọc
   const withDay = rows.map((r) => ({ ...r, d: vnDate(r.pickup_at) }));
@@ -217,76 +286,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   for (const r of inRange) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
   const statusItems = SHIPMENT_STATUS.map((s) => ({ label: s.label, tone: s.tone, value: byStatus[s.value] ?? 0 })).filter((i) => i.value > 0);
 
-  const pendingApprovals = perms.has("approvals.view")
-    ? await count(supabase.from("approval_requests").select("id", head).eq("status", "pending"))
-    : null;
-  const pendingUsers = perms.has("users.view") ? await count(supabase.from("profiles").select("id", head).eq("status", "pending")) : null;
-
-  let expiring: { id: string; plate_number: string; registration_expiry: string | null; insurance_expiry: string | null }[] = [];
-  if (perms.has("vehicles.view")) {
-    let q = supabase
-      .from("vehicles")
-      .select("id, plate_number, registration_expiry, insurance_expiry")
-      .is("archived_at", null)
-      .or(`registration_expiry.lte.${in30},insurance_expiry.lte.${in30}`);
-    if (f.xe) q = q.eq("id", f.xe);
-    const { data, error } = await q.order("registration_expiry", { ascending: true, nullsFirst: false }).limit(6);
-    if (error) throw error;
-    expiring = data ?? [];
-  }
-
-  // Chỉ tiêu tài chính (người có quyền xem báo cáo); khoản nào không có quyền thì ghi rõ
-  let finance: { label: string; value: number | null; note?: string }[] | null = null;
-  if (perms.has("reports.view")) {
-    const sum = async (q: PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>, col: string) => {
-      const { data, error } = await q;
-      if (error) throw error;
-      return (data ?? []).reduce((a, r) => a + Number(r[col] ?? 0), 0);
-    };
-    const profitQuery = () => {
-      let q = supabase
-        .from("report_shipment_profit")
-        .select("id, revenue, cost", { count: "exact" })
-        .gte("report_date", f.tu)
-        .lte("report_date", f.den);
-      if (f.kh) q = q.eq("customer_id", f.kh);
-      if (f.tx) q = q.eq("driver_id", f.tx);
-      if (f.xe) q = q.eq("vehicle_id", f.xe);
-      if (f.tuyen) q = q.eq("pickup_name", route?.pickup?.name ?? "").eq("delivery_name", route?.delivery?.name ?? "");
-      return q.order("id");
-    };
-    const ar = () => {
-      let q = supabase.from("receivable_list").select("remaining_amount").in("status", ["open", "partial"]);
-      if (f.kh) q = q.eq("customer_id", f.kh);
-      return q;
-    };
-    const ap = () => {
-      let q = supabase.from("payable_list").select("remaining_amount").in("status", ["open", "partial"]);
-      if (f.tx) q = q.eq("driver_id", f.tx);
-      return q;
-    };
-    const adv = () => {
-      let q = supabase.from("report_advance_balance").select("balance");
-      if (f.tx) q = q.eq("driver_id", f.tx);
-      return q;
-    };
-    const [pr, arSum, apSum, advSum] = await Promise.all([
-      fetchAll<{ revenue: number; cost: number }>(profitQuery),
-      perms.has("receivables.view") ? sum(ar(), "remaining_amount") : null,
-      perms.has("receivables.view") ? sum(ap(), "remaining_amount") : null,
-      sum(adv(), "balance"),
-    ]);
-    const revenue = pr.rows.reduce((a, r) => a + Number(r.revenue ?? 0), 0);
-    const cost = pr.rows.reduce((a, r) => a + Number(r.cost ?? 0), 0);
-    finance = [
-      { label: "Doanh thu", value: revenue },
-      { label: "Chi phí chuyến", value: cost },
-      { label: "Lợi nhuận gộp", value: revenue - cost },
-      { label: f.kh ? "Khách này còn nợ" : "Công nợ phải thu", value: arSum, note: "Số dư hiện tại" },
-      { label: f.tx ? "Phải trả tài xế này" : "Công nợ phải trả", value: apSum, note: "Số dư hiện tại" },
-      { label: f.tx ? "Tạm ứng tài xế này đang giữ" : "Tạm ứng tài xế đang giữ", value: advSum, note: "Số dư hiện tại" },
-    ];
-  }
 
   const todoHref = (tt: string) =>
     `/chuyen-xe?${new URLSearchParams({ tt, tu: addDaysYMD(today, -365), den: addDaysYMD(today, 30), ...(f.kh ? { kh: f.kh } : {}) }).toString()}`;

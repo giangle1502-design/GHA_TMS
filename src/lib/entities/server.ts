@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ENTITIES } from "./definitions";
 import { applyConditions, parseConditions } from "@/lib/advanced-filter";
@@ -33,7 +34,13 @@ const CUSTOM_FIELD_COLUMNS =
  * Trường bổ sung của một màn hình. Khi không lấy trường đã ngừng dùng, kèm thêm một dòng giả field_kind = "layout"
  * mang thứ tự trường trên biểu mẫu để mọi nơi dùng effectiveFields tự sắp đúng thứ tự.
  */
-export async function loadCustomFields(supabase: SupabaseClient, module: string | undefined, includeInactive = false): Promise<CustomFieldRow[]> {
+/**
+ * Trường bổ sung của một màn hình. Ghi nhớ trong một request (React cache): trang Điều phối / Quản lý chuyến
+ * gọi nhiều lần cho cùng module (cột, tìm kiếm nâng cao, cột bổ sung) nên chỉ đọc CSDL một lần.
+ */
+export const loadCustomFields = cache(loadCustomFieldsUncached);
+
+async function loadCustomFieldsUncached(supabase: SupabaseClient, module: string | undefined, includeInactive = false): Promise<CustomFieldRow[]> {
   if (!module) return [];
   let q = supabase.from("field_definitions").select(CUSTOM_FIELD_COLUMNS).eq("module", module).order("sort_order");
   if (!includeInactive) q = q.eq("status", "active");

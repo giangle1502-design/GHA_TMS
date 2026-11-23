@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { attachDriverPay } from "@/lib/driver-pay";
-import { attachContainerNo } from "@/lib/shipment-container";
+import { attachContainerNo, attachPayAndContainer } from "@/lib/shipment-container";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Ban, Plus, Truck, ListChecks, ListOrdered, FileSpreadsheet, ClipboardPaste } from "lucide-react";
@@ -11,7 +10,7 @@ import { SHIPMENT_STATUS } from "@/lib/status";
 import { TONE_BADGE } from "@/lib/tones";
 import { isLate, SHIPMENT_ADV_FIELDS, type ShipmentListRow } from "@/lib/shipments";
 import { isUuid } from "@/lib/entities/record";
-import { loadTableView } from "@/lib/entities/server";
+import { loadCustomFields, loadTableView } from "@/lib/entities/server";
 import { advRefLabels, applyShipmentFilters, carrierName, carrierOptions, parseShipmentFilters, shipmentCustomFields } from "@/lib/shipments-query";
 import { loadFreeVehicles } from "@/lib/free-vehicles";
 import { dispatchExtraColumns } from "@/lib/dispatch-columns";
@@ -43,14 +42,19 @@ type SP = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
-  const me = await requirePagePermission("dispatch.view");
-  const raw = await searchParams;
+  const supabase = await createClient();
+  // Đọc quyền người dùng và trường bổ sung cùng lúc (trường bổ sung được ghi nhớ, các bước sau dùng lại)
+  const [me, raw] = await Promise.all([
+    requirePagePermission("dispatch.view"),
+    searchParams,
+    loadCustomFields(supabase, "shipments"),
+    loadCustomFields(supabase, "transport_orders"),
+  ]);
   const today = todayVN();
   // Mặc định hôm nay; ?ngay= (liên kết cũ) = một ngày
   const ngay = one(raw.ngay);
   const tuRaw = one(raw.tu) ?? (ngay && YMD.test(ngay) ? ngay : today);
   const denRaw = one(raw.den) ?? tuRaw;
-  const supabase = await createClient();
   const custom = await shipmentCustomFields(supabase, me.permissions);
   const f = parseShipmentFilters({ ...raw, tu: tuRaw, den: denRaw }, custom.adv);
   if (f.den > addDaysYMD(f.tu, MAX_SPAN - 1)) f.den = addDaysYMD(f.tu, MAX_SPAN - 1);
@@ -112,9 +116,16 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const delegation = (delegationRes.data ?? null) as DelegationInfo | null;
   if (listRes.error) throw listRes.error;
   if (upcomingRes.error) throw upcomingRes.error;
-  const all = await attachContainerNo(supabase, await attachDriverPay(supabase, (listRes.data ?? []) as ShipmentListRow[]));
+  const listRows = (listRes.data ?? []) as ShipmentListRow[];
+  const upcomingRows = (upcomingRes.data ?? []) as ShipmentListRow[];
+  // Lương chuyến, Số cont, cột bổ sung: chạy song song (trước đây nối tiếp từng bước)
+  const [all, upcomingAll, extras] = await Promise.all([
+    attachPayAndContainer(supabase, listRows),
+    attachContainerNo(supabase, upcomingRows),
+    xem ? Promise.resolve({ columns: [], values: {} }) : dispatchExtraColumns(supabase, me.permissions, [...listRows, ...upcomingRows]),
+  ]);
   const term = f.q.toLowerCase();
-  const upcoming = (await attachContainerNo(supabase, (upcomingRes.data ?? []) as ShipmentListRow[])).filter(
+  const upcoming = upcomingAll.filter(
     (r) =>
       (!f.kh || r.customer_id === f.kh) &&
       (!f.pl || (f.pl === "3pl" ? Boolean(r.carrier_supplier_id) : f.pl === "noi-bo" ? !r.carrier_supplier_id : r.carrier_supplier_id === f.pl)) &&
@@ -138,7 +149,6 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const approvalCount = all.filter((r) => r.dispatch_approval === "pending" || r.dispatch_approval === "rejected").length;
   const pendingAll = (approvalRes.data ?? []) as { id: string; dispatch_approval_request_id: string | null; can_approve_dispatch: boolean }[];
   const myApprovals = pendingAll.filter((r) => r.can_approve_dispatch && r.dispatch_approval_request_id).map((r) => r.dispatch_approval_request_id!);
-  const extras = xem ? { columns: [], values: {} } : await dispatchExtraColumns(supabase, me.permissions, [...all, ...upcoming]);
   const tableProps = { view, extraColumns: extras.columns, extraValues: extras.values, canAddField: me.permissions.has("fields.configure") };
   const counts = Object.fromEntries(SHIPMENT_STATUS.filter((s) => s.value !== "cancelled").map((s) => [s.value, all.filter((r) => r.status === s.value).length]));
   const freeCount = free.filter((v) => v.free_days > 0).length;
