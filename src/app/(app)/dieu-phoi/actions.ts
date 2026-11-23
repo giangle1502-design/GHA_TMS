@@ -326,6 +326,9 @@ const orderSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   notes: z.string().max(2000).optional(),
+  /** Số đơn hàng / số phiếu xuất của khách (đọc từ ảnh biên bản giao hàng) */
+  refNo: z.string().trim().max(100).optional(),
+  voucherNo: z.string().trim().max(100).optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
   shipments: z.array(shipmentSchema).min(1, "Đơn hàng phải có ít nhất một chuyến").max(100, "Mỗi lần tạo tối đa 100 chuyến"),
   /** Thứ tự mới của các chuyến đã có của xe trong cùng ngày */
@@ -378,6 +381,13 @@ export async function createOrder(input: CreateOrderInput): Promise<
           custom_fields: orderCustom,
         };
     const created = await insertShipments(supabase, order, d.shipments, shipFields, itemFields, (i) => `Chuyến ${i + 1}`);
+    if (!d.orderId && (d.refNo || d.voucherNo)) {
+      // Lỗi ở đây không làm mất đơn: số đơn hàng / số phiếu vẫn nằm trong ghi chú đơn
+      await supabase
+        .from("transport_orders")
+        .update({ ...(d.refNo ? { ref_no: d.refNo } : {}), ...(d.voucherNo ? { voucher_no: d.voucherNo } : {}) })
+        .eq("id", created.order_id);
+    }
     // Thứ tự chuyến của xe trong ngày (khi xe chạy nhiều chuyến cùng ngày); chuyến trả về theo đúng thứ tự gửi lên
     await setDayOrders(supabase, [
       ...(d.otherOrders ?? []),
