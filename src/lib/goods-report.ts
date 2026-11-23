@@ -1,6 +1,7 @@
 import type { createClient } from "@/lib/supabase/server";
 import { addDaysYMD, startOfDayVN, todayVN } from "@/lib/format";
 import { statementRouteLabel } from "@/lib/freight-statement";
+import { bagCount } from "@/lib/bags";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -63,7 +64,7 @@ type ItemRow = {
   unit: string | null;
   weight_kg: number | null;
   bag_count: number | null;
-  product: { kg_per_bag: number | null } | null;
+  product: { unit: string | null; kg_per_unit: number | null; kg_per_bag: number | null } | null;
 };
 
 export const GOODS_REPORT_MAX_TRIPS = 5000;
@@ -83,15 +84,9 @@ function itemKg(i: ItemRow): number | null {
   return isUnit(i.unit, /^kg$/i) ? num(i.quantity) : null;
 }
 
-/** Số bao giống phiếu giao hàng (SQL 9015): nhập tay > ĐVT bao = số lượng > KG ÷ Số KG/bao của mã hàng */
-function itemBags(i: ItemRow, kg: number | null): number | null {
-  const manual = num(i.bag_count);
-  if (manual !== null) return manual;
-  if (i.quantity === null) return null;
-  if (isUnit(i.unit, /^(bao|bag|bags)$/i)) return num(i.quantity);
-  const per = num(i.product?.kg_per_bag);
-  if (kg === null || !per || per <= 0) return null;
-  return Math.round((kg / per) * 100) / 100;
+/** Số bao giống phiếu giao hàng (SQL 9039): tự tính theo mã hàng > nhập tay */
+function itemBags(i: ItemRow): number | null {
+  return bagCount(num(i.quantity), i.unit, i.product, i.bag_count);
 }
 
 /**
@@ -134,7 +129,7 @@ export async function loadGoodsReport(supabase: Supabase, tu: string, den: strin
       for (let page = 0; ; page++) {
         const { data, error } = await supabase
           .from("shipment_items")
-          .select("shipment_id, line_no, item_code, item_name, quantity, unit, weight_kg, bag_count, product:products(kg_per_bag)")
+          .select("shipment_id, line_no, item_code, item_name, quantity, unit, weight_kg, bag_count, product:products(unit, kg_per_unit, kg_per_bag)")
           .in("shipment_id", c)
           .order("shipment_id")
           .order("line_no")
@@ -207,7 +202,7 @@ export async function loadGoodsReport(supabase: Supabase, tu: string, den: strin
         quantity: num(i.quantity),
         unit: i.unit,
         weight_kg: kg,
-        bags: itemBags(i, kg),
+        bags: itemBags(i),
         no_items: false,
       });
     }
