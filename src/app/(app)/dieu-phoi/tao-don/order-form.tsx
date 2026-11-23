@@ -29,6 +29,7 @@ import { shipmentStatus } from "@/lib/status";
 import { normalizeContainerNo } from "@/lib/shipment-container";
 import { containerCheckOk } from "@/lib/paste-orders";
 import { cn } from "@/lib/utils";
+import { NoteImageFill, type NoteFill } from "./note-image-fill";
 
 type Row = {
   key: number;
@@ -330,6 +331,8 @@ export function OrderForm({
   };
   const [orderDate, setOrderDate] = useState(edit?.orderDate ?? todayVN());
   const [notes, setNotes] = useState(edit?.notes ?? "");
+  /** Số đơn hàng / số phiếu của khách đọc từ ảnh biên bản giao hàng (lưu vào đơn khi tạo) */
+  const [refs, setRefs] = useState({ refNo: "", voucherNo: "" });
   /** Lưu ô Kho GHA của từng chuyến sau khi lưu đơn (ids: id chuyến theo thứ tự dòng); lỗi chỉ cảnh báo vì đơn đã lưu */
   const saveStock = async (ids: (string | undefined)[]) => {
     if (!stock) return;
@@ -462,6 +465,8 @@ export function OrderForm({
         payerCustomerId: payer.id,
         orderDate,
         notes,
+        refNo: order ? undefined : refs.refNo || undefined,
+        voucherNo: order ? undefined : refs.voucherNo || undefined,
         custom: orderCustom,
         shipments: rows.map((s) => ({
           ...shipmentPayload(s),
@@ -487,8 +492,46 @@ export function OrderForm({
     });
   }
 
+  /** Điền form từ ảnh biên bản giao hàng: khách, ngày, ghi chú, chuyến đầu tiên (điểm giao, hàng hóa) */
+  function fillFromNote({ note, match, summary }: NoteFill) {
+    if (match.customer && !lockedHeader) pickCustomer(match.customer.id, match.customer.label);
+    if (note.date) setOrderDate(note.date);
+    if (summary) setNotes(summary);
+    setRefs({ refNo: note.orderNo, voucherNo: note.voucherNo });
+    const items = note.items.map((it) => {
+      const p = match.products[it.code];
+      return newItem({
+        item_code: p?.code ?? it.code,
+        item_name: p?.name ?? it.name,
+        unit: p?.unit || it.unit,
+        quantity: it.quantity === null ? "" : String(it.quantity),
+        bag_count: it.bags === null ? "" : String(it.bags),
+      });
+    });
+    setRows((rs) =>
+      rs.map((r, i) =>
+        i === 0
+          ? {
+              ...r,
+              ...(note.date ? { pickupAt: note.date, expectedDeliveryAt: note.date } : {}),
+              deliveryLocationId: match.autoLocationId ?? "",
+              priceListId: "",
+              ...(items.length ? { items } : {}),
+            }
+          : r,
+      ),
+    );
+  }
+
   return (
     <div className="space-y-4">
+      {order || edit ? null : (
+        <NoteImageFill
+          onFill={fillFromNote}
+          pickedLocationId={rows[0]?.deliveryLocationId ?? ""}
+          onPickLocation={(id) => rows[0] && update(rows[0].key, { deliveryLocationId: id, priceListId: "" })}
+        />
+      )}
       {order ? null : (
         <Card>
           <CardHeader>
