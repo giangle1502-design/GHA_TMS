@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, Banknote, HandCoins, Receipt, Truck } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Banknote, HandCoins, Receipt, ScrollText, Truck } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { requirePagePermission } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { PageHeader } from "@/components/layout/page-header";
@@ -51,8 +53,19 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       <CompactDensity />
       <PageHeader
         title="Xe thuê ngoài 3PL"
-        description="Các chuyến chạy xe thuê ngoài: cước và phí chi hộ phải trả nhà xe, đã trả, còn nợ. Nhập chi phí 3PL ngay trên dòng: nút “Nhập chi phí” (cước 3PL, % dầu, bốc xếp, chi hộ, chi phí khác) và nút “Cước” (cước thu khách, phí, bảng giá), không cần mở Điều phối hay Quản lý chuyến. Mọi bảng tìm kiếm nâng cao, chọn cột, xuất Excel được."
-        actions={me.permissions.has("receivables.pay") ? <BulkCarrierPayDialog /> : null}
+        description="Các chuyến chạy xe thuê ngoài: cước và phí chi hộ phải trả nhà xe, đã trả, còn nợ. Nhập chi phí 3PL ngay trên dòng: nút “Nhập chi phí” (cước 3PL, % dầu, bốc xếp, chi hộ, chi phí khác) và nút “Cước” (cước thu khách, phí, bảng giá), không cần mở Điều phối hay Quản lý chuyến. In bảng kê gửi nhà xe: nút “Bảng kê 3PL” (chọn nhà xe, Từ ngày – Đến ngày, tick chuyến để cộng dồn tiền). Mọi bảng tìm kiếm nâng cao, chọn cột, xuất Excel được."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {me.permissions.has("carriers.view") ? (
+              <Button asChild>
+                <Link href="/thue-ngoai/bang-ke" title="Bảng kê theo nhà xe 3PL: tick chuyến, cộng dồn tiền, in / xuất Excel">
+                  <ScrollText /> Bảng kê 3PL
+                </Link>
+              </Button>
+            ) : null}
+            {me.permissions.has("receivables.pay") ? <BulkCarrierPayDialog /> : null}
+          </div>
+        }
       />
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5 [&>*]:min-w-0">
         <Kpi icon={Truck} tone="blue" label="Chuyến 3PL tháng này" value={formatNumber(cur.length)} note={`Cước ${formatVND(sum(cur, "carrier_freight"))}`} />

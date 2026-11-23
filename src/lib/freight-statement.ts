@@ -162,9 +162,99 @@ function upgradeConfig(c: StatementConfig): StatementConfig {
 }
 
 /** Đọc mẫu đã lưu (bỏ qua giá trị hỏng, giữ phần dùng được) */
-export function parseStatementConfig(raw: unknown, catalog: StatementColumn[]): StatementConfig {
+export function parseStatementConfig(raw: unknown, catalog: StatementColumn[], variant: StatementVariant = "customer"): StatementConfig {
   const r = statementConfigSchema.safeParse(raw);
+  if (variant === "carrier") return r.success ? r.data : defaultCarrierStatementConfig(catalog);
   return r.success ? upgradeConfig(r.data) : defaultStatementConfig(catalog);
+}
+
+// ---------------------------------------------------------------------------
+// Bảng kê 3PL: chi phí GHA phải trả nhà xe thuê ngoài (cùng bố cục, cùng cách tick / cộng dồn như bảng kê khách hàng)
+// ---------------------------------------------------------------------------
+
+/** customer = bảng kê GHA gửi khách hàng; carrier = bảng kê chi phí trả nhà xe 3PL */
+export type StatementVariant = "customer" | "carrier";
+
+/** Mẫu bảng kê 3PL lưu trong table_view_preferences với table_key này (không cần nâng cấp CSDL) */
+export const CARRIER_STATEMENT_TABLE_KEY = "carrier_statement";
+
+/** Cột chung (không gồm cước / phí thu khách: bảng kê 3PL không lộ doanh thu GHA) */
+const CARRIER_COMMON_KEYS = [
+  "stt",
+  "pickup_at",
+  "expected_delivery_at",
+  "shipment_code",
+  "order_code",
+  "customer_code",
+  "route_label",
+  "pickup_name",
+  "delivery_name",
+  "empty_return_name",
+  "offroute_return_name",
+  "vehicle_type_name",
+  "plate_number",
+  "driver_name",
+  "quantity",
+  "pricing_unit",
+  "notes",
+];
+
+/** Các khoản trả nhà xe 3PL (từ Nhập chi phí 3PL của chuyến) */
+export const CARRIER_MONEY_COLUMNS: StatementColumn[] = [
+  { key: "c_quantity", label: "SL tính cước 3PL", kind: "number", group: "Chi phí trả 3PL", width: 8 },
+  { key: "c_unit_price", label: "Đơn giá 3PL", kind: "price", group: "Chi phí trả 3PL", width: 13 },
+  { key: "c_freight_base", label: "Cước 3PL chưa dầu", kind: "money", group: "Chi phí trả 3PL", width: 14 },
+  { key: "c_fuel_pct", label: "% dầu", kind: "percent", group: "Chi phí trả 3PL", width: 8 },
+  { key: "c_fuel_amount", label: "Hỗ trợ dầu 3PL", kind: "money", group: "Chi phí trả 3PL", width: 13 },
+  { key: "c_freight", label: "Cước vận chuyển", kind: "money", group: "Chi phí trả 3PL", width: 14 },
+  { key: "c_pass_through", label: "Phí chi hộ", kind: "money", group: "Chi phí trả 3PL", width: 13 },
+  { key: "c_loading", label: "Phí bốc xếp", kind: "money", group: "Chi phí trả 3PL", width: 13 },
+  { key: "c_other", label: "Chi phí khác", kind: "money", group: "Chi phí trả 3PL", width: 13 },
+  { key: "c_total", label: "Tổng cộng", kind: "money", group: "Chi phí trả 3PL", width: 15 },
+  { key: "c_paid", label: "Đã trả", kind: "money", group: "Thanh toán 3PL", width: 14 },
+  { key: "c_remaining", label: "Còn phải trả", kind: "money", group: "Thanh toán 3PL", width: 14 },
+  { key: "c_pay_status", label: "Tình trạng thanh toán", kind: "text", group: "Thanh toán 3PL", width: 16 },
+  { key: "c_invoice_no", label: "Số hóa đơn 3PL", kind: "text", group: "Thanh toán 3PL", width: 14 },
+  { key: "c_note", label: "Ghi chú chi phí 3PL", kind: "text", group: "Chi phí trả 3PL", width: 24 },
+];
+
+export const CARRIER_BASE_COLUMNS: StatementColumn[] = [
+  ...CARRIER_COMMON_KEYS.map((k) => BASE_STATEMENT_COLUMNS.find((c) => c.key === k)!).filter(Boolean),
+  ...CARRIER_MONEY_COLUMNS,
+];
+
+export const DEFAULT_CARRIER_COLUMNS = [
+  "stt",
+  "pickup_at",
+  "route_label",
+  "plate_number",
+  "c_quantity",
+  "c_unit_price",
+  "c_fuel_pct",
+  "c_freight",
+  "c_pass_through",
+  "c_loading",
+  "c_other",
+  "c_total",
+  "notes",
+];
+
+export function defaultCarrierStatementConfig(catalog: StatementColumn[]): StatementConfig {
+  const cont = catalog.find((c) => c.key.startsWith("cf_") && CONT_NO_RE.test(c.label)) ?? catalog.find((c) => c.key.startsWith("ocf_") && CONT_NO_RE.test(c.label));
+  const cols = [...DEFAULT_CARRIER_COLUMNS];
+  if (cont) cols.splice(2, 0, cont.key);
+  return statementConfigSchema.parse({
+    columns: cols.filter((k) => catalog.some((c) => c.key === k)),
+    leftSign: "ĐẠI DIỆN NHÀ XE",
+    rightSign: "ĐẠI DIỆN CÔNG TY GHA",
+    payColumns: ["c_freight", "c_pass_through", "c_loading", "c_other"],
+    v: STATEMENT_CONFIG_VERSION,
+  });
+}
+
+/** Tên tệp: Bang-ke-3PL_NX01_11-2026 */
+export function carrierStatementFileName(supplierCode: string, tu: string, den: string) {
+  return statementFileName(supplierCode, tu, den).replace(/^Bang-ke-cuoc_/, "Bang-ke-3PL_");
 }
 
 export type ResolvedColumn = StatementColumn & { title: string; w: number };

@@ -5,7 +5,16 @@ import { ActionError, requirePermission, runAction, type ActionResult } from "@/
 import { createClient } from "@/lib/supabase/server";
 import { isUuid } from "@/lib/entities/record";
 import { isStatementPortal, loadStatement } from "@/lib/freight-statement-data";
-import { STATEMENT_ALL_CUSTOMERS, STATEMENT_STATUS_OPTIONS, STATEMENT_TABLE_KEY, resolveColumns, statementConfigSchema, statementFileName } from "@/lib/freight-statement";
+import {
+  CARRIER_STATEMENT_TABLE_KEY,
+  STATEMENT_ALL_CUSTOMERS,
+  STATEMENT_STATUS_OPTIONS,
+  STATEMENT_TABLE_KEY,
+  resolveColumns,
+  statementConfigSchema,
+  statementFileName,
+  type StatementVariant,
+} from "@/lib/freight-statement";
 import { buildStatementWorkbook } from "@/lib/freight-statement-excel";
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -45,17 +54,23 @@ const templateSchema = z.object({
   name: z.string().trim().min(1, "Đặt tên mẫu.").max(80),
   shared: z.boolean(),
   config: statementConfigSchema,
+  /** customer = bảng kê khách hàng; carrier = bảng kê 3PL (Xe thuê ngoài 3PL) */
+  variant: z.enum(["customer", "carrier"]).default("customer"),
 });
+
+const tableKeyOf = (v: StatementVariant) => (v === "carrier" ? CARRIER_STATEMENT_TABLE_KEY : STATEMENT_TABLE_KEY);
+const pathOf = (v: StatementVariant) => (v === "carrier" ? "/thue-ngoai/bang-ke" : "/chuyen-xe/bang-ke");
 
 /** Lưu mẫu bảng kê (cột, tên cột, tiêu đề, chữ ký). Mẫu dùng chung cần quyền cấu hình hệ thống. */
 export async function saveStatementTemplate(input: z.input<typeof templateSchema>): Promise<ActionResult<{ id: string }>> {
   return runAction(async () => {
-    const me = await requirePermission("shipments.view");
     const d = templateSchema.parse(input);
+    const me = d.variant === "carrier" ? await requirePermission("reports.view", "receivables.view") : await requirePermission("shipments.view");
+    const tableKey = tableKeyOf(d.variant);
     if (d.shared && !me.permissions.has("settings.configure")) throw new ActionError("Chỉ người có quyền Cấu hình hệ thống mới lưu được mẫu dùng chung. Hãy bỏ chọn Dùng chung để lưu mẫu riêng.");
     const supabase = await createClient();
     const row = {
-      table_key: STATEMENT_TABLE_KEY,
+      table_key: tableKey,
       scope: d.shared ? "system" : "user",
       user_id: d.shared ? null : me.id,
       role_id: null,
@@ -64,10 +79,10 @@ export async function saveStatementTemplate(input: z.input<typeof templateSchema
       config: d.config,
     };
     if (d.id) {
-      const { data, error } = await supabase.from("table_view_preferences").update(row).eq("id", d.id).eq("table_key", STATEMENT_TABLE_KEY).select("id");
+      const { data, error } = await supabase.from("table_view_preferences").update(row).eq("id", d.id).eq("table_key", tableKey).select("id");
       if (error) throw error;
       if (!data?.length) throw new ActionError("Không sửa được mẫu này (mẫu dùng chung chỉ người có quyền Cấu hình hệ thống sửa được).");
-      revalidatePath("/chuyen-xe/bang-ke");
+      revalidatePath(pathOf(d.variant));
       return { id: d.id };
     }
     const { data, error } = await supabase.from("table_view_preferences").insert(row).select("id").single();
@@ -75,19 +90,20 @@ export async function saveStatementTemplate(input: z.input<typeof templateSchema
       if (error.code === "23505") throw new ActionError("Đã có mẫu cùng tên. Đặt tên khác hoặc chọn mẫu đó rồi bấm Lưu mẫu.");
       throw error;
     }
-    revalidatePath("/chuyen-xe/bang-ke");
+    revalidatePath(pathOf(d.variant));
     return { id: (data as { id: string }).id };
   }, "Đã lưu mẫu bảng kê.");
 }
 
-export async function deleteStatementTemplate(id: string): Promise<ActionResult> {
+export async function deleteStatementTemplate(id: string, variant: StatementVariant = "customer"): Promise<ActionResult> {
   return runAction(async () => {
-    await requirePermission("shipments.view");
+    if (variant === "carrier") await requirePermission("reports.view", "receivables.view");
+    else await requirePermission("shipments.view");
     if (!isUuid(id)) throw new ActionError("Mẫu không hợp lệ.");
     const supabase = await createClient();
-    const { data, error } = await supabase.from("table_view_preferences").delete().eq("id", id).eq("table_key", STATEMENT_TABLE_KEY).select("id");
+    const { data, error } = await supabase.from("table_view_preferences").delete().eq("id", id).eq("table_key", tableKeyOf(variant === "carrier" ? "carrier" : "customer")).select("id");
     if (error) throw error;
     if (!data?.length) throw new ActionError("Không xóa được mẫu này (mẫu dùng chung chỉ người có quyền Cấu hình hệ thống xóa được).");
-    revalidatePath("/chuyen-xe/bang-ke");
+    revalidatePath(pathOf(variant === "carrier" ? "carrier" : "customer"));
   }, "Đã xóa mẫu.");
 }

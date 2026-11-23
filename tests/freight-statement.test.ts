@@ -130,3 +130,21 @@ describe("bảng kê: tuyến có điểm hạ rỗng và thông tin xuất hóa
     expect(defaultStatementConfig(BASE_STATEMENT_COLUMNS).columns).toContain("invoice_info");
   });
 });
+
+describe("bảng kê 3PL", () => {
+  it("mẫu mặc định chỉ có cột chi phí trả nhà xe, không lộ cước thu khách", async () => {
+    const m = await import("@/lib/freight-statement");
+    const cfg = m.defaultCarrierStatementConfig(m.CARRIER_BASE_COLUMNS);
+    expect(cfg.columns).toContain("c_freight");
+    expect(cfg.columns).toContain("c_total");
+    expect(cfg.payColumns).toEqual(["c_freight", "c_pass_through", "c_loading", "c_other"]);
+    expect(cfg.leftSign).toBe("ĐẠI DIỆN NHÀ XE");
+    const keys = m.CARRIER_BASE_COLUMNS.map((c) => c.key);
+    for (const k of ["unit_price", "freight_amount", "transport_fee", "amount_due", "total_revenue", "invoice_info"]) expect(keys).not.toContain(k);
+    expect(m.carrierStatementFileName("NX01", "2026-11-01", "2026-11-30")).toBe("Bang-ke-3PL_NX01_11-2026");
+  });
+  it("mẫu hỏng thì dùng mẫu mặc định 3PL", async () => {
+    const m = await import("@/lib/freight-statement");
+    expect(m.parseStatementConfig({ columns: [] }, m.CARRIER_BASE_COLUMNS, "carrier").payColumns).toContain("c_freight");
+  });
+});

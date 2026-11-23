@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   STATEMENT_ALL_CUSTOMERS,
   STATEMENT_STATUS_OPTIONS,
+  defaultCarrierStatementConfig,
   defaultStatementConfig,
   formatStatementCell,
   isSummed,
@@ -24,13 +25,16 @@ import {
   vndInWords,
   type StatementConfig,
   type StatementStatusFilter,
+  type StatementVariant,
 } from "@/lib/freight-statement";
 import type { StatementData } from "@/lib/freight-statement-data";
 import { deleteStatementTemplate, exportStatementExcel, saveStatementTemplate } from "./actions";
+import { exportCarrierStatementExcel } from "../../thue-ngoai/bang-ke/actions";
 
 export type StatementTemplate = { id: string; name: string; shared: boolean; config: StatementConfig };
 
-type Filters = { kh: string; tu: string; den: string; tt: StatementStatusFilter };
+/** kh = khách hàng; nx = nhà xe 3PL (chỉ bảng kê 3PL, khi đó kh là bộ lọc thêm theo khách, trống = mọi khách) */
+type Filters = { kh: string; tu: string; den: string; tt: StatementStatusFilter; nx?: string };
 
 /** Bỏ dấu, viết thường để tìm "ha noi" ra "Hà Nội" */
 const norm = (s: string) =>
@@ -45,6 +49,8 @@ const norm = (s: string) =>
 const PX = 7.5;
 
 export function StatementBuilder({
+  variant = "customer",
+  customerOptions = [],
   filters,
   customers,
   allowAll = false,
@@ -57,6 +63,10 @@ export function StatementBuilder({
   maxRows,
   today,
 }: {
+  /** customer = bảng kê gửi khách hàng; carrier = bảng kê chi phí trả nhà xe 3PL (customers là danh sách nhà xe) */
+  variant?: StatementVariant;
+  /** Bảng kê 3PL: danh sách khách hàng để lọc thêm */
+  customerOptions?: { id: string; code: string; name: string }[];
   filters: Filters;
   customers: { id: string; code: string; name: string }[];
   /** Có lựa chọn "Tất cả" (tài khoản khách gắn nhiều công ty) */
@@ -75,23 +85,27 @@ export function StatementBuilder({
   const pathname = usePathname();
   const [navPending, startNav] = useTransition();
   const [busy, startBusy] = useTransition();
+  const carrier = variant === "carrier";
+  /** Đối tác của bảng kê: khách hàng, hoặc nhà xe 3PL */
+  const partyId = (carrier ? filters.nx : filters.kh) ?? "";
+  const defaultConfig = (catalog: StatementData["catalog"]) => (carrier ? defaultCarrierStatementConfig(catalog) : defaultStatementConfig(catalog));
 
   const pickTemplate = (kh: string, wanted?: string) =>
     templates.find((t) => t.id === wanted) ?? templates.find((t) => t.config.customerId && t.config.customerId === kh) ?? null;
-  const first = pickTemplate(filters.kh, initialTemplateId);
+  const first = pickTemplate(partyId, initialTemplateId);
   const [templateId, setTemplateId] = useState<string>(first?.id ?? "");
-  const [config, setConfig] = useState<StatementConfig>(() => first?.config ?? defaultStatementConfig(data.catalog));
+  const [config, setConfig] = useState<StatementConfig>(() => first?.config ?? defaultConfig(data.catalog));
   const [dirty, setDirty] = useState(false);
   const [panel, setPanel] = useState<"" | "cot" | "dau-trang" | "luu">("");
   const [q, setQ] = useState("");
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
 
   // Đổi khách hàng: tự chọn mẫu gắn với khách đó (nếu chưa sửa dở mẫu đang dùng)
-  const [prevKh, setPrevKh] = useState(filters.kh);
-  if (prevKh !== filters.kh) {
-    setPrevKh(filters.kh);
+  const [prevKh, setPrevKh] = useState(partyId);
+  if (prevKh !== partyId) {
+    setPrevKh(partyId);
     setExcluded(new Set());
-    const t = templates.find((x) => x.config.customerId && x.config.customerId === filters.kh);
+    const t = templates.find((x) => x.config.customerId && x.config.customerId === partyId);
     if (t && !dirty) {
       setTemplateId(t.id);
       setConfig(t.config);
@@ -110,12 +124,12 @@ export function StatementBuilder({
   };
   // Bảng kê gộp nhiều công ty: luôn có cột Khách hàng ngay sau cột Ngày
   const shownConfig = useMemo<StatementConfig>(() => {
-    if (filters.kh !== STATEMENT_ALL_CUSTOMERS || config.columns.includes("customer_code")) return config;
+    if (carrier || filters.kh !== STATEMENT_ALL_CUSTOMERS || config.columns.includes("customer_code")) return config;
     const at = config.columns.indexOf("pickup_at");
     const columns = [...config.columns];
     columns.splice(at >= 0 ? at + 1 : Math.min(1, columns.length), 0, "customer_code");
     return { ...config, columns };
-  }, [config, filters.kh]);
+  }, [config, filters.kh, carrier]);
   const cols = useMemo(() => resolveColumns(data.catalog, shownConfig), [data.catalog, shownConfig]);
   const term = norm(q.trim());
   const shownRows = useMemo(() => {
@@ -136,6 +150,7 @@ export function StatementBuilder({
   function go(p: Partial<Filters>) {
     const m = { ...filters, ...p };
     const s = new URLSearchParams();
+    if (carrier && m.nx) s.set("nx", m.nx);
     if (m.kh) s.set("kh", m.kh);
     s.set("tu", m.tu);
     s.set("den", m.den);
@@ -147,15 +162,18 @@ export function StatementBuilder({
   function chooseTemplate(id: string) {
     const t = templates.find((x) => x.id === id);
     setTemplateId(id);
-    setConfig(t ? t.config : defaultStatementConfig(data.catalog));
+    setConfig(t ? t.config : defaultConfig(data.catalog));
     setDirty(false);
   }
 
   function exportExcel() {
-    if (!customer) return void toast.error("Chọn khách hàng trước.");
+    if (!customer) return void toast.error(carrier ? "Chọn nhà xe 3PL trước." : "Chọn khách hàng trước.");
     const includedIds = new Set(included.map((r) => r.id));
+    const excludeIds = data.rows.filter((x) => !includedIds.has(x.id)).map((x) => x.id);
     startBusy(async () => {
-      const r = await exportStatementExcel({ ...filters, config: shownConfig, excludeIds: data.rows.filter((x) => !includedIds.has(x.id)).map((x) => x.id) });
+      const r = carrier
+        ? await exportCarrierStatementExcel({ nx: filters.nx ?? "", kh: filters.kh, tu: filters.tu, den: filters.den, tt: filters.tt, config: shownConfig, excludeIds })
+        : await exportStatementExcel({ ...filters, config: shownConfig, excludeIds });
       if (!r.ok || !r.data) return void toast.error(r.ok ? "Không tạo được tệp" : r.error);
       const bytes = Uint8Array.from(atob(r.data.base64), (c) => c.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -169,10 +187,10 @@ export function StatementBuilder({
   }
 
   function printPdf() {
-    if (!customer) return void toast.error("Chọn khách hàng trước.");
+    if (!customer) return void toast.error(carrier ? "Chọn nhà xe 3PL trước." : "Chọn khách hàng trước.");
     // Tên tệp PDF gợi ý khi chọn "Lưu dưới dạng PDF" lấy từ tiêu đề trang
     const old = document.title;
-    document.title = `Bang ke cuoc ${customer.code} ${filters.tu.slice(5, 7)}-${filters.tu.slice(0, 4)}`;
+    document.title = `${carrier ? "Bang ke 3PL" : "Bang ke cuoc"} ${customer.code} ${filters.tu.slice(5, 7)}-${filters.tu.slice(0, 4)}`;
     window.print();
     setTimeout(() => (document.title = old), 500);
   }
@@ -219,15 +237,17 @@ export function StatementBuilder({
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             {readOnly ? null : (
-              <Link href="/chuyen-xe" className="mb-1 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary">
-                <ArrowLeft className="size-4" /> Quản lý chuyến xe
+              <Link href={carrier ? "/thue-ngoai" : "/chuyen-xe"} className="mb-1 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary">
+                <ArrowLeft className="size-4" /> {carrier ? "Xe thuê ngoài 3PL" : "Quản lý chuyến xe"}
               </Link>
             )}
-            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Bảng kê cước phí vận chuyển</h1>
+            <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{carrier ? "Bảng kê xe thuê ngoài 3PL" : "Bảng kê cước phí vận chuyển"}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {readOnly
-                ? "Chọn công ty (hoặc Tất cả) và khoảng ngày theo ngày nhận hàng, rồi bấm Xuất Excel hoặc In / Lưu PDF."
-                : "Chọn khách hàng và khoảng ngày (theo ngày nhận hàng), chọn mẫu cột phù hợp rồi xuất Excel hoặc In / Lưu PDF để khách ký nhận."}
+              {carrier
+                ? "Chọn nhà xe 3PL và khoảng ngày (theo ngày nhận hàng), tick các chuyến cần đối chiếu: số tiền các dòng đã tick được cộng dồn ở dòng TỔNG CỘNG. Bấm In / Lưu PDF hoặc Xuất Excel để in bảng kê các dòng đã tick gửi nhà xe ký xác nhận."
+                : readOnly
+                  ? "Chọn công ty (hoặc Tất cả) và khoảng ngày theo ngày nhận hàng, rồi bấm Xuất Excel hoặc In / Lưu PDF."
+                  : "Chọn khách hàng và khoảng ngày (theo ngày nhận hàng), chọn mẫu cột phù hợp rồi xuất Excel hoặc In / Lưu PDF để khách ký nhận."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -243,7 +263,40 @@ export function StatementBuilder({
         </div>
 
         {/* Bộ lọc */}
-        <Card className="mb-3 grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-[minmax(240px,2fr)_1fr_1fr_minmax(200px,1.3fr)_auto]">
+        <Card
+          className={cn(
+            "mb-3 grid gap-3 p-3 sm:grid-cols-2",
+            carrier
+              ? "lg:grid-cols-[minmax(220px,2fr)_minmax(160px,1.2fr)_1fr_1fr_minmax(200px,1.3fr)_auto]"
+              : "lg:grid-cols-[minmax(240px,2fr)_1fr_1fr_minmax(200px,1.3fr)_auto]",
+          )}
+        >
+          {carrier ? (
+            <>
+              <div>
+                <Label className="mb-1 block text-xs">Nhà xe 3PL</Label>
+                <NativeSelect value={filters.nx ?? ""} onChange={(e) => go({ nx: e.target.value })}>
+                  <option value="">— Chọn nhà xe 3PL —</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} – {c.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div>
+                <Label className="mb-1 block text-xs">Khách hàng</Label>
+                <NativeSelect value={filters.kh} onChange={(e) => go({ kh: e.target.value })}>
+                  <option value="">Tất cả khách hàng</option>
+                  {customerOptions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} – {c.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+            </>
+          ) : (
           <div>
             <Label className="mb-1 block text-xs">Khách hàng</Label>
             <NativeSelect value={filters.kh} onChange={(e) => go({ kh: e.target.value })}>
@@ -256,6 +309,7 @@ export function StatementBuilder({
               ))}
             </NativeSelect>
           </div>
+          )}
           <div>
             <Label className="mb-1 block text-xs">Từ ngày</Label>
             <Input type="date" value={filters.tu} onChange={(e) => e.target.value && go({ tu: e.target.value })} />
@@ -317,8 +371,8 @@ export function StatementBuilder({
         </Card>
         )}
 
-        {!readOnly && panel === "cot" ? <ColumnsPanel catalog={data.catalog} config={config} update={update} /> : null}
-        {!readOnly && panel === "dau-trang" ? <HeaderPanel config={config} update={update} /> : null}
+        {!readOnly && panel === "cot" ? <ColumnsPanel catalog={data.catalog} config={config} update={update} totalKey={carrier ? "c_total" : "amount_due"} /> : null}
+        {!readOnly && panel === "dau-trang" ? <HeaderPanel config={config} update={update} carrier={carrier} /> : null}
         {!readOnly && panel === "luu" ? (
           <SavePanel
             key={templateId}
@@ -326,6 +380,7 @@ export function StatementBuilder({
             config={config}
             customer={customer}
             canShare={canShare}
+            variant={variant}
             onSaved={(id) => {
               setTemplateId(id);
               setDirty(false);
@@ -334,7 +389,7 @@ export function StatementBuilder({
             }}
             onDeleted={() => {
               setTemplateId("");
-              setConfig(defaultStatementConfig(data.catalog));
+              setConfig(defaultConfig(data.catalog));
               setDirty(false);
               setPanel("");
               router.refresh();
@@ -348,6 +403,9 @@ export function StatementBuilder({
               <Search className="pointer-events-none absolute top-2.5 left-2.5 size-4 text-muted-foreground" />
               <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm trong bảng kê: số xe, số cont, tuyến…" className="pl-8" />
             </div>
+            <span className="rounded-md border border-primary/40 bg-primary/5 px-2 py-1 text-sm" title="Cộng các khoản ở phần Tổng tiền thanh toán của các dòng đang tick">
+              Đã tick <b>{included.length}</b> chuyến · Cộng dồn: <b className="tabular-nums">{formatStatementCell("money", pay.total)} đ</b>
+            </span>
             <span className="text-sm text-muted-foreground">
               {included.length} / {data.rows.length} chuyến được đưa vào bảng kê
               {excluded.size ? ` · đã bỏ tích ${excluded.size} chuyến` : ""}
@@ -372,7 +430,7 @@ export function StatementBuilder({
       </div>
 
       {!customer ? (
-        <Card className="p-8 text-center text-sm text-muted-foreground print:hidden">Chọn khách hàng để lập bảng kê cước.</Card>
+        <Card className="p-8 text-center text-sm text-muted-foreground print:hidden">{carrier ? "Chọn nhà xe 3PL để lập bảng kê." : "Chọn khách hàng để lập bảng kê cước."}</Card>
       ) : (
         <Card className="overflow-x-auto p-4 print:overflow-visible print:border-0 print:p-0 print:shadow-none">
           <div className="statement mx-auto min-w-fit bg-white print:min-w-0 text-[12px] leading-snug text-black print:text-[10px]" style={{ fontFamily: '"Times New Roman", Times, serif' }}>
@@ -515,7 +573,17 @@ export function StatementBuilder({
 }
 
 /** Chọn cột, đổi thứ tự, đổi tên cột, độ rộng */
-function ColumnsPanel({ catalog, config, update }: { catalog: StatementData["catalog"]; config: StatementConfig; update: (p: Partial<StatementConfig>) => void }) {
+function ColumnsPanel({
+  catalog,
+  config,
+  update,
+  totalKey,
+}: {
+  catalog: StatementData["catalog"];
+  config: StatementConfig;
+  update: (p: Partial<StatementConfig>) => void;
+  totalKey: string;
+}) {
   const [q, setQ] = useState("");
   const [dragKey, setDragKey] = useState<string | null>(null);
   const visible = resolveColumns(catalog, config);
@@ -620,17 +688,28 @@ function ColumnsPanel({ catalog, config, update }: { catalog: StatementData["cat
           Cột tiền và số lượng có ô &quot;Cộng tổng&quot; để chọn có hiện số tổng ở dòng TỔNG CỘNG hay không. Trường bổ sung (ví dụ Số cont, Số booking) thêm ở Trường dữ liệu sẽ tự có ở đây; từng loại phí (phí nâng, phí hạ…) lấy từ Danh mục phí.
         </p>
       </div>
-      <PaySection catalog={catalog} config={config} update={update} />
+      <PaySection catalog={catalog} config={config} update={update} totalKey={totalKey} />
     </Card>
   );
 }
 
 /** Các khoản ghi rõ trong phần Tổng tiền thanh toán */
-function PaySection({ catalog, config, update }: { catalog: StatementData["catalog"]; config: StatementConfig; update: (p: Partial<StatementConfig>) => void }) {
+function PaySection({
+  catalog,
+  config,
+  update,
+  totalKey,
+}: {
+  catalog: StatementData["catalog"];
+  config: StatementConfig;
+  update: (p: Partial<StatementConfig>) => void;
+  /** Cột "Tổng cộng" đã gồm mọi khoản: chọn cùng khoản lẻ sẽ cộng trùng */
+  totalKey: string;
+}) {
   const payable = catalog.filter((c) => isPayable(c));
   const label = (k: string) => config.labels[k]?.trim() || catalog.find((c) => c.key === k)?.label || k;
   const chosen = config.payColumns.filter((k) => payable.some((c) => c.key === k));
-  const overlap = chosen.includes("amount_due") && chosen.length > 1;
+  const overlap = chosen.includes(totalKey) && chosen.length > 1;
   return (
     <div className="border-t pt-3 lg:col-span-2">
       <div className="mb-1 text-sm font-medium">Các khoản ghi rõ trong phần &quot;Tổng tiền thanh toán&quot; (tổng thanh toán = cộng các khoản được chọn; khoản bằng 0 tự ẩn)</div>
@@ -653,14 +732,14 @@ function PaySection({ catalog, config, update }: { catalog: StatementData["catal
       </div>
       {overlap ? (
         <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
-          &quot;{label("amount_due")}&quot; đã gồm mọi khoản phí: chọn cùng các khoản khác sẽ bị cộng trùng. Chỉ chọn &quot;{label("amount_due")}&quot; hoặc chỉ chọn các khoản lẻ.
+          &quot;{label(totalKey)}&quot; đã gồm mọi khoản phí: chọn cùng các khoản khác sẽ bị cộng trùng. Chỉ chọn &quot;{label(totalKey)}&quot; hoặc chỉ chọn các khoản lẻ.
         </p>
       ) : null}
     </div>
   );
 }
 
-function HeaderPanel({ config, update }: { config: StatementConfig; update: (p: Partial<StatementConfig>) => void }) {
+function HeaderPanel({ config, update, carrier = false }: { config: StatementConfig; update: (p: Partial<StatementConfig>) => void; carrier?: boolean }) {
   const field = (k: "title" | "companyName" | "companyAddress" | "companyTaxCode" | "leftSign" | "rightSign" | "signPlace", label: string, hint: string) => (
     <div>
       <Label className="mb-1 block text-xs">{label}</Label>
@@ -673,18 +752,27 @@ function HeaderPanel({ config, update }: { config: StatementConfig; update: (p: 
       {field("companyName", "Tên công ty (góc phải)", "CÔNG TY TNHH ...")}
       {field("companyTaxCode", "Mã số thuế công ty", "3703489735")}
       <div className="sm:col-span-2 lg:col-span-3">{field("companyAddress", "Địa chỉ công ty", "650/5c Vườn Lài, ...")}</div>
-      {field("leftSign", "Chữ ký bên trái (khách hàng)", "ĐẠI DIỆN KHÁCH HÀNG")}
+      {field("leftSign", carrier ? "Chữ ký bên trái (nhà xe 3PL)" : "Chữ ký bên trái (khách hàng)", carrier ? "ĐẠI DIỆN NHÀ XE" : "ĐẠI DIỆN KHÁCH HÀNG")}
       {field("rightSign", "Chữ ký bên phải (GHA)", "ĐẠI DIỆN CÔNG TY GHA")}
       {field("signPlace", "Nơi ký", "TP. Hồ Chí Minh")}
       <div className="sm:col-span-2">
         <Label className="mb-1 block text-xs">Ghi chú cuối bảng kê (ví dụ số tài khoản nhận tiền, hạn thanh toán)</Label>
-        <Textarea rows={3} value={config.note} onChange={(e) => update({ note: e.target.value })} placeholder="Ví dụ: Quý khách vui lòng thanh toán vào tài khoản số ... tại Ngân hàng ..." />
+        <Textarea
+          rows={3}
+          value={config.note}
+          onChange={(e) => update({ note: e.target.value })}
+          placeholder={carrier ? "Ví dụ: GHA thanh toán vào tài khoản số ... của nhà xe tại Ngân hàng ..." : "Ví dụ: Quý khách vui lòng thanh toán vào tài khoản số ... tại Ngân hàng ..."}
+        />
       </div>
       <label className="flex items-center gap-2 self-center text-sm">
         <input type="checkbox" checked={config.showWords} onChange={(e) => update({ showWords: e.target.checked })} />
         Hiện phần Tổng tiền thanh toán (từng khoản, tổng, bằng chữ)
       </label>
-      <p className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">Tên, MST, địa chỉ khách hàng (góc trái) lấy từ Danh mục khách hàng: sửa ở đó để bảng kê tự cập nhật.</p>
+      <p className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-3">
+        {carrier
+          ? "Tên, MST, địa chỉ nhà xe (góc trái) lấy từ Danh mục nhà cung cấp: sửa ở đó để bảng kê tự cập nhật."
+          : "Tên, MST, địa chỉ khách hàng (góc trái) lấy từ Danh mục khách hàng: sửa ở đó để bảng kê tự cập nhật."}
+      </p>
     </Card>
   );
 }
@@ -694,9 +782,11 @@ function SavePanel({
   config,
   customer,
   canShare,
+  variant,
   onSaved,
   onDeleted,
 }: {
+  variant: StatementVariant;
   current: StatementTemplate | null;
   config: StatementConfig;
   customer: StatementData["customer"];
@@ -704,7 +794,7 @@ function SavePanel({
   onSaved: (id: string) => void;
   onDeleted: () => void;
 }) {
-  const [name, setName] = useState(current?.name ?? (customer ? `Bảng kê ${customer.code}` : ""));
+  const [name, setName] = useState(current?.name ?? (customer ? `${variant === "carrier" ? "Bảng kê 3PL" : "Bảng kê"} ${customer.code}` : ""));
   const [shared, setShared] = useState(current?.shared ?? canShare);
   const [forCustomer, setForCustomer] = useState(Boolean(current?.config.customerId && current.config.customerId === customer?.id));
   const [pending, start] = useTransition();
@@ -716,6 +806,7 @@ function SavePanel({
         name,
         shared,
         config: { ...config, customerId: forCustomer && customer ? customer.id : keepCustomer },
+        variant,
       });
       if (!r.ok || !r.data) return void toast.error(r.ok ? "Không lưu được" : r.error);
       toast.success(r.message ?? "Đã lưu mẫu.");
@@ -754,7 +845,7 @@ function SavePanel({
             onClick={() =>
               confirm(`Xóa mẫu “${current.name}”?`) &&
               start(async () => {
-                const r = await deleteStatementTemplate(current.id);
+                const r = await deleteStatementTemplate(current.id, variant);
                 if (!r.ok) return void toast.error(r.error);
                 toast.success(r.message ?? "Đã xóa mẫu.");
                 onDeleted();
