@@ -292,11 +292,22 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   const canCancel = (me.permissions.has("dispatch.delete") || me.permissions.has("shipments.delete")) && CANCELLABLE_STATUSES.includes(s.status);
   const unit = PRICING_UNITS[s.pricing_unit] ?? s.pricing_unit;
   const approvalBlocked = s.status === "assigned" && (s.dispatch_approval === "pending" || s.dispatch_approval === "rejected");
-  const canActForDriver =
-    me.permissions.has("dispatch.update") && Boolean(s.driver_id) && ["assigned", "accepted", "in_transit"].includes(s.status) && !approvalBlocked;
-  // Chuyến chạy nhà xe 3PL: xe thuê ngoài, xe có nhà xe, hoặc chuyến đã ghi nhà xe 3PL
+  // Nhà xe 3PL của chuyến: bỏ tick "GHA nhận thay chuyến 3PL" (Thành Cảnh, Thế Bùi) thì tài xế tự làm trên app
+  const carrierId = x.carrier_supplier_id ?? x.vehicle?.supplier_id ?? null;
   // Kho GHA của chuyến (chỉ người có quyền lập phiếu kho; CSDL chưa nâng cấp 9026 thì ẩn)
-  const stockRes = s.status !== "cancelled" && s.status !== "rejected" ? await stockTargetOptions({ shipmentId: s.id }) : null;
+  const [stockRes, carrierFlag] = await Promise.all([
+    s.status !== "cancelled" && s.status !== "rejected" ? stockTargetOptions({ shipmentId: s.id }) : Promise.resolve(null),
+    carrierId ? supabase.from("suppliers").select("name, gha_acts_for_driver").eq("id", carrierId).maybeSingle() : Promise.resolve(null),
+  ]);
+  const driverAppCarrier =
+    carrierFlag && !carrierFlag.error && carrierFlag.data && carrierFlag.data.gha_acts_for_driver === false ? String(carrierFlag.data.name ?? "") : null;
+  // Chuyến 3PL đã có số xe, chưa có tài xế: GHA nhận thay được (tự gắn tài xế đại diện nhà xe)
+  const plateOnly3pl = !s.driver_id && Boolean(s.vehicle_id && carrierId) && s.status === "draft";
+  const canActForDriver =
+    me.permissions.has("dispatch.update") &&
+    driverAppCarrier === null &&
+    ((Boolean(s.driver_id) && ["assigned", "accepted", "in_transit"].includes(s.status)) || plateOnly3pl) &&
+    !approvalBlocked;
   const stock = stockRes?.ok ? stockRes.data : null;
   const is3pl = x.vehicle?.ownership_type === "outsourced" || Boolean(x.vehicle?.supplier_id) || Boolean(x.carrier_supplier_id);
 
@@ -746,12 +757,17 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
               <ActForDriver
                 shipmentId={s.id}
                 code={s.shipment_code}
-                status={s.status}
-                driverName={s.driver_name ?? ""}
+                status={plateOnly3pl ? "assigned" : s.status}
+                driverName={s.driver_name ?? "của nhà xe 3PL"}
                 outsourced={is3pl}
                 canUpload={me.permissions.has("documents.create")}
                 stock={stock}
               />
+            ) : me.permissions.has("dispatch.update") && driverAppCarrier !== null && ["assigned", "accepted", "in_transit"].includes(s.status) ? (
+              <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                Nhà xe 3PL <b>{driverAppCarrier}</b> để tài xế tự nhận, bắt đầu chạy và hoàn thành chuyến trên app, GHA không làm thay. Muốn đổi: Danh mục Nhà cung cấp, tick{" "}
+                <b>GHA nhận thay chuyến 3PL</b>.
+              </p>
             ) : me.permissions.has("dispatch.update") && approvalBlocked && s.driver_id ? (
               <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
                 Nút <b>Nhận đơn thay tài xế</b>, <b>Bắt đầu chạy</b>, <b>Hoàn thành</b> hiện sau khi Giám đốc duyệt chuyến

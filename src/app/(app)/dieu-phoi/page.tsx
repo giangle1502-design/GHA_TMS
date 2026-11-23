@@ -11,7 +11,7 @@ import { TONE_BADGE } from "@/lib/tones";
 import { isLate, SHIPMENT_ADV_FIELDS, type ShipmentListRow } from "@/lib/shipments";
 import { isUuid } from "@/lib/entities/record";
 import { loadCustomFields, loadTableView } from "@/lib/entities/server";
-import { advRefLabels, applyShipmentFilters, carrierName, carrierOptions, parseShipmentFilters, shipmentCustomFields } from "@/lib/shipments-query";
+import { advRefLabels, applyShipmentFilters, carrierName, carrierOptions, driverAppCarrierIds, parseShipmentFilters, shipmentCustomFields } from "@/lib/shipments-query";
 import { loadFreeVehicles } from "@/lib/free-vehicles";
 import { dispatchExtraColumns } from "@/lib/dispatch-columns";
 import { PageHeader } from "@/components/layout/page-header";
@@ -80,7 +80,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   let cancelQ = applyShipmentFilters(supabase.from("shipment_list").select("id", { count: "exact", head: true }), { ...f, tt: "" }).eq("status", "cancelled");
   if (xe) cancelQ = cancelQ.eq("vehicle_id", xe);
   if (tx) cancelQ = cancelQ.eq("driver_id", tx);
-  const [listRes, upcomingRes, free, view, advLabels, approvalRes, delegationRes, attPendingRes, routeGapRes, cancelRes, carriers, plName] = await Promise.all([
+  const [listRes, upcomingRes, free, view, advLabels, approvalRes, delegationRes, attPendingRes, routeGapRes, cancelRes, carriers, plName, driverAppIds] = await Promise.all([
     listQ.order("pickup_at").order("shipment_code").limit(MAX_ROWS),
     // Chuyến chưa phân công ở ngoài khoảng ngày đang xem (từ hôm nay trở đi)
     supabase
@@ -108,6 +108,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     cancelQ,
     canView3pl ? carrierOptions(supabase, f) : Promise.resolve(null),
     canView3pl && f.pl ? carrierName(supabase, f.pl) : Promise.resolve(""),
+    driverAppCarrierIds(supabase),
   ]);
   const cancelledCount = cancelRes.count ?? 0;
   // Lỗi (ví dụ DB chưa nâng cấp chấm công) thì bỏ qua, không chặn màn Điều phối
@@ -149,7 +150,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const approvalCount = all.filter((r) => r.dispatch_approval === "pending" || r.dispatch_approval === "rejected").length;
   const pendingAll = (approvalRes.data ?? []) as { id: string; dispatch_approval_request_id: string | null; can_approve_dispatch: boolean }[];
   const myApprovals = pendingAll.filter((r) => r.can_approve_dispatch && r.dispatch_approval_request_id).map((r) => r.dispatch_approval_request_id!);
-  const tableProps = { view, extraColumns: extras.columns, extraValues: extras.values, canAddField: me.permissions.has("fields.configure") };
+  const tableProps = { view, extraColumns: extras.columns, extraValues: extras.values, canAddField: me.permissions.has("fields.configure"), driverAppCarrierIds: driverAppIds };
   const counts = Object.fromEntries(SHIPMENT_STATUS.filter((s) => s.value !== "cancelled").map((s) => [s.value, all.filter((r) => r.status === s.value).length]));
   const freeCount = free.filter((v) => v.free_days > 0).length;
   const filtered = Boolean(f.kh || xe || tx || f.pl || f.q || f.adv.length);
