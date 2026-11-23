@@ -14,6 +14,7 @@ import { payCarrierPayables } from "@/lib/finance/carrier-actions";
 import { saveLoadingUnitPrice } from "./actions";
 import { ReportGrid, type ReportColumn } from "@/components/grid/report-grid";
 import type { TableViewConfig } from "@/lib/entities/types";
+import { LoadingRowActions } from "@/components/finance/loading-row-actions";
 
 export type LoadingLine = {
   id: string;
@@ -85,6 +86,9 @@ export function LoadingReport(props: {
   canPay: boolean;
   missing: LoadingTrip[];
   missingView: TableViewConfig | null;
+  tripsView: TableViewConfig | null;
+  /** Được nhập thu / chi bốc xếp ngay trên dòng */
+  canEdit: boolean;
 }) {
   const router = useRouter();
   const [tu, setTu] = useState(props.tu);
@@ -199,8 +203,8 @@ export function LoadingReport(props: {
         </Link>
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Bốc xếp 3PL</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Khoản trả bốc xếp nhập ở chi tiết chuyến → <b>Chi phí trả 3PL</b> → <b>Thêm bốc xếp 3PL</b> (chọn đơn vị bốc xếp, SL tấn × đơn giá; một chuyến nhập được nhiều đơn vị).
-          Thu bốc xếp lấy từ phí thu khách nhóm Bốc xếp.
+          Nhập ngay trên từng dòng: nút <b>Thu</b> (thu bốc xếp của khách, nhóm phí Bốc xếp) và nút <b>Chi</b> (trả đơn vị bốc xếp: chọn đơn vị, SL tấn × đơn giá; một chuyến
+          thêm được nhiều đơn vị bằng nút Thêm bốc xếp 3PL). Không cần mở Điều phối hay Quản lý chuyến.
         </p>
 
         <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg border bg-card p-3">
@@ -263,7 +267,7 @@ export function LoadingReport(props: {
           </div>
         </div>
 
-        <MissingLoading trips={props.missing} view={props.missingView} />
+        <MissingLoading trips={props.missing} view={props.missingView} canEdit={props.canEdit} />
 
         <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Kpi label="Thu bốc xếp từ khách" value={formatVND(revTotal)} />
@@ -313,68 +317,8 @@ export function LoadingReport(props: {
           <CardHeader>
             <CardTitle className="text-base">Bốc xếp từng xe</CardTitle>
           </CardHeader>
-          <CardContent className="max-h-[65vh] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card text-left text-muted-foreground">
-                <tr className="border-b">
-                  <th className="py-2 pr-3">Ngày</th>
-                  <th className="py-2 pr-3">Chuyến / Số xe</th>
-                  <th className="py-2 pr-3">Khách</th>
-                  <th className="py-2 pr-3">Nơi nhận → Nơi giao</th>
-                  <th className="py-2 pr-3 text-right">Tấn</th>
-                  <th className="py-2 pr-3 text-right">Thu bốc xếp</th>
-                  <th className="py-2 pr-3">Đơn vị bốc xếp · đơn giá · phí</th>
-                  <th className="py-2 text-right">Phí phải trả</th>
-                </tr>
-              </thead>
-              <tbody>
-                {trips.map((t) => {
-                  const ls = props.lines.filter((l) => l.shipment_id === t.id && (!vendor || l.vendor_name === vendor));
-                  return (
-                    <tr key={t.id} className="border-b align-top">
-                      <td className="py-2 pr-3 whitespace-nowrap">{formatDate(t.report_date)}</td>
-                      <td className="py-2 pr-3">
-                        <Link href={`/chuyen-xe/${t.id}#chi-phi-3pl`} className="font-medium text-primary hover:underline">
-                          {t.shipment_code}
-                        </Link>
-                        <div className="text-xs text-muted-foreground">{t.plate_number ?? "-"}</div>
-                        {t.requires_loading && Number(t.loading_lines) === 0 ? <Badge variant="warning">Có bốc xếp, chưa nhập phí</Badge> : null}
-                      </td>
-                      <td className="py-2 pr-3">{custOf(t)}</td>
-                      <td className="py-2 pr-3">{route(t)}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{tons(t.tons)}</td>
-                      <td className="py-2 pr-3 text-right tabular-nums">{formatVND(t.loading_revenue)}</td>
-                      <td className="py-2 pr-3">
-                        {ls.length ? (
-                          ls.map((l) => (
-                            <div key={l.id} className="flex flex-wrap items-center gap-2">
-                              <span className="font-medium">{l.vendor_name}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {l.quantity != null && l.unit_price != null ? `${tons(l.quantity)} tấn × ${formatNumber(l.unit_price)}` : l.fee_name}
-                              </span>
-                              <span className="tabular-nums">{formatVND(l.amount)}</span>
-                              {PAY[l.pay_status] ? <Badge variant={PAY[l.pay_status].variant}>{PAY[l.pay_status].label}</Badge> : null}
-                            </div>
-                          ))
-                        ) : (
-                          <Link href={`/chuyen-xe/${t.id}#chi-phi-3pl`} className="text-xs text-primary hover:underline">
-                            Chưa nhập, bấm để nhập bốc xếp 3PL
-                          </Link>
-                        )}
-                      </td>
-                      <td className="py-2 text-right tabular-nums">{formatVND(ls.reduce((a, l) => a + Number(l.amount), 0))}</td>
-                    </tr>
-                  );
-                })}
-                {trips.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="py-4 text-center text-muted-foreground">
-                      Không có xe nào có bốc xếp trong bộ lọc này.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+          <CardContent>
+            <TripsGrid trips={trips} lines={props.lines} vendor={vendor} view={props.tripsView} canEdit={props.canEdit} tu={props.tu} den={props.den} />
           </CardContent>
         </Card>
       </div>
@@ -387,7 +331,7 @@ export function LoadingReport(props: {
 }
 
 /** Chuyến có tick "Có chi phí bốc xếp" ở Điều phối mà chưa nhập khoản trả bốc xếp (mọi ngày, để không quên) */
-function MissingLoading({ trips, view }: { trips: LoadingTrip[]; view: TableViewConfig | null }) {
+function MissingLoading({ trips, view, canEdit }: { trips: LoadingTrip[]; view: TableViewConfig | null; canEdit: boolean }) {
   const columns = useMemo<ReportColumn<LoadingTrip>[]>(
     () => [
       { key: "report_date", label: "Ngày", width: 100, kind: "date", value: (r) => r.report_date, render: (r) => formatDate(r.report_date) },
@@ -409,17 +353,20 @@ function MissingLoading({ trips, view }: { trips: LoadingTrip[]; view: TableView
       { key: "loading_revenue", label: "Thu bốc xếp", width: 120, align: "right", kind: "number", value: (r) => Number(r.loading_revenue), render: (r) => formatVND(r.loading_revenue) },
       {
         key: "action",
-        label: "Nhập phí",
-        width: 170,
+        label: "Nhập thu / chi",
+        width: 190,
         value: () => "",
-        render: (r) => (
-          <Link href={`/chuyen-xe/${r.id}#chi-phi-3pl`} className="text-xs font-medium text-primary hover:underline">
-            Nhập bốc xếp 3PL →
-          </Link>
-        ),
+        render: (r) =>
+          canEdit ? (
+            <LoadingRowActions id={r.id} code={r.shipment_code} hasRevenue={Number(r.loading_revenue) > 0} hasCost={false} />
+          ) : (
+            <Link href={`/chuyen-xe/${r.id}#chi-phi-3pl`} className="text-xs font-medium text-primary hover:underline">
+              Xem chuyến →
+            </Link>
+          ),
       },
     ],
-    [],
+    [canEdit],
   );
   if (!trips.length) return null;
   return (
@@ -428,17 +375,153 @@ function MissingLoading({ trips, view }: { trips: LoadingTrip[]; view: TableView
         <CardTitle className="text-base text-amber-800 dark:text-amber-300">Chuyến cần nhập phí bốc xếp ({formatNumber(trips.length)})</CardTitle>
         <p className="text-sm text-muted-foreground">
           Chuyến đã tick &quot;Có chi phí bốc xếp&quot; khi tạo đơn ở Điều phối nhưng chưa nhập khoản trả bốc xếp. Tính mọi ngày, không theo bộ lọc Từ ngày - Đến ngày.
-          Nhập xong (Chi phí trả 3PL → Thêm bốc xếp 3PL) chuyến tự rời danh sách này. Nhập nhanh ngay trên dòng ở trang{" "}
-          <Link href="/phi-chua-nhap" className="text-primary hover:underline">
-            Phí bốc xếp, chi hộ chưa nhập
-          </Link>
-          .
+          Bấm <b>Nhập chi</b> trên dòng để nhập khoản trả bốc xếp; nhập xong chuyến tự rời danh sách này.
         </p>
       </CardHeader>
       <CardContent>
         <ReportGrid tableKey="loading_missing" rows={trips} columns={columns} view={view} getRowId={(r) => r.id} defaultPinned={["shipment_code"]} emptyText="Không còn chuyến nào thiếu phí bốc xếp." />
       </CardContent>
     </Card>
+  );
+}
+
+type TripRow = LoadingTrip & { ls: LoadingLine[]; cost: number; unpaid: number };
+
+/** Bốc xếp từng xe: bảng có chọn cột, lưu cấu hình; nút Thu / Chi trên dòng để nhập ngay */
+function TripsGrid(props: { trips: LoadingTrip[]; lines: LoadingLine[]; vendor: string; view: TableViewConfig | null; canEdit: boolean; tu: string; den: string }) {
+  const { trips, lines, vendor, canEdit } = props;
+  const rows = useMemo<TripRow[]>(() => {
+    const by = new Map<string, LoadingLine[]>();
+    for (const l of lines) if (!vendor || l.vendor_name === vendor) by.set(l.shipment_id, [...(by.get(l.shipment_id) ?? []), l]);
+    return trips.map((t) => {
+      const ls = by.get(t.id) ?? [];
+      return { ...t, ls, cost: ls.reduce((a, l) => a + Number(l.amount), 0), unpaid: ls.reduce((a, l) => a + (l.paid ? 0 : Number(l.amount)), 0) };
+    });
+  }, [trips, lines, vendor]);
+
+  const lineText = (l: LoadingLine) =>
+    `${l.vendor_name} ${l.quantity != null && l.unit_price != null ? `${tons(l.quantity)} tấn × ${formatNumber(l.unit_price)}` : l.fee_name} ${formatVND(l.amount)}`;
+  const columns = useMemo<ReportColumn<TripRow>[]>(
+    () => [
+      { key: "report_date", label: "Ngày", width: 100, kind: "date", value: (r) => r.report_date, render: (r) => formatDate(r.report_date) },
+      {
+        key: "shipment_code",
+        label: "Mã chuyến",
+        width: 120,
+        value: (r) => r.shipment_code,
+        render: (r) => (
+          <Link href={`/chuyen-xe/${r.id}#chi-phi-3pl`} className="font-medium text-primary hover:underline">
+            {r.shipment_code}
+          </Link>
+        ),
+      },
+      { key: "plate_number", label: "Số xe", width: 100, value: (r) => r.plate_number },
+      {
+        key: "action",
+        label: "Nhập thu / chi",
+        width: 170,
+        value: () => "",
+        render: (r) =>
+          canEdit ? (
+            <LoadingRowActions id={r.id} code={r.shipment_code} hasRevenue={Number(r.loading_revenue) > 0} hasCost={Number(r.loading_lines) > 0} />
+          ) : (
+            <span className="text-xs text-muted-foreground">Không có quyền nhập</span>
+          ),
+      },
+      { key: "customer", label: "Khách", width: 90, value: (r) => r.customer_code ?? r.customer_name },
+      { key: "route", label: "Nơi nhận → Nơi giao", width: 380, value: (r) => route(r) },
+      { key: "tons", label: "Tấn", width: 70, align: "right", kind: "number", value: (r) => Number(r.tons), render: (r) => tons(r.tons) },
+      {
+        key: "loading_revenue",
+        label: "Thu bốc xếp",
+        width: 120,
+        align: "right",
+        kind: "number",
+        value: (r) => Number(r.loading_revenue),
+        render: (r) => <span className={Number(r.loading_revenue) ? undefined : "text-amber-700 dark:text-amber-300"}>{formatVND(r.loading_revenue)}</span>,
+      },
+      {
+        key: "vendors",
+        label: "Đơn vị bốc xếp · đơn giá · phí",
+        width: 440,
+        value: (r) => r.ls.map(lineText).join("; "),
+        render: (r) =>
+          r.ls.length ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5" title={r.ls.map(lineText).join("\n")}>
+              {r.ls.map((l) => (
+                <span key={l.id} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="font-medium">{l.vendor_name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {l.quantity != null && l.unit_price != null ? `${tons(l.quantity)} tấn × ${formatNumber(l.unit_price)}` : l.fee_name}
+                  </span>
+                  <span className="tabular-nums">{formatVND(l.amount)}</span>
+                  {PAY[l.pay_status] ? <Badge variant={PAY[l.pay_status].variant}>{PAY[l.pay_status].label}</Badge> : null}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="text-xs text-amber-700 dark:text-amber-300">{r.requires_loading ? "Có bốc xếp, chưa nhập phí trả" : "Chưa nhập phí trả"}</span>
+          ),
+      },
+      { key: "cost", label: "Phí phải trả", width: 120, align: "right", kind: "number", value: (r) => r.cost, render: (r) => formatVND(r.cost) },
+      {
+        key: "unpaid",
+        label: "Chưa thanh toán",
+        width: 120,
+        align: "right",
+        kind: "number",
+        value: (r) => r.unpaid,
+        render: (r) => <span className={r.unpaid ? "text-destructive" : undefined}>{formatVND(r.unpaid)}</span>,
+      },
+      {
+        key: "diff",
+        label: "Chênh lệch (thu − trả)",
+        width: 140,
+        align: "right",
+        kind: "number",
+        value: (r) => Number(r.loading_revenue) - r.cost,
+        render: (r) => formatVND(Number(r.loading_revenue) - r.cost),
+      },
+    ],
+    [canEdit],
+  );
+
+  return (
+    <ReportGrid
+      tableKey="loading_trips"
+      rows={rows}
+      columns={columns}
+      view={props.view}
+      getRowId={(r) => r.id}
+      defaultPinned={["shipment_code"]}
+      emptyText="Không có xe nào có bốc xếp trong bộ lọc này."
+      footer={(list) => ({
+        shipment_code: `${formatNumber(list.length)} xe`,
+        tons: tons(list.reduce((a, r) => a + Number(r.tons), 0)),
+        loading_revenue: formatVND(list.reduce((a, r) => a + Number(r.loading_revenue), 0)),
+        cost: formatVND(list.reduce((a, r) => a + r.cost, 0)),
+        unpaid: formatVND(list.reduce((a, r) => a + r.unpaid, 0)),
+        diff: formatVND(list.reduce((a, r) => a + Number(r.loading_revenue) - r.cost, 0)),
+      })}
+      onExport={(cols, list) =>
+        downloadXlsx({
+          filename: `Boc_xep_tung_xe_${props.tu}_${props.den}.xlsx`,
+          sheet: "BocXepTungXe",
+          title: "BỐC XẾP TỪNG XE",
+          subtitle: `Từ ${formatDate(props.tu)} đến ${formatDate(props.den)}${vendor ? ` · ${vendor}` : ""}`,
+          columns: cols.filter((c) => c.key !== "action").map((c) => ({ label: c.label, width: Math.max(10, Math.round(c.width / 8)), numeric: c.kind === "number" })),
+          rows: list.map((r) =>
+            cols
+              .filter((c) => c.key !== "action")
+              .map((c) => {
+                const v = c.value(r);
+                if (c.kind === "date" && typeof v === "string") return formatDate(v);
+                return v ?? "";
+              }),
+          ),
+        })
+      }
+    />
   );
 }
 

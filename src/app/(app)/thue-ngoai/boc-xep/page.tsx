@@ -24,7 +24,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   if (den < tu) [tu, den] = [den, tu];
 
   const supabase = await createClient();
-  const [linesRes, tripsRes, priceRes, missingRes, missingView] = await Promise.all([
+  const [linesRes, tripsRes, priceRes, missingRes, missingView, tripsView] = await Promise.all([
     supabase
       .from("report_loading_3pl")
       .select(
@@ -45,7 +45,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     // Chuyến có tick "Có chi phí bốc xếp" mà chưa nhập khoản trả bốc xếp: mọi ngày (không theo bộ lọc) để không quên
     supabase.from("report_loading_trips").select("*").eq("requires_loading", true).eq("loading_lines", 0).order("report_date").limit(1000),
     loadTableView(supabase, "loading_missing", me.id),
+    loadTableView(supabase, "loading_trips", me.id),
   ]);
+  const has = (k: string) => me.permissions.has(k as never);
   if (linesRes.error) throw linesRes.error;
   if (tripsRes.error) throw tripsRes.error;
 
@@ -62,6 +64,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
         canPay={me.permissions.has("receivables.pay")}
         missing={missingRes.error ? [] : ((missingRes.data ?? []) as LoadingTrip[])}
         missingView={missingView}
+        tripsView={tripsView}
+        canEdit={has("dispatch.update") || has("shipments.update") || has("receivables.create")}
       />
     </>
   );
