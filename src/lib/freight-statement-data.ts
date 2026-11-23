@@ -7,6 +7,7 @@ import type { ShipmentListRow } from "@/lib/shipments";
 import { mergeStatementGroups } from "@/lib/load-group";
 import {
   BASE_STATEMENT_COLUMNS,
+  CARRIER_BASE_COLUMNS,
   STATEMENT_ALL_CUSTOMERS,
   STATEMENT_STATUS_OPTIONS,
   invoiceText,
@@ -228,9 +229,13 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
   };
 }
 
-function buildCatalog(extra: { key: string; label: string; numeric: boolean; source: "shipment" | "order" }[], feeTypes: FeeTypeRow[]): StatementColumn[] {
+function buildCatalog(
+  extra: { key: string; label: string; numeric: boolean; source: "shipment" | "order" }[],
+  feeTypes: FeeTypeRow[],
+  base: StatementColumn[] = BASE_STATEMENT_COLUMNS,
+): StatementColumn[] {
   return [
-    ...BASE_STATEMENT_COLUMNS,
+    ...base,
     ...extra.map((c) => ({
       key: c.key,
       label: c.label,
@@ -248,3 +253,207 @@ function buildCatalog(extra: { key: string; label: string; numeric: boolean; sou
   ];
 }
 
+
+// ---------------------------------------------------------------------------
+// Bảng kê 3PL: chi phí GHA phải trả một nhà xe thuê ngoài trong kỳ
+// ---------------------------------------------------------------------------
+
+/** nx: id nhà xe 3PL; kh: lọc thêm theo khách hàng (trống = mọi khách hàng) */
+export type CarrierStatementParams = { nx: string; kh: string; tu: string; den: string; tt: StatementStatusFilter };
+
+/** Nhà xe 3PL có chuyến (theo báo cáo Chuyến 3PL), kèm mọi nhà cung cấp đang có xe thuê ngoài */
+export async function loadCarrierSuppliers(supabase: SupabaseClient): Promise<StatementCustomer[]> {
+  const [tripRes, vehRes] = await Promise.all([
+    supabase.from("report_carrier_trips").select("supplier_id").not("supplier_id", "is", null).limit(20000),
+    supabase.from("vehicles").select("supplier_id").not("supplier_id", "is", null).limit(5000),
+  ]);
+  if (tripRes.error) throw tripRes.error;
+  if (vehRes.error) throw vehRes.error;
+  const ids = [...new Set([...(tripRes.data ?? []), ...(vehRes.data ?? [])].map((r) => (r as { supplier_id: string }).supplier_id))];
+  const out: StatementCustomer[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("suppliers").select("id, code, name, tax_code, address").in("id", ids.slice(i, i + 200));
+    if (error) throw error;
+    for (const r of (data ?? []) as { id: string; code: string; name: string; tax_code: string | null; address: string | null }[])
+      out.push({ id: r.id, code: r.code, name: r.name, tax_code: r.tax_code, billing_address: r.address });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+}
+
+type CarrierCostLine = {
+  shipment_id: string;
+  cost_kind: "freight" | "pass_through" | "other";
+  fee_type_id: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  fuel_pct: number | null;
+  amount: number;
+  supplier_id: string | null;
+  note: string | null;
+};
+
+const PAY_LABEL: Record<string, string> = {
+  no_cost: "Chưa nhập chi phí",
+  no_payable: "Chưa lập công nợ",
+  unpaid: "Chưa trả",
+  partial: "Trả một phần",
+  paid: "Đã trả đủ",
+};
+
+/**
+ * Dữ liệu bảng kê 3PL của một nhà xe trong khoảng ngày (theo ngày nhận hàng, giống bảng kê khách hàng):
+ * chuyến do nhà xe chạy (nhà xe của chuyến, hoặc xe thuê ngoài thuộc nhà xe khi chuyến chưa ghi nhà xe)
+ * và các khoản trả nhà xe đó (cước gồm % dầu, chi hộ, bốc xếp, chi phí khác) – không có cước thu khách.
+ */
+export async function loadCarrierStatement(supabase: SupabaseClient, perms: Set<string>, p: CarrierStatementParams): Promise<StatementData> {
+  const feeTypesRes = await supabase
+    .from("fee_types")
+    .select("id, name, sort_order, is_loading, fee_group:fee_groups(name, sort_order)")
+    .eq("is_active", true)
+    .order("sort_order")
+    .order("name");
+  if (feeTypesRes.error) throw feeTypesRes.error;
+  const feeTypes = ((feeTypesRes.data ?? []) as unknown as (FeeTypeRow & { is_loading: boolean | null })[]).sort(
+    (a, b) => (a.fee_group?.sort_order ?? 999) - (b.fee_group?.sort_order ?? 999) || a.sort_order - b.sort_order || a.name.localeCompare(b.name, "vi"),
+  );
+  const loadingType = new Set(feeTypes.filter((f) => f.is_loading).map((f) => f.id));
+
+  const empty = async (): Promise<StatementData> => {
+    const { columns } = await dispatchExtraColumns(supabase, perms, []);
+    return { customer: null, catalog: buildCatalog(columns, feeTypes, CARRIER_BASE_COLUMNS), rows: [], truncated: false, notDelivered: 0 };
+  };
+  if (!p.nx) return empty();
+  const supRes = await supabase.from("suppliers").select("id, code, name, tax_code, address").eq("id", p.nx).maybeSingle();
+  if (supRes.error) throw supRes.error;
+  const sup = supRes.data as { id: string; code: string; name: string; tax_code: string | null; address: string | null } | null;
+  if (!sup) return empty();
+  const supplier: StatementCustomer = { id: sup.id, code: sup.code, name: sup.name, tax_code: sup.tax_code, billing_address: sup.address };
+
+  // Xe thuê ngoài của nhà xe: chuyến chưa ghi nhà xe mà chạy xe này cũng là của nhà xe (như báo cáo Chuyến 3PL)
+  const vehRes = await supabase.from("vehicles").select("id").eq("supplier_id", sup.id).limit(2000);
+  if (vehRes.error) throw vehRes.error;
+  const vIds = ((vehRes.data ?? []) as { id: string }[]).map((v) => v.id);
+  const ofCarrier = vIds.length ? `carrier_supplier_id.eq.${sup.id},and(carrier_supplier_id.is.null,vehicle_id.in.(${vIds.join(",")}))` : `carrier_supplier_id.eq.${sup.id}`;
+
+  const statuses = STATEMENT_STATUS_OPTIONS.find((o) => o.value === p.tt)?.statuses ?? STATEMENT_STATUS_OPTIONS[0].statuses;
+  const from = startOfDayVN(p.tu);
+  const to = startOfDayVN(addDaysYMD(p.den, 1));
+  const base = () => {
+    let q = supabase.from("shipment_list").select("*").or(ofCarrier).gte("pickup_at", from).lt("pickup_at", to);
+    if (p.kh) q = q.eq("customer_id", p.kh);
+    return q;
+  };
+
+  const notDeliveredRes =
+    p.tt === "giao"
+      ? await (() => {
+          let q = supabase.from("shipment_list").select("id", { count: "exact", head: true }).or(ofCarrier).gte("pickup_at", from).lt("pickup_at", to);
+          if (p.kh) q = q.eq("customer_id", p.kh);
+          return q.in("status", ["draft", "assigned", "accepted", "in_transit"]);
+        })()
+      : { count: 0, error: null };
+
+  const list: ShipmentListRow[] = [];
+  for (let page = 0; page < 3; page++) {
+    const { data, error } = await base()
+      .in("status", [...statuses])
+      .order("pickup_at")
+      .order("shipment_code")
+      .range(page * 1000, page * 1000 + 999);
+    if (error) throw error;
+    list.push(...((data ?? []) as ShipmentListRow[]));
+    if ((data ?? []).length < 1000) break;
+  }
+  const truncated = list.length > STATEMENT_MAX_ROWS;
+  const rowsIn = list.slice(0, STATEMENT_MAX_ROWS);
+  const ids = rowsIn.map((r) => r.id);
+
+  // Khoản trả nhà xe của từng chuyến (bỏ khoản trả đơn vị bốc xếp khác) + tình trạng thanh toán
+  const lines = new Map<string, CarrierCostLine[]>();
+  const pay = new Map<string, { paid_amount: number; remaining_amount: number; pay_status: string; invoice_no: string | null }>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const [cRes, pRes] = await Promise.all([
+      supabase.from("shipment_carrier_costs").select("shipment_id, cost_kind, fee_type_id, quantity, unit_price, fuel_pct, amount, supplier_id, note").in("shipment_id", chunk),
+      supabase.from("report_carrier_trips").select("id, paid_amount, remaining_amount, pay_status, invoice_no").in("id", chunk),
+    ]);
+    if (cRes.error) throw cRes.error;
+    if (pRes.error) throw pRes.error;
+    for (const l of (cRes.data ?? []) as CarrierCostLine[]) {
+      if (l.supplier_id && l.supplier_id !== sup.id) continue;
+      lines.set(l.shipment_id, [...(lines.get(l.shipment_id) ?? []), l]);
+    }
+    for (const r of (pRes.data ?? []) as { id: string; paid_amount: number; remaining_amount: number; pay_status: string; invoice_no: string | null }[]) pay.set(r.id, r);
+  }
+
+  const extra = await dispatchExtraColumns(supabase, perms, rowsIn);
+  const catalog = buildCatalog(extra.columns, feeTypes, CARRIER_BASE_COLUMNS);
+  const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
+  const sum = (ls: CarrierCostLine[]) => ls.reduce((a, l) => a + Number(l.amount), 0);
+  const single = (vals: (number | null)[]) => {
+    const d = [...new Set(vals.filter((v): v is number => v !== null && v !== undefined).map(Number))];
+    return d.length === 1 ? d[0] : null;
+  };
+  const rows: StatementRow[] = rowsIn.map((r, i) => {
+    const ls = lines.get(r.id) ?? [];
+    const fr = ls.filter((l) => l.cost_kind === "freight");
+    const isLoading = (l: CarrierCostLine) => l.cost_kind === "other" && Boolean(l.fee_type_id && loadingType.has(l.fee_type_id));
+    const frBase = fr.reduce(
+      (a, l) => a + (l.quantity != null && l.unit_price != null ? Number(l.quantity) * Number(l.unit_price) : Number(l.amount) / (1 + Number(l.fuel_pct ?? 0) / 100)),
+      0,
+    );
+    const frTotal = sum(fr);
+    const qty = fr.filter((l) => l.quantity != null);
+    const pm = pay.get(r.id);
+    const byFee: Record<string, number> = {};
+    for (const l of ls) if (l.fee_type_id) byFee[`fee_${l.fee_type_id}`] = (byFee[`fee_${l.fee_type_id}`] ?? 0) + Number(l.amount);
+    const cells: StatementRow["cells"] = {
+      stt: i + 1,
+      pickup_at: formatDate(r.pickup_at),
+      expected_delivery_at: formatDate(r.expected_delivery_at),
+      shipment_code: r.shipment_code,
+      order_code: r.order_code,
+      customer_code: r.customer_code ?? null,
+      route_label: statementRouteLabel(r),
+      pickup_name: r.pickup_name,
+      delivery_name: r.delivery_name,
+      empty_return_name: r.empty_return_name ?? null,
+      offroute_return_name: r.offroute_return_name ?? null,
+      vehicle_type_name: r.vehicle_type_name,
+      plate_number: r.plate_number,
+      driver_name: r.driver_name,
+      quantity: num(r.quantity),
+      pricing_unit: PRICING_UNITS[r.pricing_unit] ?? r.pricing_unit,
+      notes: r.notes,
+      c_quantity: qty.length ? qty.reduce((a, l) => a + Number(l.quantity), 0) : null,
+      c_unit_price: single(fr.map((l) => (l.unit_price == null ? null : Number(l.unit_price)))),
+      c_freight_base: fr.length ? Math.round(frBase) : null,
+      c_fuel_pct: single(fr.map((l) => (l.fuel_pct == null ? null : Number(l.fuel_pct)))),
+      c_fuel_amount: fr.length ? frTotal - Math.round(frBase) : null,
+      c_freight: frTotal,
+      c_pass_through: sum(ls.filter((l) => l.cost_kind === "pass_through")),
+      c_loading: sum(ls.filter(isLoading)),
+      c_other: sum(ls.filter((l) => l.cost_kind === "other" && !isLoading(l))),
+      c_total: sum(ls),
+      c_paid: pm ? Number(pm.paid_amount) : null,
+      c_remaining: pm ? Number(pm.remaining_amount) : null,
+      c_pay_status: pm ? (PAY_LABEL[pm.pay_status] ?? pm.pay_status) : ls.length ? null : PAY_LABEL.no_cost,
+      c_invoice_no: pm?.invoice_no ?? null,
+      c_note: [...new Set(ls.map((l) => l.note?.trim()).filter(Boolean))].join("; ") || null,
+      ...byFee,
+    };
+    for (const c of extra.columns) {
+      const [text, sortVal] = extra.values[r.id]?.[c.key] ?? ["", null];
+      cells[c.key] = c.numeric && typeof sortVal === "number" ? sortVal : text || null;
+    }
+    return { id: r.id, cells };
+  });
+
+  return {
+    customer: supplier,
+    catalog,
+    rows: mergeStatementGroups(rows, rowsIn, catalog),
+    truncated,
+    notDelivered: notDeliveredRes.count ?? 0,
+  };
+}

@@ -50,6 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/cong-no", label: "Công nợ", icon: "Wallet", anyOf: ["receivables.view", "payments.view"] },
       { href: "/thue-ngoai", label: "Xe thuê ngoài 3PL", icon: "Handshake", anyOf: ["reports.view", "receivables.view"] },
       { href: "/thue-ngoai/boc-xep", label: "Bốc xếp 3PL", icon: "PackageOpen", anyOf: ["carriers.view"] },
+      { href: "/thue-ngoai/bang-ke", label: "Bảng kê 3PL", icon: "ScrollText", anyOf: ["carriers.view"] },
       { href: "/chi-phi-ngoai", label: "Chi phí ngoài chuyến", icon: "Coins", anyOf: ["overhead.view"] },
       { href: "/so-hoa-don", label: "Sổ hóa đơn bán ra, mua vào", icon: "ReceiptText", anyOf: ["overhead.view"] },
       { href: "/in-phieu", label: "Đề nghị thanh toán, tạm ứng", icon: "Printer", anyOf: ["overhead.view", "overhead.create"] },
