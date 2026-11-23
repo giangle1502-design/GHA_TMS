@@ -13,6 +13,9 @@ import { formatVND, todayVN } from "@/lib/format";
 import { toneVar, type Tone } from "@/lib/tones";
 import { monthRange } from "@/lib/freight-statement";
 import { ReportDateRange } from "@/components/reports/report-date-range";
+import { GoodsReport } from "@/components/reports/goods-report";
+import { GOODS_REPORT_TAB, loadGoodsReport } from "@/lib/goods-report";
+import { loadTableView } from "@/lib/entities/server";
 
 export const metadata: Metadata = { title: "Báo cáo" };
 
@@ -71,6 +74,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
     keep: { tu, den },
     tabs: [
       { key: "report_shipments" },
+      { key: GOODS_REPORT_TAB, label: "Chi tiết hàng hóa vận chuyển", custom: true },
       { key: "report_freight" },
       { key: "report_pass_through" },
       { key: "report_loading" },
@@ -131,10 +135,21 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
       <div className="mt-6">
         <ReportDateRange tu={tu} den={den} thisMonth={thisMonth} lastMonth={lastMonth} />
         {nav}
-        {active ? <EntityListSection entityKey={active} searchParams={sp} revalidate="/bao-cao" /> : null}
+        {active === GOODS_REPORT_TAB ? (
+          <GoodsTab tu={tu} den={den} userId={me.id} />
+        ) : active ? (
+          <EntityListSection entityKey={active} searchParams={sp} revalidate="/bao-cao" />
+        ) : null}
       </div>
     </>
   );
+}
+
+/** Tab Chi tiết hàng hóa vận chuyển: mỗi mã hàng trên chuyến một dòng (đối chiếu không sót chuyến) */
+async function GoodsTab({ tu, den, userId }: { tu: string; den: string; userId: string }) {
+  const supabase = await createClient();
+  const [{ rows, truncated }, view] = await Promise.all([loadGoodsReport(supabase, tu, den), loadTableView(supabase, "report_goods_detail", userId)]);
+  return <GoodsReport tu={tu} den={den} rows={rows} truncated={truncated} view={view} />;
 }
 
 function Kpi({ icon: Icon, tone, label, value, note }: { icon: LucideIcon; tone: Tone; label: string; value: number; note: string }) {

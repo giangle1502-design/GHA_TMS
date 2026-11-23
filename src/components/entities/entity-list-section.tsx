@@ -61,14 +61,15 @@ export async function resolveEntityTabs({
   keep,
 }: {
   basePath: string;
-  tabs: { key: string; label?: string }[];
+  /** custom: tab không phải thực thể (trang tự vẽ nội dung), luôn hiện khi người xem vào được trang */
+  tabs: { key: string; label?: string; custom?: boolean }[];
   searchParams: SP;
   /** Tham số giữ lại khi đổi tab (ví dụ Từ ngày / Đến ngày của trang Báo cáo) */
   keep?: Record<string, string>;
 }) {
   const extra = keep ? Object.entries(keep).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join("") : "";
   const me = await requireActiveUser();
-  const allowed = tabs.filter((t) => entityAccess(getEntity(t.key), me.permissions).view);
+  const allowed = tabs.filter((t) => t.custom || entityAccess(getEntity(t.key), me.permissions).view);
   const tabParam = typeof searchParams.tab === "string" ? searchParams.tab : undefined;
   const active = allowed.find((t) => t.key === tabParam)?.key ?? allowed[0]?.key;
   return {
