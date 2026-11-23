@@ -46,7 +46,7 @@ describe("bảng kê", () => {
     const def = defaultStatementConfig(catalog);
     expect(def.columns.slice(0, 3)).toEqual(["stt", "pickup_at", "cf_so_cont"]);
     const cols = resolveColumns(catalog, { columns: ["stt", "khong_co", "quantity", "amount_due", "quantity"], labels: { amount_due: "Thành tiền" }, widths: { stt: 5 } });
-    expect(cols.map((c) => c.title)).toEqual(["STT", "SL", "Thành tiền"]);
+    expect(cols.map((c) => c.title)).toEqual(["STT", "SL tính cước", "Thành tiền"]);
     expect(cols[0].w).toBe(5);
     const t = statementTotals(cols, [
       { id: "a", cells: { stt: 1, quantity: 2, amount_due: 1_000_000 } },
@@ -124,8 +124,11 @@ describe("bảng kê: tuyến có điểm hạ rỗng và thông tin xuất hóa
   });
   it("mẫu cũ tự thêm 2 cột mới sau Tuyến đường, mẫu mới giữ nguyên", () => {
     const old = parseStatementConfig({ columns: ["stt", "route_label", "plate_number"] }, BASE_STATEMENT_COLUMNS);
-    expect(old.columns).toEqual(["stt", "route_label", "empty_return_name", "invoice_info", "plate_number"]);
-    const kept = parseStatementConfig({ columns: ["stt", "route_label"], v: 2 }, BASE_STATEMENT_COLUMNS);
+    expect(old.columns).toEqual(["stt", "container_no", "route_label", "empty_return_name", "invoice_info", "plate_number", "trip_count", "goods_tons"]);
+    // Bản 3: SL tính cước đổi thành SL chuyến + Số lượng vận chuyển, thêm Số cont sau Ngày
+    const v2 = parseStatementConfig({ columns: ["stt", "pickup_at", "route_label", "quantity", "amount_due"], v: 2 }, BASE_STATEMENT_COLUMNS);
+    expect(v2.columns).toEqual(["stt", "pickup_at", "container_no", "route_label", "trip_count", "goods_tons", "amount_due"]);
+    const kept = parseStatementConfig({ columns: ["stt", "route_label"], v: 3 }, BASE_STATEMENT_COLUMNS);
     expect(kept.columns).toEqual(["stt", "route_label"]);
     expect(defaultStatementConfig(BASE_STATEMENT_COLUMNS).columns).toContain("invoice_info");
   });
@@ -140,11 +143,43 @@ describe("bảng kê 3PL", () => {
     expect(cfg.payColumns).toEqual(["c_freight", "c_pass_through", "c_loading", "c_other"]);
     expect(cfg.leftSign).toBe("ĐẠI DIỆN NHÀ XE");
     const keys = m.CARRIER_BASE_COLUMNS.map((c) => c.key);
-    for (const k of ["unit_price", "freight_amount", "transport_fee", "amount_due", "total_revenue", "invoice_info"]) expect(keys).not.toContain(k);
+    expect(cfg.columns).toEqual(expect.arrayContaining(["container_no", "invoice_info", "trip_count", "goods_tons"]));
+    for (const k of ["unit_price", "freight_amount", "transport_fee", "amount_due", "total_revenue"]) expect(keys).not.toContain(k);
     expect(m.carrierStatementFileName("NX01", "2026-11-01", "2026-11-30")).toBe("Bang-ke-3PL_NX01_11-2026");
   });
   it("mẫu hỏng thì dùng mẫu mặc định 3PL", async () => {
     const m = await import("@/lib/freight-statement");
     expect(m.parseStatementConfig({ columns: [] }, m.CARRIER_BASE_COLUMNS, "carrier").payColumns).toContain("c_freight");
+  });
+});
+
+describe("bảng kê: căn lề, ghi chú nội bộ, xe ghép", () => {
+  it("căn lề mặc định theo kiểu cột, đổi được từng cột", async () => {
+    const m = await import("@/lib/freight-statement");
+    const cols = m.resolveColumns(m.BASE_STATEMENT_COLUMNS, { columns: ["stt", "route_label", "amount_due"], labels: {}, widths: {}, align: { amount_due: "center" }, valign: { route_label: "top" } });
+    expect(cols.map((c) => [c.h, c.v])).toEqual([["center", "middle"], ["left", "top"], ["center", "middle"]]);
+  });
+  it("ghi chú đơn bỏ phần tự sinh khi dán từ Excel", async () => {
+    const { internalOrderNote } = await import("@/lib/freight-statement-data");
+    expect(internalOrderNote("Dán từ Excel · Tờ khai 1234")).toBeNull();
+    expect(internalOrderNote("Giao trước 8h")).toBe("Giao trước 8h");
+    expect(internalOrderNote(null)).toBeNull();
+  });
+  it("xe ghép: SL chuyến = 1, số lượng vận chuyển cộng lại", async () => {
+    const { mergeStatementGroups } = await import("@/lib/load-group");
+    const m = await import("@/lib/freight-statement");
+    const rows = [
+      { id: "a", cells: { stt: 1, trip_count: 1, goods_tons: 5, goods_detail: "37MK10: 5 tấn" } },
+      { id: "b", cells: { stt: 2, trip_count: 1, goods_tons: 5, goods_detail: "190K2M: 5 tấn" } },
+    ];
+    const src = [
+      { id: "a", load_group_id: "g", pricing_unit: "trip" },
+      { id: "b", load_group_id: "g", pricing_unit: "trip" },
+    ];
+    const out = mergeStatementGroups(rows, src, m.BASE_STATEMENT_COLUMNS);
+    expect(out).toHaveLength(1);
+    expect(out[0].cells.trip_count).toBe(1);
+    expect(out[0].cells.goods_tons).toBe(10);
+    expect(out[0].cells.goods_detail).toBe("37MK10: 5 tấn; 190K2M: 5 tấn");
   });
 });

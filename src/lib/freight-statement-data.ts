@@ -175,7 +175,7 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
     for (const l of (data ?? []) as { id: string; billing_address: string | null }[]) billing.set(l.id, l.billing_address);
   }
 
-  const extra = await dispatchExtraColumns(supabase, perms, rowsIn);
+  const [extra, trip] = await Promise.all([dispatchExtraColumns(supabase, perms, rowsIn), loadTripExtras(supabase, rowsIn, portal)]);
   const catalog = buildCatalog(extra.columns, feeTypes);
   const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
   const rows: StatementRow[] = rowsIn.map((r, i) => {
@@ -196,6 +196,8 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
       vehicle_type_name: r.vehicle_type_name,
       plate_number: r.plate_number,
       driver_name: r.driver_name,
+      trip_count: 1,
+      ...tripCells(r, trip),
       quantity: num(r.quantity),
       pricing_unit: PRICING_UNITS[r.pricing_unit] ?? r.pricing_unit,
       unit_price: num(r.unit_price),
@@ -210,7 +212,6 @@ export async function loadStatement(supabase: SupabaseClient, perms: Set<string>
       other_fee: num(r.other_fee ?? 0),
       total_revenue: num(r.total_revenue),
       amount_due: num(r.amount_due),
-      notes: r.notes,
       ...(fees.get(r.id) ?? {}),
     };
     for (const c of extra.columns) {
@@ -386,7 +387,7 @@ export async function loadCarrierStatement(supabase: SupabaseClient, perms: Set<
     for (const r of (pRes.data ?? []) as { id: string; paid_amount: number; remaining_amount: number; pay_status: string; invoice_no: string | null }[]) pay.set(r.id, r);
   }
 
-  const extra = await dispatchExtraColumns(supabase, perms, rowsIn);
+  const [extra, trip, billing] = await Promise.all([dispatchExtraColumns(supabase, perms, rowsIn), loadTripExtras(supabase, rowsIn, false), loadBilling(supabase, rowsIn)]);
   const catalog = buildCatalog(extra.columns, feeTypes, CARRIER_BASE_COLUMNS);
   const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
   const sum = (ls: CarrierCostLine[]) => ls.reduce((a, l) => a + Number(l.amount), 0);
@@ -415,6 +416,8 @@ export async function loadCarrierStatement(supabase: SupabaseClient, perms: Set<
       order_code: r.order_code,
       customer_code: r.customer_code ?? null,
       route_label: statementRouteLabel(r),
+      invoice_info:
+        invoiceText(r.pickup_location_id ? billing.get(r.pickup_location_id) : null, r.delivery_location_id ? billing.get(r.delivery_location_id) : null) || null,
       pickup_name: r.pickup_name,
       delivery_name: r.delivery_name,
       empty_return_name: r.empty_return_name ?? null,
@@ -422,9 +425,10 @@ export async function loadCarrierStatement(supabase: SupabaseClient, perms: Set<
       vehicle_type_name: r.vehicle_type_name,
       plate_number: r.plate_number,
       driver_name: r.driver_name,
+      trip_count: 1,
+      ...tripCells(r, trip),
       quantity: num(r.quantity),
       pricing_unit: PRICING_UNITS[r.pricing_unit] ?? r.pricing_unit,
-      notes: r.notes,
       c_quantity: qty.length ? qty.reduce((a, l) => a + Number(l.quantity), 0) : null,
       c_unit_price: single(fr.map((l) => (l.unit_price == null ? null : Number(l.unit_price)))),
       c_freight_base: fr.length ? Math.round(frBase) : null,
@@ -456,4 +460,128 @@ export async function loadCarrierStatement(supabase: SupabaseClient, perms: Set<
     truncated,
     notDelivered: notDeliveredRes.count ?? 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Dùng chung hai bảng kê: hàng hóa (số lượng vận chuyển), ghi chú đơn nội bộ, thông tin xuất hóa đơn
+// ---------------------------------------------------------------------------
+
+type TripExtra = { tons: number | null; detail: string | null; orderNote: string | null; cont: string | null };
+
+const fmtQty = (n: number) => new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(n);
+
+/**
+ * Ghi chú đơn hàng do GHA nhập khi tạo đơn. Đơn dán từ Excel (sheet COST CONT) có ghi chú tự sinh
+ * "Dán từ Excel · Tờ khai ..." nên bỏ phần đó; ghi chú của khách trong file Excel nằm ở ghi chú chuyến, không lấy.
+ */
+export function internalOrderNote(note: string | null | undefined): string | null {
+  const parts = String(note ?? "")
+    .split(" · ")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const fromExcel = parts.includes("Dán từ Excel");
+  const keep = parts.filter((x) => x !== "Dán từ Excel" && !(fromExcel && /^Tờ khai /.test(x)));
+  return keep.join(" · ") || null;
+}
+
+/** Khối lượng một dòng hàng (kg): cân nặng quy đổi, hoặc số lượng khi ĐVT là kg / tấn */
+function itemKg(i: { quantity: number | null; unit: string | null; weight_kg: number | null }): number | null {
+  if (i.weight_kg !== null && i.weight_kg !== undefined) return Number(i.weight_kg);
+  const u = (i.unit ?? "").trim().toLowerCase();
+  if (i.quantity === null || i.quantity === undefined) return null;
+  if (/^kg$/.test(u)) return Number(i.quantity);
+  if (/^(tấn|tan|t|ton|tons)$/.test(u)) return Number(i.quantity) * 1000;
+  return null;
+}
+
+/** Mã hàng của từng chuyến (tổng tấn + chi tiết "37MK10: 5 tấn, 190K2M: 5 tấn") và ghi chú đơn nội bộ */
+async function loadTripExtras(supabase: SupabaseClient, rows: ShipmentListRow[], portal: boolean): Promise<Map<string, TripExtra>> {
+  const out = new Map<string, TripExtra>(rows.map((r) => [r.id, { tons: null, detail: null, orderNote: null, cont: null }]));
+  // Tài khoản khách không đọc được hàng hóa / đơn hàng gốc
+  if (portal || !rows.length) return out;
+  const ids = rows.map((r) => r.id);
+  const orderIds = [...new Set(rows.map((r) => r.order_id).filter(Boolean))];
+  type Item = { shipment_id: string; item_code: string | null; item_name: string | null; quantity: number | null; unit: string | null; weight_kg: number | null };
+  const items = new Map<string, Item[]>();
+  const notes = new Map<string, string | null>();
+  const conts = new Map<string, string | null>();
+  const jobs: Promise<void>[] = [];
+  for (let i = 0; i < ids.length; i += 150) {
+    const c = ids.slice(i, i + 150);
+    jobs.push(
+      (async () => {
+        for (let page = 0; ; page++) {
+          const { data, error } = await supabase
+            .from("shipment_items")
+            .select("shipment_id, item_code, item_name, quantity, unit, weight_kg")
+            .in("shipment_id", c)
+            .order("shipment_id")
+            .order("line_no")
+            .range(page * 1000, page * 1000 + 999);
+          if (error) throw error;
+          for (const it of (data ?? []) as Item[]) items.set(it.shipment_id, [...(items.get(it.shipment_id) ?? []), it]);
+          if ((data ?? []).length < 1000) break;
+        }
+        const { data, error } = await supabase.from("shipments").select("id, container_no").in("id", c);
+        if (error) throw error;
+        for (const x of (data ?? []) as { id: string; container_no: string | null }[]) conts.set(x.id, x.container_no?.trim() || null);
+      })(),
+    );
+  }
+  for (let i = 0; i < orderIds.length; i += 150) {
+    const c = orderIds.slice(i, i + 150);
+    jobs.push(
+      (async () => {
+        const { data, error } = await supabase.from("transport_orders").select("id, notes").in("id", c);
+        if (error) throw error;
+        for (const o of (data ?? []) as { id: string; notes: string | null }[]) notes.set(o.id, internalOrderNote(o.notes));
+      })(),
+    );
+  }
+  await Promise.all(jobs);
+  for (const r of rows) {
+    const its = items.get(r.id) ?? [];
+    const kgs = its.map(itemKg);
+    const known = kgs.filter((k): k is number => k !== null);
+    const detail = its
+      .map((it, k) => {
+        const name = it.item_code?.trim() || it.item_name?.trim() || "";
+        const kg = kgs[k];
+        const qty = kg !== null ? `${fmtQty(Math.round(kg) / 1000)} tấn` : it.quantity !== null ? `${fmtQty(Number(it.quantity))}${it.unit ? ` ${it.unit}` : ""}` : "";
+        return [name, qty].filter(Boolean).join(": ");
+      })
+      .filter(Boolean)
+      .join(", ");
+    out.set(r.id, {
+      tons: known.length ? Math.round(known.reduce((a, k) => a + k, 0)) / 1000 : null,
+      detail: detail || null,
+      orderNote: r.order_id ? (notes.get(r.order_id) ?? null) : null,
+      cont: conts.get(r.id) ?? null,
+    });
+  }
+  return out;
+}
+
+function tripCells(r: ShipmentListRow, trip: Map<string, TripExtra>): StatementRow["cells"] {
+  const t = trip.get(r.id);
+  return {
+    container_no: t?.cont ?? null,
+    goods_tons: t?.tons ?? null,
+    goods_detail: t?.detail ?? null,
+    // Ghi chú = ghi chú đơn hàng GHA nhập khi tạo đơn; ghi chú chuyến (khách trong file Excel / cho tài xế) để cột riêng
+    notes: t?.orderNote ?? null,
+    trip_notes: r.notes ?? null,
+  };
+}
+
+/** Ô "Địa chỉ xuất hóa đơn" của điểm nhận / điểm giao */
+async function loadBilling(supabase: SupabaseClient, rows: ShipmentListRow[]): Promise<Map<string, string | null>> {
+  const billing = new Map<string, string | null>();
+  const locIds = [...new Set(rows.flatMap((r) => [r.pickup_location_id, r.delivery_location_id]).filter((x): x is string => Boolean(x)))];
+  for (let i = 0; i < locIds.length; i += 200) {
+    const { data, error } = await supabase.from("locations").select("id, billing_address").in("id", locIds.slice(i, i + 200));
+    if (error) throw error;
+    for (const l of (data ?? []) as { id: string; billing_address: string | null }[]) billing.set(l.id, l.billing_address);
+  }
+  return billing;
 }

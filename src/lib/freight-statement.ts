@@ -46,6 +46,7 @@ export const BASE_STATEMENT_COLUMNS: StatementColumn[] = [
   { key: "pickup_at", label: "Ngày", kind: "text", group: "Chung", width: 12 },
   { key: "expected_delivery_at", label: "Ngày giao", kind: "text", group: "Chung", width: 12 },
   { key: "shipment_code", label: "Mã chuyến", kind: "text", group: "Chung", width: 14 },
+  { key: "container_no", label: "Số cont", kind: "text", group: "Chung", width: 14 },
   { key: "order_code", label: "Mã đơn hàng", kind: "text", group: "Chung", width: 14 },
   { key: "customer_code", label: "Khách hàng", kind: "text", group: "Chung", width: 10 },
   { key: "route_label", label: "Tuyến đường", kind: "text", group: "Tuyến", width: 32 },
@@ -57,7 +58,10 @@ export const BASE_STATEMENT_COLUMNS: StatementColumn[] = [
   { key: "vehicle_type_name", label: "Loại xe", kind: "text", group: "Xe", width: 12 },
   { key: "plate_number", label: "Số xe", kind: "text", group: "Xe", width: 12 },
   { key: "driver_name", label: "Tài xế", kind: "text", group: "Xe", width: 18 },
-  { key: "quantity", label: "SL", kind: "number", group: "Cước", width: 7 },
+  { key: "trip_count", label: "SL chuyến", kind: "number", group: "Chung", width: 8 },
+  { key: "goods_tons", label: "Số lượng vận chuyển (tấn)", kind: "number", group: "Hàng hóa", width: 11 },
+  { key: "goods_detail", label: "Chi tiết mã hàng", kind: "text", group: "Hàng hóa", width: 30 },
+  { key: "quantity", label: "SL tính cước", kind: "number", group: "Cước", width: 7 },
   { key: "pricing_unit", label: "ĐVT", kind: "text", group: "Cước", width: 8 },
   { key: "unit_price", label: "Đơn giá", kind: "price", group: "Cước", width: 13 },
   { key: "freight_amount", label: "Cước (đơn giá × SL)", kind: "money", group: "Cước", width: 14 },
@@ -72,6 +76,7 @@ export const BASE_STATEMENT_COLUMNS: StatementColumn[] = [
   { key: "total_revenue", label: "Doanh thu (chưa gồm chi hộ)", kind: "money", group: "Tổng theo nhóm phí", width: 15 },
   { key: "amount_due", label: "Tổng cộng", kind: "money", group: "Tổng theo nhóm phí", width: 15 },
   { key: "notes", label: "Ghi chú", kind: "text", group: "Chung", width: 24 },
+  { key: "trip_notes", label: "Ghi chú chuyến (file Excel / cho tài xế)", kind: "text", group: "Chung", width: 24 },
 ];
 
 /** Cột mẫu mặc định khi chưa có mẫu nào */
@@ -82,7 +87,8 @@ export const DEFAULT_STATEMENT_COLUMNS = [
   "empty_return_name",
   "invoice_info",
   "plate_number",
-  "quantity",
+  "trip_count",
+  "goods_tons",
   "unit_price",
   "fuel_support_rate",
   "transport_fee",
@@ -122,6 +128,10 @@ export const statementConfigSchema = z.object({
   columns: z.array(z.string().min(1).max(80)).min(1).max(60),
   labels: z.record(z.string().max(80), z.string().max(120)).default({}),
   widths: z.record(z.string().max(80), z.number().min(4).max(80)).default({}),
+  /** Căn ngang từng cột (trống = mặc định: STT giữa, chữ trái, số phải) */
+  align: z.record(z.string().max(80), z.enum(["left", "center", "right"])).default({}),
+  /** Căn dọc từng cột (trống = giữa dòng) */
+  valign: z.record(z.string().max(80), z.enum(["top", "middle", "bottom"])).default({}),
   title: z.string().max(150).default("BẢNG KÊ CƯỚC PHÍ VẬN CHUYỂN"),
   companyName: z.string().max(200).default(COMPANY_DEFAULT.name),
   companyAddress: z.string().max(400).default(COMPANY_DEFAULT.address),
@@ -142,30 +152,56 @@ export const statementConfigSchema = z.object({
 });
 export type StatementConfig = z.infer<typeof statementConfigSchema>;
 
+/** Cột số cont: trường bổ sung "Số cont" (nếu có) hoặc số cont của chuyến */
+function contColumn(catalog: StatementColumn[]): string {
+  const cf = catalog.find((c) => c.key.startsWith("cf_") && CONT_NO_RE.test(c.label)) ?? catalog.find((c) => c.key.startsWith("ocf_") && CONT_NO_RE.test(c.label));
+  return cf?.key ?? "container_no";
+}
+
 export function defaultStatementConfig(catalog: StatementColumn[]): StatementConfig {
-  const cont = catalog.find((c) => c.key.startsWith("cf_") && CONT_NO_RE.test(c.label)) ?? catalog.find((c) => c.key.startsWith("ocf_") && CONT_NO_RE.test(c.label));
   const cols = [...DEFAULT_STATEMENT_COLUMNS];
-  if (cont) cols.splice(2, 0, cont.key);
+  cols.splice(2, 0, contColumn(catalog));
   return statementConfigSchema.parse({ columns: cols.filter((k) => catalog.some((c) => c.key === k)), v: STATEMENT_CONFIG_VERSION });
 }
 
-export const STATEMENT_CONFIG_VERSION = 2;
+export const STATEMENT_CONFIG_VERSION = 3;
 
-/** Nâng mẫu cũ: thêm cột Điểm hạ rỗng và Thông tin xuất hóa đơn ngay sau Tuyến đường (nếu chưa có) */
-function upgradeConfig(c: StatementConfig): StatementConfig {
+/**
+ * Nâng mẫu cũ một lần:
+ * - bản 2: thêm cột Điểm hạ rỗng và Thông tin xuất hóa đơn ngay sau Tuyến đường (nếu chưa có)
+ * - bản 3: thêm SL chuyến + Số lượng vận chuyển (tấn) thay chỗ cột SL tính cước (cột SL tính cước vẫn chọn lại được),
+ *   thêm Số cont sau cột Ngày nếu mẫu chưa có cột số cont
+ */
+function upgradeConfig(c: StatementConfig, catalog: StatementColumn[]): StatementConfig {
   if (c.v >= STATEMENT_CONFIG_VERSION) return c;
-  const cols = [...c.columns];
-  const add = ["empty_return_name", "invoice_info"].filter((k) => !cols.includes(k));
-  const at = cols.indexOf("route_label");
-  cols.splice(at >= 0 ? at + 1 : cols.length, 0, ...add);
+  let cols = [...c.columns];
+  if (c.v < 2) {
+    const add = ["empty_return_name", "invoice_info"].filter((k) => !cols.includes(k));
+    const at = cols.indexOf("route_label");
+    cols.splice(at >= 0 ? at + 1 : cols.length, 0, ...add);
+  }
+  if (c.v < 3) {
+    const add = ["trip_count", "goods_tons"].filter((k) => !cols.includes(k));
+    const q = cols.indexOf("quantity");
+    const plate = cols.indexOf("plate_number");
+    if (q >= 0) cols.splice(q, 1, ...add);
+    else cols.splice(plate >= 0 ? plate + 1 : cols.length, 0, ...add);
+    // Số cont: mẫu chưa có cột số cont nào thì thêm ngay sau Ngày
+    const contKeys = new Set(["container_no", ...catalog.filter((x) => CONT_NO_RE.test(x.label)).map((x) => x.key)]);
+    if (!cols.some((k) => contKeys.has(k))) {
+      const d = cols.indexOf("pickup_at");
+      cols.splice(d >= 0 ? d + 1 : Math.min(1, cols.length), 0, contColumn(catalog));
+    }
+    cols = [...new Set(cols)];
+  }
   return { ...c, columns: cols.slice(0, 60), v: STATEMENT_CONFIG_VERSION };
 }
 
 /** Đọc mẫu đã lưu (bỏ qua giá trị hỏng, giữ phần dùng được) */
 export function parseStatementConfig(raw: unknown, catalog: StatementColumn[], variant: StatementVariant = "customer"): StatementConfig {
   const r = statementConfigSchema.safeParse(raw);
-  if (variant === "carrier") return r.success ? r.data : defaultCarrierStatementConfig(catalog);
-  return r.success ? upgradeConfig(r.data) : defaultStatementConfig(catalog);
+  if (variant === "carrier") return r.success ? upgradeConfig(r.data, catalog) : defaultCarrierStatementConfig(catalog);
+  return r.success ? upgradeConfig(r.data, catalog) : defaultStatementConfig(catalog);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +220,7 @@ const CARRIER_COMMON_KEYS = [
   "pickup_at",
   "expected_delivery_at",
   "shipment_code",
+  "container_no",
   "order_code",
   "customer_code",
   "route_label",
@@ -194,9 +231,14 @@ const CARRIER_COMMON_KEYS = [
   "vehicle_type_name",
   "plate_number",
   "driver_name",
+  "trip_count",
+  "goods_tons",
+  "goods_detail",
+  "invoice_info",
   "quantity",
   "pricing_unit",
   "notes",
+  "trip_notes",
 ];
 
 /** Các khoản trả nhà xe 3PL (từ Nhập chi phí 3PL của chuyến) */
@@ -227,7 +269,10 @@ export const DEFAULT_CARRIER_COLUMNS = [
   "stt",
   "pickup_at",
   "route_label",
+  "invoice_info",
   "plate_number",
+  "trip_count",
+  "goods_tons",
   "c_quantity",
   "c_unit_price",
   "c_fuel_pct",
@@ -240,9 +285,8 @@ export const DEFAULT_CARRIER_COLUMNS = [
 ];
 
 export function defaultCarrierStatementConfig(catalog: StatementColumn[]): StatementConfig {
-  const cont = catalog.find((c) => c.key.startsWith("cf_") && CONT_NO_RE.test(c.label)) ?? catalog.find((c) => c.key.startsWith("ocf_") && CONT_NO_RE.test(c.label));
   const cols = [...DEFAULT_CARRIER_COLUMNS];
-  if (cont) cols.splice(2, 0, cont.key);
+  cols.splice(2, 0, contColumn(catalog));
   return statementConfigSchema.parse({
     columns: cols.filter((k) => catalog.some((c) => c.key === k)),
     leftSign: "ĐẠI DIỆN NHÀ XE",
@@ -257,10 +301,18 @@ export function carrierStatementFileName(supplierCode: string, tu: string, den: 
   return statementFileName(supplierCode, tu, den).replace(/^Bang-ke-cuoc_/, "Bang-ke-3PL_");
 }
 
-export type ResolvedColumn = StatementColumn & { title: string; w: number };
+export type StatementHAlign = "left" | "center" | "right";
+export type StatementVAlign = "top" | "middle" | "bottom";
+export type ResolvedColumn = StatementColumn & { title: string; w: number; h: StatementHAlign; v: StatementVAlign };
+
+/** Căn ngang mặc định theo kiểu cột */
+export const defaultHAlign = (kind: StatementColumnKind): StatementHAlign => (kind === "index" ? "center" : kind === "text" ? "left" : "right");
 
 /** Các cột đang hiện theo đúng thứ tự trong mẫu, với tên và độ rộng người dùng đặt */
-export function resolveColumns(catalog: StatementColumn[], config: Pick<StatementConfig, "columns" | "labels" | "widths">): ResolvedColumn[] {
+export function resolveColumns(
+  catalog: StatementColumn[],
+  config: Pick<StatementConfig, "columns" | "labels" | "widths"> & Partial<Pick<StatementConfig, "align" | "valign">>,
+): ResolvedColumn[] {
   const byKey = new Map(catalog.map((c) => [c.key, c]));
   const seen = new Set<string>();
   const out: ResolvedColumn[] = [];
@@ -268,7 +320,13 @@ export function resolveColumns(catalog: StatementColumn[], config: Pick<Statemen
     const c = byKey.get(k);
     if (!c || seen.has(k)) continue;
     seen.add(k);
-    out.push({ ...c, title: config.labels[k]?.trim() || c.label, w: config.widths[k] ?? c.width });
+    out.push({
+      ...c,
+      title: config.labels[k]?.trim() || c.label,
+      w: config.widths[k] ?? c.width,
+      h: config.align?.[k] ?? defaultHAlign(c.kind),
+      v: config.valign?.[k] ?? "middle",
+    });
   }
   return out;
 }

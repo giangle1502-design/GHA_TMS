@@ -25,6 +25,8 @@ import {
   vndInWords,
   type StatementConfig,
   type StatementStatusFilter,
+  type StatementHAlign,
+  type StatementVAlign,
   type StatementVariant,
 } from "@/lib/freight-statement";
 import type { StatementData } from "@/lib/freight-statement-data";
@@ -502,7 +504,8 @@ export function StatementBuilder({
                       {cols.map((c) => (
                         <td
                           key={c.key}
-                          className={cn("border border-black px-1 py-1 align-middle", c.kind === "index" ? "text-center" : c.kind === "text" ? "" : "text-right whitespace-nowrap")}
+                          className={cn("border border-black px-1 py-1", c.kind !== "text" && "whitespace-nowrap")}
+                          style={{ textAlign: c.h, verticalAlign: c.v }}
                         >
                           {c.key === "stt" ? (sttOf.get(r.id) ?? "") : formatStatementCell(c.kind, r.cells[c.key])}
                         </td>
@@ -523,7 +526,7 @@ export function StatementBuilder({
                     TỔNG CỘNG
                   </td>
                   {cols.slice(labelSpan).map((c) => (
-                    <td key={c.key} className="border border-black px-1 py-1 text-right align-middle whitespace-nowrap">
+                    <td key={c.key} className="border border-black px-1 py-1 align-middle whitespace-nowrap" style={{ textAlign: c.h }}>
                       {sumsInTable(c, config.noSum) ? formatStatementCell(c.kind, totals[c.key]) : ""}
                     </td>
                   ))}
@@ -609,7 +612,35 @@ function ColumnsPanel({
   return (
     <Card className="mb-3 grid gap-4 p-3 lg:grid-cols-2">
       <div>
-        <div className="mb-1 text-sm font-medium">Cột đang hiện ({visible.length}) – kéo hoặc bấm mũi tên để đổi thứ tự, gõ để đổi tên cột trên bảng kê</div>
+        <div className="mb-1 text-sm font-medium">Cột đang hiện ({visible.length}) – kéo hoặc bấm mũi tên để đổi thứ tự, gõ để đổi tên cột, chọn căn ngang / căn dọc từng cột</div>
+        <div className="mb-2 flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-muted-foreground">Căn mọi cột:</span>
+          {(
+            [
+              ["left", "Trái"],
+              ["center", "Giữa cột"],
+              ["right", "Phải"],
+            ] as const
+          ).map(([v, l]) => (
+            <Button key={v} variant="outline" size="sm" className="h-7" onClick={() => update({ align: Object.fromEntries(visibleKeys.map((k) => [k, v])) })}>
+              {l}
+            </Button>
+          ))}
+          {(
+            [
+              ["top", "Trên"],
+              ["middle", "Giữa dòng"],
+              ["bottom", "Dưới"],
+            ] as const
+          ).map(([v, l]) => (
+            <Button key={v} variant="outline" size="sm" className="h-7" onClick={() => update({ valign: Object.fromEntries(visibleKeys.map((k) => [k, v])) })}>
+              {l}
+            </Button>
+          ))}
+          <Button variant="ghost" size="sm" className="h-7" onClick={() => update({ align: {}, valign: {} })} title="STT giữa, chữ trái, số phải, giữa dòng">
+            Mặc định
+          </Button>
+        </div>
         <ul className="max-h-96 space-y-1 overflow-y-auto pr-1">
           {visible.map((c, i) => (
             <li
@@ -639,6 +670,28 @@ function ColumnsPanel({
                   if (v >= 4 && v <= 80) update({ widths: { ...config.widths, [c.key]: v } });
                 }}
               />
+              <NativeSelect
+                className="h-7 w-[4.6rem] shrink-0 px-1 text-xs"
+                value={c.h}
+                title="Căn ngang"
+                aria-label="Căn ngang"
+                onChange={(e) => update({ align: { ...config.align, [c.key]: e.target.value as StatementHAlign } })}
+              >
+                <option value="left">⇤ Trái</option>
+                <option value="center">↔ Giữa</option>
+                <option value="right">⇥ Phải</option>
+              </NativeSelect>
+              <NativeSelect
+                className="h-7 w-[4.6rem] shrink-0 px-1 text-xs"
+                value={c.v}
+                title="Căn dọc trong dòng"
+                aria-label="Căn dọc"
+                onChange={(e) => update({ valign: { ...config.valign, [c.key]: e.target.value as StatementVAlign } })}
+              >
+                <option value="top">↑ Trên</option>
+                <option value="middle">↕ Giữa</option>
+                <option value="bottom">↓ Dưới</option>
+              </NativeSelect>
               {isSummed(c) ? (
                 <label className="flex shrink-0 items-center gap-1 px-1 text-xs" title="Hiện số tổng của cột này ở dòng TỔNG CỘNG">
                   <input

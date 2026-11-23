@@ -102,10 +102,10 @@ export async function buildStatementWorkbook(
       cell.value = v ?? null;
       cell.font = { name: "Times New Roman", size: 11 };
       cell.border = BORDER;
-      if (typeof v === "number") {
+      if (typeof v === "number")
         cell.numFmt = c.kind === "percent" ? '#,##0.##"%"' : c.kind === "money" || c.kind === "price" ? "#,##0" : c.kind === "index" ? "0" : "#,##0.##";
-        cell.alignment = { horizontal: c.kind === "index" ? "center" : "right", vertical: "middle" };
-      } else cell.alignment = { vertical: "middle", wrapText: true };
+      // Căn lề theo mẫu (ngang: trái / giữa / phải; dọc: trên / giữa / dưới)
+      cell.alignment = { horizontal: c.h, vertical: c.v, wrapText: typeof v !== "number" };
     });
   }
   // Dòng tổng cộng
@@ -124,7 +124,7 @@ export async function buildStatementWorkbook(
     if (i + 1 > labelEnd && sumsInTable(c, cfg.noSum)) {
       cell.value = totals[c.key];
       cell.numFmt = c.kind === "money" ? "#,##0" : "#,##0.##";
-      cell.alignment = { horizontal: "right", vertical: "middle" };
+      cell.alignment = { horizontal: c.h, vertical: "middle" };
     }
   });
   tr.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
