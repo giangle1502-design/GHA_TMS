@@ -1,4 +1,5 @@
 import { withErrorDetail } from "@/components/layout/page-error-detail";
+import { bagCount, type BagProduct } from "@/lib/bags";
 import { isGhaYard } from "@/lib/delivery-note";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
@@ -171,7 +172,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
       ? supabase.from("expense_list").select("id, code, category_name, group_name, group_sort, amount, status, paid_by, incurred_at, file_count, note, ref_no, approval_request_id, payroll_id").eq("shipment_id", id).order("incurred_at").order("code")
       : Promise.resolve({ data: [], error: null }),
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("entity_type", "shipment").eq("entity_id", id).is("archived_at", null),
-    supabase.from("shipment_items").select("line_no, item_code, item_name, quantity, unit, bag_count, note, custom_fields").eq("shipment_id", id).order("line_no"),
+    supabase.from("shipment_items").select("line_no, item_code, item_name, quantity, unit, bag_count, note, custom_fields, product:products(unit, kg_per_unit, kg_per_bag)").eq("shipment_id", id).order("line_no"),
     loadCustomFields(supabase, "shipment_items"),
     supabase.from("shipment_fees").select("line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, is_loading, fee_group:fee_groups(id, name, report_role, sort_order))").eq("shipment_id", id).order("line_no"),
     canExpenses ? supabase.from("shipment_profit").select("*").eq("shipment_id", id).maybeSingle() : Promise.resolve({ data: null, error: null }),
@@ -798,7 +799,11 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
 
         <ItemsCard
           shipmentId={s.id}
-          items={(itemRes.data ?? []) as ShipmentItem[]}
+          items={((itemRes.data ?? []) as unknown as (ShipmentItem & { product: BagProduct | BagProduct[] | null })[]).map(({ product, ...it }) => ({
+            ...it,
+            // Số bao như phiếu giao hàng: tự chia theo Số KG/bao của mã hàng, chỉ mã ngoài danh mục mới lấy số nhập tay
+            bag_count: bagCount(it.quantity === null ? null : Number(it.quantity), it.unit, Array.isArray(product) ? product[0] : product, it.bag_count),
+          }))}
           fields={moduleCustomFields("shipment_items", visibleCustomRows(itemFieldRows, me.permissions), me.permissions)}
           layout={layoutOf("shipment_items", itemFieldRows)}
           fieldRows={itemFieldRows}

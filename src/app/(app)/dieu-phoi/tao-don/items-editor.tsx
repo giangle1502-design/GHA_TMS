@@ -11,8 +11,9 @@ import { formatNumber } from "@/lib/format";
 import type { CustomFieldRow, FieldDef } from "@/lib/entities/types";
 import { AddOptionButton, useFieldOptions } from "@/components/entities/add-option";
 import { createClient } from "@/lib/supabase/client";
+import { autoBagCount } from "@/lib/bags";
 
-type Product = { code: string; name: string; unit: string | null };
+type Product = { code: string; name: string; unit: string | null; kg_per_unit: number | null; kg_per_bag: number | null };
 let productCache: Promise<Product[]> | null = null;
 
 /** Danh mục mã hàng (đang dùng) để gợi ý khi nhập Mã hàng / Tên hàng; tải một lần mỗi phiên */
@@ -20,7 +21,7 @@ function useProducts() {
   const [list, setList] = useState<Product[]>([]);
   useEffect(() => {
     productCache ??= (async () => {
-      const { data, error } = await createClient().from("products").select("code, name, unit").eq("status", "active").order("code").limit(10000);
+      const { data, error } = await createClient().from("products").select("code, name, unit, kg_per_unit, kg_per_bag").eq("status", "active").order("code").limit(10000);
       if (error) {
         productCache = null;
         return [];
@@ -61,7 +62,7 @@ const SYSTEM_COLS = [
   { key: "item_name", label: "Tên hàng", width: "min-w-48", placeholder: "VD: Thép cuộn" },
   { key: "quantity", label: "Số lượng", width: "w-24", placeholder: "0" },
   { key: "unit", label: "ĐVT", width: "w-20", placeholder: "kiện" },
-  { key: "bag_count", label: "Số bao", width: "w-24", placeholder: "tự tính" },
+  { key: "bag_count", label: "Số bao", width: "w-24", placeholder: "" },
   { key: "note", label: "Ghi chú", width: "min-w-40", placeholder: "" },
 ] as const;
 type SysKey = (typeof SYSTEM_COLS)[number]["key"];
@@ -109,11 +110,20 @@ export function ItemsEditor({
     if (value.some((l) => unitOf(l) !== null && unitOf(l) !== l.unit)) onChange(value.map((l) => (unitOf(l) !== null ? { ...l, unit: unitOf(l)! } : l)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [byCode]);
+  /** Số bao tự chia theo Số KG/bao của mã hàng; null = không tính được (mã hàng ngoài danh mục) thì cho nhập tay */
+  const autoBags = (l: ItemLine) => autoBagCount(parseNumberVN(l.quantity) ?? null, l.unit, byCode.get(norm(l.item_code)) ?? null);
+  // Số bao tính được thì không lưu số nhập tay (số đọc từ ảnh / dán Excel), phiếu giao hàng luôn in số tự tính
+  useEffect(() => {
+    if (!byCode.size) return;
+    if (value.some((l) => l.bag_count !== "" && autoBags(l) !== null)) onChange(value.map((l) => (l.bag_count !== "" && autoBags(l) !== null ? { ...l, bag_count: "" } : l)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byCode, value]);
   function setSys(l: ItemLine, key: SysKey, v: string) {
     set(l.key, key === "item_code" ? { item_code: v, ...fromProduct(v) } : ({ [key]: v } as Partial<ItemLine>));
   }
   const totalQty = value.reduce((a, l) => a + (parseNumberVN(l.quantity) ?? 0), 0);
-  const totalBags = value.reduce((a, l) => a + (parseNumberVN(l.bag_count) ?? 0), 0);
+  const bagsOf = (l: ItemLine) => autoBags(l) ?? parseNumberVN(l.bag_count) ?? null;
+  const totalBags = value.reduce((a, l) => a + (bagsOf(l) ?? 0), 0);
   const sumOf = (f: FieldDef) => value.reduce((a, l) => a + (f.type === "formula" ? (computeFormula(f.formula, lineVars(l)) ?? 0) : (parseNumberVN(l.custom[f.key], f.type === "currency") ?? 0)), 0);
 
   function applyPaste() {
@@ -181,6 +191,15 @@ export function ItemsEditor({
                           ))}
                           {l.item_code && !byCode.has(norm(l.item_code)) ? <option value={l.item_code}>{l.item_code} (chưa có trong danh mục)</option> : null}
                         </NativeSelect>
+                      ) : c.key === "bag_count" && autoBags(l) !== null ? (
+                        <Input
+                          aria-label={`${c.sys!.label} dòng ${i + 1}`}
+                          id={i === 0 ? `${idPrefix}${c.key}` : undefined}
+                          className="h-8 bg-muted/50"
+                          value={formatNumber(autoBags(l))}
+                          readOnly
+                          title="Tự tính: Số lượng (KG) ÷ Số KG/bao của mã hàng (sửa Số KG/bao trong Danh mục mã hàng)"
+                        />
                       ) : c.sys ? (
                         <Input
                           aria-label={`${c.sys.label} dòng ${i + 1}`}
@@ -195,7 +214,7 @@ export function ItemsEditor({
                             c.key === "unit" && byCode.has(norm(l.item_code))
                               ? "ĐVT theo thiết lập của mã hàng (sửa trong Danh mục mã hàng)"
                               : c.key === "bag_count"
-                                ? "Để trống thì phiếu giao hàng tự tính: Số lượng (KG) ÷ Số KG/bao của mã hàng (sửa trong Danh mục mã hàng); ĐVT là bao thì lấy số lượng"
+                                ? "Mã hàng chưa có trong danh mục (hoặc chưa có Số KG/bao) nên nhập tay số bao"
                                 : undefined
                           }
                           onChange={(e) => setSys(l, c.key as SysKey, e.target.value)}
