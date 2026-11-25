@@ -35,7 +35,8 @@ import { StatusBadge } from "./status-badge";
 import { ActForDriverQuick } from "./act-for-driver-quick";
 import { AssignDialog } from "./assign-dialog";
 import { CrewChangeDialog } from "./crew-change-dialog";
-import { CORRECT_CREW_STATUSES, UNACCEPT_STATUSES } from "@/lib/crew-change";
+import { CORRECT_CREW_STATUSES, UNACCEPT_STATUSES, canReleaseShipment } from "@/lib/crew-change";
+import { ReleaseShipmentDialog } from "./release-dialog";
 import { VehicleOrderCell } from "./vehicle-order-cell";
 import { DeliveryDaysCell } from "./delivery-days-cell";
 import { DriverPayCell } from "./driver-pay-cell";
@@ -845,6 +846,18 @@ function Actions({
               />
             ))
         : null}
+      {canAssign && canReleaseShipment(r) ? (
+        <ReleaseShipmentDialog
+          compact
+          shipmentId={r.id}
+          shipmentCode={r.shipment_code}
+          plate={r.plate_number}
+          driverName={r.driver_name}
+          carrierName={r.carrier_name}
+          hasCarrier={Boolean(r.carrier_supplier_id)}
+          grouped={Boolean(r.load_group_id)}
+        />
+      ) : null}
       {canAssign && !LOCKED_STATUSES.includes(r.status) ? (
         <Button asChild variant="ghost" size="sm" className="h-7 px-2" title={`Sửa toàn bộ đơn ${r.order_code}, mở tới chuyến ${r.shipment_code}`}>
           <Link href={`/dieu-phoi/don-hang/${r.order_id}/sua#chuyen-${r.shipment_code}`}>
