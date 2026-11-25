@@ -21,7 +21,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/dispatch/status-badge";
 import { AssignDialog } from "@/components/dispatch/assign-dialog";
 import { CrewChangeDialog } from "@/components/dispatch/crew-change-dialog";
-import { CORRECT_CREW_STATUSES, UNACCEPT_STATUSES } from "@/lib/crew-change";
+import { CORRECT_CREW_STATUSES, UNACCEPT_STATUSES, canReleaseShipment } from "@/lib/crew-change";
+import { ReleaseShipmentDialog } from "@/components/dispatch/release-dialog";
 import { CancelDialog, RestoreShipmentButton } from "@/components/dispatch/cancel-dialog";
 import { ResubmitTripButton, TripApprovalButtons } from "@/components/dispatch/trip-approval";
 import { shipmentCustomFields } from "@/lib/shipments-query";
@@ -72,6 +73,18 @@ type Extra = {
   expense_declared_at: string | null;
 };
 type History = { id: number; status_field: string; from_status: string | null; to_status: string; changed_by: string | null; changed_at: string; note: string | null };
+type Release = {
+  id: string;
+  from_status: string;
+  old_driver_name: string | null;
+  old_plate: string | null;
+  old_carrier_name: string | null;
+  new_carrier_name: string | null;
+  carrier_costs_removed: number;
+  reason: string;
+  released_by: string | null;
+  released_at: string;
+};
 type Assignment = {
   id: string;
   response: string;
@@ -153,7 +166,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   const canSeeCarrier =
     me.permissions.has("carriers.view" as never) && ["dispatch.view", "receivables.view", "reports.view", "expenses.view"].some((k) => me.permissions.has(k as never));
   const canSeePayable = me.permissions.has("receivables.view");
-  const [custom, rowRes, extraRes, histRes, asgRes, changeRes, expRes, docRes, itemRes, itemFieldRows, feeRes, profitRes] = await Promise.all([
+  const [custom, rowRes, extraRes, histRes, asgRes, changeRes, expRes, docRes, itemRes, itemFieldRows, feeRes, profitRes, releaseRes] = await Promise.all([
     shipmentCustomFields(supabase, me.permissions),
     supabase.from("shipment_list").select("*").eq("id", id).maybeSingle(),
     supabase
@@ -176,6 +189,12 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
     loadCustomFields(supabase, "shipment_items"),
     supabase.from("shipment_fees").select("line_no, fee_type_id, fee_kind, amount, note, declaration_type_id, ref_no, quantity, unit_price, declaration:declaration_types(name), fee_type:fee_types(name, sort_order, is_loading, fee_group:fee_groups(id, name, report_role, sort_order))").eq("shipment_id", id).order("line_no"),
     canExpenses ? supabase.from("shipment_profit").select("*").eq("shipment_id", id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    // Hủy nhận chuyến (SQL 9041; chưa chạy SQL thì bỏ qua)
+    supabase
+      .from("shipment_releases")
+      .select("id, from_status, old_driver_name, old_plate, old_carrier_name, new_carrier_name, carrier_costs_removed, reason, released_by, released_at")
+      .eq("shipment_id", id)
+      .order("released_at", { ascending: false }),
   ]);
   const [carrierRes, payableRes, feeDocRes, sheetRes, lockRes, methodRes] = await Promise.all([
     canSeeCarrier
@@ -235,6 +254,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   if (!s || !x) notFound();
   const history = (histRes.data ?? []) as History[];
   const assignments = (asgRes.data ?? []) as unknown as Assignment[];
+  const releases = (releaseRes.error ? [] : (releaseRes.data ?? [])) as Release[];
   const changes = (changeRes.data ?? []) as Change[];
   if (expRes.error) throw expRes.error;
   const expenses = (expRes.data ?? []) as Expense[];
@@ -282,7 +302,7 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
   const costLines = [...expenses.filter((e) => e.status === "approved").reduce((m, e) => m.set(e.category_name, (m.get(e.category_name) ?? 0) + Number(e.amount)), new Map<string, number>())]
     .map(([name, amount]) => ({ name, amount }));
 
-  const actorIds = [...new Set([x.created_by, ...history.map((h) => h.changed_by), ...assignments.map((a) => a.assigned_by), x.dispatch_approved_by].filter((v): v is string => Boolean(v)))];
+  const actorIds = [...new Set([x.created_by, ...history.map((h) => h.changed_by), ...assignments.map((a) => a.assigned_by), ...releases.map((r) => r.released_by), x.dispatch_approved_by].filter((v): v is string => Boolean(v)))];
   const { data: nameRows } = actorIds.length ? await supabase.rpc("user_display_names", { p_ids: actorIds }) : { data: [] };
   const names = new Map(((nameRows ?? []) as { id: string; display_name: string }[]).map((n) => [n.id, n.display_name]));
   const who = (uid: string | null) => (uid ? (names.get(uid) ?? "Người dùng") : "Hệ thống");
@@ -384,6 +404,18 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                     />
                   ))
               : null}
+            {me.permissions.has("dispatch.update") && canReleaseShipment(s) ? (
+              <ReleaseShipmentDialog
+                variant="outline"
+                shipmentId={s.id}
+                shipmentCode={s.shipment_code}
+                plate={s.plate_number}
+                driverName={s.driver_name}
+                carrierName={x.carrier?.name ?? x.vehicle?.supplier?.name ?? null}
+                hasCarrier={Boolean(x.carrier_supplier_id)}
+                grouped={Boolean(s.load_group_id)}
+              />
+            ) : null}
             {s.status !== "cancelled" && me.permissions.has("dispatch.create") && me.permissions.has("dispatch.update") ? (
               <Button asChild variant="outline" title="Thêm một chuyến giống chuyến này vào cùng đơn (VD chia hàng cho xe 3PL khác)">
                 <Link href={`/dieu-phoi/don-hang/${s.order_id}/sua?nhanban=${s.id}`}>
@@ -701,6 +733,27 @@ async function PageInner({ params }: { params: Promise<{ id: string }> }) {
                 })}
               </ul>
             )}
+            {releases.length ? (
+              <div className="mt-4 border-t pt-3">
+                <div className="mb-2 text-sm font-semibold text-red-700">Hủy nhận chuyến ({releases.length})</div>
+                <ul className="space-y-3 text-sm">
+                  {releases.map((r) => (
+                    <li key={r.id}>
+                      <div>
+                        <b>{[r.old_plate, r.old_driver_name, canSeeCarrier && r.old_carrier_name ? `3PL ${r.old_carrier_name}` : null].filter(Boolean).join(" · ") || "Chưa có xe"}</b>
+                        <span className="text-muted-foreground"> ({shipmentStatus(r.from_status).label})</span>
+                        {canSeeCarrier && r.new_carrier_name ? <span> → 3PL {r.new_carrier_name}</span> : null}
+                      </div>
+                      <div className="text-xs">Lý do: {r.reason}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {formatDateTime(r.released_at)} bởi {who(r.released_by)}
+                        {canSeeCarrier && r.carrier_costs_removed > 0 ? ` · xóa ${formatNumber(r.carrier_costs_removed)} đ chi phí 3PL cũ` : ""}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

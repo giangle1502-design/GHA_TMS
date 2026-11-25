@@ -1532,6 +1532,66 @@ export async function unacceptShipment(input: z.input<typeof crewSchema>): Promi
   }, "Đã hủy nhận xe. Chuyến về Chờ tài xế nhận trên xe mới.");
 }
 
+const releaseSchema = z.object({
+  shipmentId: uuid,
+  reason: z.string().trim().min(3, "Nhập lý do hủy nhận chuyến (ít nhất 3 ký tự)").max(500, "Lý do tối đa 500 ký tự"),
+  /** Nhà xe 3PL mới (bỏ trống = chọn sau) */
+  supplierId: optUuid,
+  /** Đổi nhà xe: xóa chi phí 3PL đã nhập của nhà xe cũ (mặc định có) */
+  clearCarrierCosts: z.boolean().optional(),
+  /** Đã biết số xe / tài xế của nhà xe mới: giao luôn */
+  plate: z.string().trim().max(20).optional(),
+  driverName: z.string().trim().max(150).optional(),
+  driverPhone: z.string().trim().max(20).optional(),
+});
+
+export type ReleaseResult = { codes: string[]; newCarrier: string | null; costsRemoved: number; assigned: boolean };
+
+/**
+ * Hủy nhận chuyến: tài xế / nhà xe 3PL đã nhận nhưng không đi. Gỡ xe, tài xế, phân công (cả nhóm ghép xe),
+ * chuyến về Nháp; gắn nhà xe 3PL mới nếu chọn, có số xe / tài xế thì giao luôn. Bắt buộc lý do, ghi nhật ký.
+ */
+export async function releaseShipment(input: z.input<typeof releaseSchema>): Promise<ActionResult<ReleaseResult>> {
+  return runAction(async () => {
+    await requirePermission("dispatch.update");
+    const p = releaseSchema.safeParse(input);
+    if (!p.success) throw new ActionError(p.error.issues[0]?.message ?? "Dữ liệu không hợp lệ");
+    const d = p.data;
+    const supabase = await createClient();
+    const { data, error } = await supabase.rpc("release_shipment", {
+      p_shipment_id: d.shipmentId,
+      p_reason: d.reason,
+      p_supplier_id: d.supplierId ?? null,
+      p_clear_carrier_costs: d.clearCarrierCosts ?? true,
+    });
+    if (error) {
+      if (error.code === "PGRST202" || error.code === "42883") throw new ActionError("CSDL chưa nâng cấp Hủy nhận chuyến. Nhờ quản trị chạy SQL 9041_huy_nhan_chuyen.sql.");
+      throw error;
+    }
+    const r = (data ?? {}) as { codes?: string[]; new_carrier?: string | null; carrier_costs_removed?: number };
+    let assigned = false;
+    if (d.supplierId && (d.plate || d.driverName || d.driverPhone)) {
+      const { error: e2 } = await supabase.rpc("assign_shipment_3pl", {
+        p_shipment_id: d.shipmentId,
+        p_supplier_id: d.supplierId,
+        p_plate: d.plate || null,
+        p_driver_name: d.driverName || null,
+        p_driver_phone: d.driverPhone || null,
+        p_national_id: null,
+        p_license_no: null,
+      });
+      if (e2) throw new ActionError(`Đã hủy nhận chuyến và gắn nhà xe mới, nhưng chưa giao được số xe: ${toUserMessage(e2)}. Nhập số xe ở cột Số xe hoặc bấm Phân công.`);
+      assigned = true;
+    }
+    revalidatePath("/dieu-phoi", "layout");
+    revalidatePath("/chuyen-xe", "layout");
+    revalidatePath("/thue-ngoai");
+    revalidatePath("/cong-no");
+    revalidatePath("/nha-xe");
+    return { codes: r.codes ?? [], newCarrier: r.new_carrier ?? null, costsRemoved: Number(r.carrier_costs_removed ?? 0), assigned };
+  }, "Đã hủy nhận chuyến.");
+}
+
 const correctCrewSchema = crewSchema.extend({
   /** Sửa nhà xe 3PL của chuyến: uuid = nhà xe đúng, null = chạy xe nội bộ (bỏ nhà xe); bỏ trống = giữ như cũ */
   supplierId: uuid.nullable().optional(),
